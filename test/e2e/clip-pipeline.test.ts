@@ -8,6 +8,7 @@ import { MAX_HTML_BYTES } from '../../src/extract/constants'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
 import { OPENAI_CHAT_URL } from '../../src/translate/constants'
+import { articleIdFromCanonicalUrl, parseHttpUrl } from '../../src/types'
 import { basicAuthorization, bearerAuthorization, TEST_BINDINGS } from '../bindings'
 import { createFakeQueue } from '../fake-queue'
 import { installNetworkMock, openaiMessageResponse } from './mock-network'
@@ -145,6 +146,76 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).toContain('<pre')
     expect(chapter).toContain('<code')
     expect(chapter).toContain('{&quot;compatibility_date&quot;:&quot;2026-09-19&quot;}')
+  })
+
+  it('keeps the extract title when mock OpenAI titles change across two clips', async () => {
+    const pageUrl = 'https://example.com/en/compatibility-date'
+    const extractTitle = 'Keep compatibility_date current'
+    const modelTitles = ['モデル見出しA', 'モデル見出しB']
+    let openaiCalls = 0
+    installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('en-tech.html') } },
+      openai: async () => {
+        const title = modelTitles[openaiCalls] ?? 'モデル見出しC'
+        openaiCalls += 1
+        return openaiMessageResponse(title, `# ${title}\n\nnodejs_compat が必要。`)
+      },
+    })
+    const ctx = app()
+    const first = await clipAndDrain(ctx, pageUrl)
+    expect(first.status).toBe(202)
+    const firstQueued = await readJson(first)
+    const firstJob = await readJson(await getJob(ctx, firstQueued.jobId ?? ''))
+    expect(firstJob.status).toBe('ready')
+
+    const second = await clipAndDrain(ctx, pageUrl)
+    expect(second.status).toBe(202)
+    const secondQueued = await readJson(second)
+    const secondJob = await readJson(await getJob(ctx, secondQueued.jobId ?? ''))
+    expect(secondJob.status).toBe('ready')
+    expect(secondJob.id).toBe(firstJob.id)
+    expect(openaiCalls).toBe(2)
+
+    const canonical = parseHttpUrl(pageUrl)
+    if (canonical === null) {
+      throw new Error(pageUrl)
+    }
+    const expectedId = await articleIdFromCanonicalUrl(canonical)
+    expect(secondJob.id).toBe(expectedId)
+
+    const meta = await ctx.hono.request(
+      `/articles/${secondJob.id}`,
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(meta.status).toBe(200)
+    expect(((await meta.json()) as { title: string }).title).toBe(extractTitle)
+
+    const catalog = await ctx.hono.request(
+      '/opds',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    const opds = await catalog.text()
+    expect(opds).toContain(`<title>${extractTitle}</title>`)
+    expect(opds).not.toContain('モデル見出しA')
+    expect(opds).not.toContain('モデル見出しB')
+
+    const epubResponse = await ctx.hono.request(
+      secondJob.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(epubResponse.status).toBe(200)
+    expect(epubResponse.headers.get('content-disposition')).toBe(`attachment; filename="${expectedId}.epub"`)
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const opf = strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(opf).toContain(`<dc:title>${extractTitle}</dc:title>`)
+    expect(chapter).toContain(`<title>${extractTitle}</title>`)
+    expect(opf).not.toContain('モデル見出しA')
+    expect(opf).not.toContain('モデル見出しB')
+    expect(chapter).not.toContain(`<title>モデル見出し`)
   })
 
   it('drops img and NUL from EPUB after a mocked OpenAI markdown reply', async () => {

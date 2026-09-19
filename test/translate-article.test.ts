@@ -79,7 +79,7 @@ describe('translateArticle', () => {
       }
       expect(result.value.translated).toBe(true)
       expect(result.value.language).toBe('ja')
-      expect(result.value.title).toBe('compatibility_date を最新に保つ')
+      expect(result.value.title).toBe('Keep compatibility_date current')
       expect(result.value.contentHtml).toContain('{"compatibility_date":"2026-09-19"}')
       expect(result.value.contentHtml).toContain('<pre><code>')
     } finally {
@@ -199,7 +199,7 @@ describe('translateArticle', () => {
       if (!result.ok) {
         return
       }
-      expect(result.value.title).toBe('フェンス付き')
+      expect(result.value.title).toBe('Keep compatibility_date current')
       expect(result.value.contentHtml).toContain('<pre><code>ok</code></pre>')
     } finally {
       vi.unstubAllGlobals()
@@ -227,6 +227,42 @@ describe('translateArticle', () => {
         }
         expect(result.error.kind).toBe('translate_failed')
         expect(result.error.extracted).toEqual(input)
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    }
+  })
+
+  it('keeps the extracted title when the model title changes', async () => {
+    const titles = ['モデル見出しA', 'モデル見出しB']
+    for (const modelTitle of titles) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          Response.json({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    title: modelTitle,
+                    content: `# ${modelTitle}\n\nnodejs_compat が必要。`,
+                  }),
+                },
+              },
+            ],
+          }),
+        ),
+      )
+      try {
+        const input = article()
+        const result = await translateArticle(input, { OPENAI_API_KEY: 'sk-test' })
+        expect(result.ok).toBe(true)
+        if (!result.ok) {
+          return
+        }
+        expect(result.value.title).toBe(input.title)
+        expect(result.value.title).not.toBe(modelTitle)
+        expect(result.value.contentHtml).toContain('nodejs_compat')
       } finally {
         vi.unstubAllGlobals()
       }

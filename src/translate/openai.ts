@@ -203,7 +203,7 @@ export const translateArticle: TranslateArticle = async (
       return fail(article, 'OpenAI response was not valid title/content JSON')
     }
 
-    return articleFromMarkdown(article, parsed.title, parsed.markdown, true)
+    return articleFromMarkdown(article, article.title, parsed.markdown, true)
   } catch (cause) {
     if (controller.signal.aborted || isAbortError(cause)) {
       return fail(article, 'OpenAI request timed out')
