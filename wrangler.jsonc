@@ -18,5 +18,21 @@
       "binding": "ARTICLES",
       "bucket_name": "xteink-read-later-articles"
     }
-  ]
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "CLIP_QUEUE",
+        "queue": "xteink-read-later-clip"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "xteink-read-later-clip",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3
+      }
+    ]
+  }
 }

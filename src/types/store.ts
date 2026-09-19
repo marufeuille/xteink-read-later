@@ -1,5 +1,6 @@
 import type { ArticleMeta } from './article'
-import type { ArticleId, EpubBytes } from './id'
+import type { ArticleId, ClipJobId, EpubBytes } from './id'
+import type { ClipJobRecord } from './job'
 
 export type StoreDeps = Pick<Cloudflare.Env, 'ARTICLES'>
 
@@ -18,6 +19,8 @@ export type ArticleStore = {
   readonly put: (article: ArticleWrite) => Promise<ArticleMeta>
   readonly delete: (id: ArticleId) => Promise<boolean>
   readonly listMeta: () => Promise<readonly ArticleMeta[]>
+  readonly getJob: (id: ClipJobId) => Promise<ClipJobRecord | null>
+  readonly putJob: (job: ClipJobRecord) => Promise<void>
 }
 
 export type CreateArticleStore = (deps: StoreDeps) => ArticleStore

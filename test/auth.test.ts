@@ -1,10 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
 import { parseBasicCredentials, parseBearerToken, secretsEqual } from '../src/http/auth'
-import { createExtractPipeline } from '../src/extract/pipeline'
-import { createClipPipeline } from '../src/pipeline/clip'
 import { createMemoryStore } from '../src/store/memory'
-import { asArticleId, asEpubBytes, err, parseHttpUrl } from '../src/types'
+import { asArticleId, asEpubBytes, parseHttpUrl } from '../src/types'
 import {
   basicAuthorization,
   bearerAuthorization,
@@ -16,11 +14,6 @@ import {
 
 function dummyApp() {
   return createApp({
-    clipPipeline: createClipPipeline({
-      extractPipeline: createExtractPipeline({
-        fetchPage: async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }),
-      }),
-    }),
     store: createMemoryStore(),
   })
 }
@@ -84,6 +77,10 @@ describe('HTTP auth', () => {
       TEST_BINDINGS,
     )
     expect(deleted.status).toBe(401)
+
+    const job = await app.request('/clip/jobs/job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', {}, TEST_BINDINGS)
+    expect(job.status).toBe(401)
+    expect(job.headers.get('www-authenticate')).toBe('Bearer')
   })
 
   it('does not run the clip pipeline when CLIP_TOKEN is unset', async () => {
@@ -122,11 +119,6 @@ describe('HTTP auth', () => {
       epub: asEpubBytes(new Uint8Array([1, 2, 3])),
     })
     const app = createApp({
-      clipPipeline: createClipPipeline({
-        extractPipeline: createExtractPipeline({
-          fetchPage: async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }),
-        }),
-      }),
       store,
     })
 

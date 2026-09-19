@@ -6,14 +6,32 @@ export type ArticleId = string & { readonly [articleIdBrand]: void }
 export type HttpUrl = string & { readonly [httpUrlBrand]: void }
 export type EpubBytes = Uint8Array & { readonly [epubBytesBrand]: void }
 
+declare const clipJobIdBrand: unique symbol
+
+export type ClipJobId = string & { readonly [clipJobIdBrand]: void }
+
 export type ArticleMetaKey = `articles/${ArticleId}/meta.json`
 export type ArticleEpubKey = `articles/${ArticleId}/book.epub`
 export type ArticleObjectKey = ArticleMetaKey | ArticleEpubKey
+export type ClipJobKey = `jobs/${ClipJobId}.json`
 
 const ARTICLE_ID_PATTERN = /^art_[a-f0-9]{32}$/
+const CLIP_JOB_ID_PATTERN = /^job_[a-f0-9]{32}$/
+
+async function sha256Hex32(data: BufferSource): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', data)
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32)
+}
 
 export function isArticleId(value: string): value is ArticleId {
   return ARTICLE_ID_PATTERN.test(value)
+}
+
+export function isClipJobId(value: string): value is ClipJobId {
+  return CLIP_JOB_ID_PATTERN.test(value)
 }
 
 export function asArticleId(value: string): ArticleId {
@@ -23,25 +41,26 @@ export function asArticleId(value: string): ArticleId {
   return value
 }
 
+export function asClipJobId(value: string): ClipJobId {
+  if (!isClipJobId(value)) {
+    throw new TypeError(`Invalid clip job id: ${value}`)
+  }
+  return value
+}
+
 export async function articleIdFromCanonicalUrl(canonicalUrl: HttpUrl): Promise<ArticleId> {
-  const digest = await crypto.subtle.digest(
-    'SHA-256',
-    new TextEncoder().encode(canonicalUrl),
-  )
-  const hex = [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 32)
+  const hex = await sha256Hex32(new TextEncoder().encode(canonicalUrl))
   return asArticleId(`art_${hex}`)
 }
 
 export async function articleIdFromBytes(bytes: Uint8Array): Promise<ArticleId> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes)
-  const hex = [...new Uint8Array(digest)]
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 32)
+  const hex = await sha256Hex32(bytes)
   return asArticleId(`art_${hex}`)
+}
+
+export async function clipJobIdFromUrl(url: HttpUrl): Promise<ClipJobId> {
+  const hex = await sha256Hex32(new TextEncoder().encode(url))
+  return asClipJobId(`job_${hex}`)
 }
 
 export function purchasedCanonicalUrl(id: ArticleId): HttpUrl {
@@ -73,4 +92,8 @@ export function articleMetaKey(id: ArticleId): ArticleMetaKey {
 
 export function articleEpubKey(id: ArticleId): ArticleEpubKey {
   return `articles/${id}/book.epub`
+}
+
+export function clipJobKey(id: ClipJobId): ClipJobKey {
+  return `jobs/${id}.json`
 }

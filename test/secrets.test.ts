@@ -7,6 +7,7 @@ import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
 import { createMemoryStore } from '../src/store/memory'
 import { err, ok, type FetchPage } from '../src/types'
+import { createFakeQueue } from './fake-queue'
 import { bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
 
 const SECRET = 'sk-secret-must-not-leak-123'
@@ -16,7 +17,7 @@ const jaHtml = readFileSync(
 )
 
 describe('secret handling', () => {
-  it('does not echo OPENAI_API_KEY in clip error JSON', async () => {
+  it('does not echo OPENAI_API_KEY in clip job JSON', async () => {
     const fetchPage: FetchPage = async (url) =>
       ok({
         requestedUrl: url,
@@ -24,14 +25,15 @@ describe('secret handling', () => {
         contentType: 'text/html',
         html: jaHtml,
       })
-    const app = createApp({
-      clipPipeline: createClipPipeline({
-        extractPipeline: createExtractPipeline({ fetchPage }),
-        translateArticle: async (article) =>
-          err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 401' }),
-      }),
-      store: createMemoryStore(),
+    const store = createMemoryStore()
+    const queue = createFakeQueue()
+    const clipPipeline = createClipPipeline({
+      extractPipeline: createExtractPipeline({ fetchPage }),
+      translateArticle: async (article) =>
+        err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 401' }),
     })
+    const app = createApp({ store, queue })
+    const env = { ...TEST_BINDINGS, OPENAI_API_KEY: SECRET, CLIP_QUEUE: queue } as Cloudflare.Env
     const response = await app.request(
       '/clip',
       {
@@ -39,12 +41,25 @@ describe('secret handling', () => {
         headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
       },
-      { ...TEST_BINDINGS, OPENAI_API_KEY: SECRET },
+      env,
     )
-    const text = await response.text()
-    expect(response.status).toBe(503)
-    expect(text).not.toContain(SECRET)
-    expect(text).not.toContain(TEST_CLIP_TOKEN)
-    expect(text).toContain('translate_failed')
+    expect(response.status).toBe(202)
+    const postText = await response.text()
+    expect(postText).not.toContain(SECRET)
+    expect(postText).not.toContain(TEST_CLIP_TOKEN)
+    await queue.drain(env, { clipPipeline, store })
+    const queued = JSON.parse(postText) as { jobId: string }
+    const job = await app.request(
+      `/clip/jobs/${queued.jobId}`,
+      { headers: { authorization: bearerAuthorization() } },
+      env,
+    )
+    const jobText = await job.text()
+    expect(job.status).toBe(200)
+    expect(jobText).toContain('translate_failed')
+    expect(jobText).not.toContain(SECRET)
+    expect(jobText).not.toContain(TEST_CLIP_TOKEN)
+    expect(jobText).not.toContain('extracted')
+    expect(jobText).not.toContain(jaHtml.slice(0, 40))
   })
 })

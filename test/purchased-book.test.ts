@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app'
 import { MAX_PURCHASED_EPUB_BYTES } from '../src/http/purchased-book'
 import { createMemoryStore } from '../src/store/memory'
-import { articleIdFromBytes, type ClipPipeline } from '../src/types'
+import { articleIdFromBytes } from '../src/types'
 import {
   basicAuthorization,
   bearerAuthorization,
@@ -22,14 +22,8 @@ function zipEpub(): Uint8Array {
   })
 }
 
-function unusedClip(): ClipPipeline {
-  return async () => {
-    throw new Error('clip pipeline must not run for purchased EPUB')
-  }
-}
-
 function appWithStore(store = createMemoryStore()) {
-  return { app: createApp({ clipPipeline: unusedClip(), store }), store }
+  return { app: createApp({ store }), store }
 }
 
 async function upload(

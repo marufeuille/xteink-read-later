@@ -3,6 +3,7 @@ import {
   articleMetaKey,
   asArticleId,
   asEpubBytes,
+  clipJobKey,
   isArticleId,
   parseHttpUrl,
   type ArticleMeta,
@@ -10,6 +11,7 @@ import {
   type CreateArticleStore,
 } from '../types'
 import { logPipeline } from '../log'
+import { parseClipJobRecord } from './job'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -153,6 +155,22 @@ export const createR2Store: CreateArticleStore = (deps) => {
         }
       }
       return metas.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+    },
+    async getJob(id) {
+      const object = await bucket.get(clipJobKey(id))
+      if (object === null) {
+        return null
+      }
+      try {
+        return parseClipJobRecord(await object.json())
+      } catch {
+        return null
+      }
+    },
+    async putJob(job) {
+      await bucket.put(clipJobKey(job.jobId), JSON.stringify(job), {
+        httpMetadata: { contentType: 'application/json; charset=utf-8' },
+      })
     },
   }
   return store

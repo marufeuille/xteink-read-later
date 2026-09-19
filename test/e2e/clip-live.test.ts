@@ -4,11 +4,13 @@ import { createApp } from '../../src/app'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
 import { basicAuthorization, bearerAuthorization, TEST_BINDINGS } from '../bindings'
+import { createFakeQueue } from '../fake-queue'
 
 const live = process.env.E2E_LIVE === '1'
 
 type ClipJson = {
   status?: string
+  jobId?: string
   epubPath?: string
   error?: { code: string }
 }
@@ -25,14 +27,18 @@ describe.skipIf(!live)('live clip E2E', () => {
       if (clipToken.length === 0) {
         throw new Error('E2E_LIVE=1 requires CLIP_TOKEN')
       }
+      const store = createMemoryStore()
+      const queue = createFakeQueue()
+      const clipPipeline = createClipPipeline()
       const env = {
         ...TEST_BINDINGS,
         OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
         CLIP_TOKEN: clipToken,
+        CLIP_QUEUE: queue,
       } as Cloudflare.Env
       const app = createApp({
-        clipPipeline: createClipPipeline(),
-        store: createMemoryStore(),
+        store,
+        queue,
       })
       const response = await app.request(
         '/clip',
@@ -46,13 +52,21 @@ describe.skipIf(!live)('live clip E2E', () => {
         },
         env,
       )
-      expect(response.status).toBe(200)
-      const body = (await response.json()) as ClipJson
-      expect(body.status).toBe('ready')
-      expect(body.epubPath).toMatch(/^\/articles\/art_[a-f0-9]{32}\/book\.epub$/)
+      expect(response.status).toBe(202)
+      await queue.drain(env, { clipPipeline, store })
+      const queued = (await response.json()) as ClipJson
+      expect(queued.status).toBe('queued')
+      const jobResponse = await app.request(
+        `/clip/jobs/${queued.jobId}`,
+        { headers: { authorization: bearerAuthorization(clipToken) } },
+        env,
+      )
+      const job = (await jobResponse.json()) as ClipJson
+      expect(job.status).toBe('ready')
+      expect(job.epubPath).toMatch(/^\/articles\/art_[a-f0-9]{32}\/book\.epub$/)
 
       const epubResponse = await app.request(
-        body.epubPath ?? '',
+        job.epubPath ?? '',
         { headers: { authorization: basicAuthorization() } },
         env,
       )

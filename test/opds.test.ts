@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
-import { createExtractPipeline } from '../src/extract/pipeline'
 import { buildOpdsCatalog, OPDS_ACQUISITION_REL, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from '../src/opds/catalog'
-import { createClipPipeline } from '../src/pipeline/clip'
 import { createMemoryStore } from '../src/store/memory'
 import {
   asArticleId,
   asEpubBytes,
-  ok,
   parseHttpUrl,
   type ArticleWrite,
   type HttpUrl,
@@ -108,11 +105,6 @@ describe('OPDS HTTP', () => {
       }),
     )
     const app = createApp({
-      clipPipeline: createClipPipeline({
-        extractPipeline: createExtractPipeline({
-          fetchPage: async (requested) => ok({ requestedUrl: requested, finalUrl: requested, contentType: 'text/html', html: '' }),
-        }),
-      }),
       store,
     })
     const catalog = await app.request(
@@ -154,12 +146,6 @@ describe('OPDS HTTP', () => {
   it('serves an empty catalog, rejects unauthorized downloads, and 404s unknown paths', async () => {
     const store = createMemoryStore()
     const app = createApp({
-      clipPipeline: createClipPipeline({
-        extractPipeline: createExtractPipeline({
-          fetchPage: async (requested) =>
-            ok({ requestedUrl: requested, finalUrl: requested, contentType: 'text/html', html: '' }),
-        }),
-      }),
       store,
     })
 

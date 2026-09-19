@@ -32,6 +32,11 @@ export type {
   BearerAuth,
   ClipExtractBody,
   ClipExtractTimingsMs,
+  ClipJobBody,
+  ClipJobFailedBody,
+  ClipJobQueuedOrRunningBody,
+  ClipJobReadyBody,
+  ClipQueuedBody,
   ClipReadyBody,
   ClipRequestBody,
   ClipSuccessBody,
@@ -48,6 +53,8 @@ export type {
   ArticleId,
   ArticleMetaKey,
   ArticleObjectKey,
+  ClipJobId,
+  ClipJobKey,
   EpubBytes,
   HttpUrl,
 } from './id'
@@ -57,11 +64,25 @@ export {
   articleIdFromBytes,
   articleMetaKey,
   asArticleId,
+  asClipJobId,
   asEpubBytes,
+  clipJobIdFromUrl,
+  clipJobKey,
   isArticleId,
+  isClipJobId,
   parseHttpUrl,
   purchasedCanonicalUrl,
 } from './id'
+export type {
+  ClipFailedJob,
+  ClipJobError,
+  ClipJobRecord,
+  ClipJobStatus,
+  ClipQueueMessage,
+  ClipQueuedJob,
+  ClipReadyJob,
+  ClipRunningJob,
+} from './job'
 export type { BuildOpdsCatalog, OpdsAcquisition, OpdsCatalog } from './opds'
 export type {
   AssignLanguage,
