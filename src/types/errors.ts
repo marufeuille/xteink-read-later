@@ -43,6 +43,11 @@ export type NotFoundError = {
   readonly kind: 'not_found'
 }
 
+export type InvalidEpubError = {
+  readonly kind: 'invalid_epub'
+  readonly reason: string
+}
+
 export type FetchError = PayloadTooLargeError | FetchFailedError
 
 export type ExtractError = InvalidUrlError | FetchError | ExtractFailedError
@@ -53,6 +58,7 @@ export type HttpErrorStatus = 400 | 401 | 404 | 413 | 422 | 500 | 502 | 503
 
 export const httpStatusByErrorKind = {
   invalid_url: 400,
+  invalid_epub: 400,
   unauthorized: 401,
   not_found: 404,
   payload_too_large: 413,
@@ -61,7 +67,10 @@ export const httpStatusByErrorKind = {
   fetch_failed: 502,
   translate_failed: 503,
 } as const satisfies Record<
-  PipelineError['kind'] | UnauthorizedError['kind'] | NotFoundError['kind'],
+  | PipelineError['kind']
+  | UnauthorizedError['kind']
+  | NotFoundError['kind']
+  | InvalidEpubError['kind'],
   HttpErrorStatus
 >
 

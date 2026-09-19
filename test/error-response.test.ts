@@ -68,6 +68,9 @@ describe('error-response', () => {
 
   it('covers the remaining HTTP error kinds', () => {
     expect(toErrorBody({ kind: 'invalid_url', url: '' }).error.status).toBe(400)
+    expect(toErrorBody({ kind: 'invalid_epub', reason: 'uploaded file is not an EPUB zip' }).error.status).toBe(
+      400,
+    )
     expect(toErrorBody({ kind: 'payload_too_large', bytes: 9 }).error.status).toBe(413)
     expect(toErrorBody({ kind: 'fetch_failed', url: url(), reason: 'HTTP 404' }).error.status).toBe(502)
     expect(toErrorBody({ kind: 'not_found' }).error.status).toBe(404)

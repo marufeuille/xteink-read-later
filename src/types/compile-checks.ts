@@ -17,6 +17,7 @@ import type {
   ClipReadyBody,
   ClipTranslatedBody,
   ErrorBody,
+  PurchasedBookBody,
   TranslateFailedBody,
 } from './http'
 import {
@@ -80,6 +81,10 @@ type _readyBodyHasNoCreatedAt = Assert<
   'createdAt' extends keyof ClipReadyBody ? false : true
 >
 
+type _purchasedBookHasNoHtml = Assert<
+  'contentHtml' extends keyof PurchasedBookBody ? false : true
+>
+
 type _translateFailureKeepsExtracted = Assert<
   TranslateFailedBody['error']['extracted'] extends ExtractedArticle ? true : false
 >
@@ -118,6 +123,12 @@ type _getArticleUsesBasic = Assert<
 
 type _getArticleEpubUsesBasic = Assert<
   ApiRoutes['getArticleEpub']['auth'] extends { readonly scheme: 'basic' }
+    ? true
+    : false
+>
+
+type _purchasedBookUsesBearer = Assert<
+  ApiRoutes['postPurchasedBook']['auth'] extends { readonly scheme: 'bearer' }
     ? true
     : false
 >
@@ -171,6 +182,7 @@ export type CompileChecks = {
   readonly readyBodyHasEpubPath: _readyBodyHasEpubPath
   readonly readyBodyHasNoHtml: _readyBodyHasNoHtml
   readonly readyBodyHasNoCreatedAt: _readyBodyHasNoCreatedAt
+  readonly purchasedBookHasNoHtml: _purchasedBookHasNoHtml
   readonly translateFailureKeepsExtracted: _translateFailureKeepsExtracted
   readonly statusMapCoversPipeline: _statusMapCoversPipeline
   readonly errorBodyStatusMatchesCode: _errorBodyStatusMatchesCode
@@ -179,6 +191,7 @@ export type CompileChecks = {
   readonly opdsDownloadUsesBasic: _opdsDownloadUsesBasic
   readonly getArticleUsesBasic: _getArticleUsesBasic
   readonly getArticleEpubUsesBasic: _getArticleEpubUsesBasic
+  readonly purchasedBookUsesBearer: _purchasedBookUsesBearer
   readonly epubFailedIs500: _epubFailedIs500
   readonly storeDeleteReturnsBoolean: _storeDeleteReturnsBoolean
   readonly pipelinesReturnResults: _pipelinesReturnResults

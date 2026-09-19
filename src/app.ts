@@ -3,10 +3,11 @@ import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from '
 import { parseClipUrl } from './extract/parse-clip-url'
 import { parseClipShareText } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
+import { parsePurchasedBookForm } from './http/purchased-book'
 import { buildOpdsCatalog, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
 import { createR2Store } from './store/r2'
-import type { AppEnv, ArticleId, ArticleStore, ClipPipeline, ClipReadyBody, CreateArticleStore, EpubBytes } from './types'
-import { articleEpubKey, isArticleId, parseHttpUrl } from './types'
+import type { AppEnv, ArticleId, ArticleStore, ClipPipeline, ClipReadyBody, CreateArticleStore, EpubBytes, PurchasedBookBody } from './types'
+import { articleEpubKey, articleIdFromBytes, asEpubBytes, isArticleId, parseHttpUrl, purchasedCanonicalUrl } from './types'
 
 function epubFileResponse(id: ArticleId, epub: EpubBytes): Response {
   return new Response(epub, {
@@ -93,6 +94,52 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   }
 
   app.on('POST', ['/clip', '/clip/'], clip)
+
+  const uploadBook = async (c: Context<AppEnv>) => {
+    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
+      return unauthorizedResponse('bearer')
+    }
+    let form: FormData
+    try {
+      form = await c.req.formData()
+    } catch {
+      return toErrorResponse({ kind: 'invalid_epub', reason: 'Request body must be multipart form data' })
+    }
+    const parsed = await parsePurchasedBookForm(form)
+    if (!parsed.ok) {
+      return toErrorResponse(parsed.error)
+    }
+
+    const id = await articleIdFromBytes(parsed.value.epub)
+    const canonicalUrl = purchasedCanonicalUrl(id)
+    await storeFor(c.env, deps).put({
+      id,
+      title: parsed.value.title,
+      author: parsed.value.author,
+      publishedAt: parsed.value.publishedAt,
+      sourceUrl: canonicalUrl,
+      canonicalUrl,
+      language: 'ja',
+      translated: false,
+      epub: asEpubBytes(parsed.value.epub),
+    })
+
+    const response: PurchasedBookBody = {
+      id,
+      title: parsed.value.title,
+      author: parsed.value.author,
+      publishedAt: parsed.value.publishedAt,
+      sourceUrl: canonicalUrl,
+      canonicalUrl,
+      language: 'ja',
+      translated: false,
+      status: 'ready',
+      epubPath: `/${articleEpubKey(id)}`,
+    }
+    return c.json(response, 200)
+  }
+
+  app.on('POST', ['/books', '/books/'], uploadBook)
 
   const requireOpdsBasic = async (c: Context<AppEnv>) => {
     if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
