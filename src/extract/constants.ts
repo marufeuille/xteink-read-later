@@ -5,6 +5,16 @@ export const MAX_HTML_BYTES = 1_500_000
 export const FETCH_TIMEOUT_MS = 20_000
 export const MIN_CONTENT_CHARS = 80
 
+// Omit `pre` so nested <code>/<span> stay elements. Default node-html-parser
+// treats pre as a text node and later escapeText turns tags into visible text.
+export const PARSE_HTML_OPTIONS = {
+  blockTextElements: {
+    script: true,
+    noscript: true,
+    style: true,
+  },
+} as const
+
 export const NOISE_SELECTOR = [
   'script',
   'style',

@@ -165,4 +165,69 @@ describe('fetchPage', () => {
       vi.unstubAllGlobals()
     }
   })
+
+  it('decodes Shift_JIS HTML from Content-Type charset', async () => {
+    const nihongo = new Uint8Array([0x93, 0xfa, 0x96, 0x7b, 0x8c, 0xea])
+    const ascii = new TextEncoder().encode(
+      '<!DOCTYPE html><html lang="ja"><head><meta charset="Shift_JIS"><title>x</title></head><body><article><h1>x</h1><p>',
+    )
+    const tail = new TextEncoder().encode(
+      ' body text for extraction length body text for extraction length body text for extraction length.</p></article></body></html>',
+    )
+    const sjis = new Uint8Array(ascii.length + nihongo.length * 8 + tail.length)
+    let i = 0
+    sjis.set(ascii, i)
+    i += ascii.length
+    for (let n = 0; n < 8; n += 1) {
+      sjis.set(nihongo, i)
+      i += nihongo.length
+    }
+    sjis.set(tail, i)
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(sjis, {
+            headers: { 'content-type': 'text/html; charset=Shift_JIS' },
+          }),
+      ),
+    )
+    try {
+      const result = await fetchPage(mustUrl('https://example.com/sjis'))
+      expect(result.ok).toBe(true)
+      if (!result.ok) {
+        return
+      }
+      expect(result.value.html).toContain('日本語')
+      expect(result.value.html).not.toContain('\uFFFD')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('fails explicitly for an unsupported charset', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('<html><body>hi</body></html>', {
+            headers: { 'content-type': 'text/html; charset=x-unknown-set' },
+          }),
+      ),
+    )
+    try {
+      const result = await fetchPage(mustUrl('https://example.com/unknown-charset'))
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.kind).toBe('fetch_failed')
+      if (result.error.kind === 'fetch_failed') {
+        expect(result.error.reason).toContain('Unsupported HTML charset')
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 })

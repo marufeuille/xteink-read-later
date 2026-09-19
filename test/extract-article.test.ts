@@ -36,7 +36,8 @@ describe('extractArticle', () => {
     expect(result.value.canonicalUrl).toBe('https://example.com/ja/workers-cpu')
     expect(result.value.publishedAt).toBe('2026-03-01T00:00:00.000Z')
     expect(result.value.contentHtml).toContain('Paid プランを前提にする')
-    expect(result.value.contentHtml).toContain('npx wrangler dev')
+    expect(result.value.contentHtml).toMatch(/<pre>\s*<code>npx wrangler dev<\/code>\s*<\/pre>/)
+    expect(result.value.contentHtml).not.toContain('&lt;code&gt;')
     expect(result.value.contentHtml).not.toContain('ホーム')
     expect(result.value.contentHtml).not.toContain('広告プレースホルダ')
     expect(result.value.contentHtml).not.toContain('window.ads')
@@ -78,5 +79,49 @@ describe('extractArticle', () => {
       return
     }
     expect(result.error.kind).toBe('extract_failed')
+  })
+
+  it('keeps pre/code as elements and unwraps highlighter spans', async () => {
+    const result = await extractArticle(page('/pre-code', 'pre-code.html'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toMatch(
+      /<pre>\s*<code class="language-js">const x = 1;<\/code>\s*<\/pre>/,
+    )
+    expect(result.value.contentHtml).not.toContain('&lt;code')
+    expect(result.value.contentHtml).not.toContain('&lt;span')
+    expect(result.value.contentHtml).not.toContain('class="token"')
+  })
+
+  it('prefers the main article over a featured preview article', async () => {
+    const result = await extractArticle(page('/posts/real-story', 'featured-preview.html'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('unique-main-body')
+    expect(result.value.contentHtml).not.toContain('completely different story')
+  })
+
+  it('resolves relative links against the fetched URL, not canonical', async () => {
+    const fetched = parseHttpUrl('https://example.com/amp/posts/story/')
+    if (fetched === null) {
+      throw new Error('fetched url')
+    }
+    const result = await extractArticle({
+      requestedUrl: fetched,
+      finalUrl: fetched,
+      contentType: 'text/html',
+      html: html('amp-relative.html'),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.canonicalUrl).toBe('https://example.com/posts/story/')
+    expect(result.value.contentHtml).toContain('https://example.com/amp/posts/reference/')
+    expect(result.value.contentHtml).not.toContain('https://example.com/posts/reference/')
   })
 })

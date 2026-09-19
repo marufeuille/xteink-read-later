@@ -1,6 +1,7 @@
 import type { FetchError, FetchedPage, FetchPage, HttpUrl, PayloadTooLargeError, Result } from '../types'
 import { err, ok, parseHttpUrl } from '../types'
 import { FETCH_TIMEOUT_MS, MAX_HTML_BYTES, USER_AGENT } from './constants'
+import { decodeHtmlBytes } from './html-encoding'
 
 function isHtmlContentType(contentType: string): boolean {
   if (contentType.length === 0) {
@@ -10,9 +11,9 @@ function isHtmlContentType(contentType: string): boolean {
   return mime === 'text/html' || mime === 'application/xhtml+xml'
 }
 
-async function readBoundedHtml(
+async function readBoundedBytes(
   response: Response,
-): Promise<Result<string, PayloadTooLargeError>> {
+): Promise<Result<Uint8Array, PayloadTooLargeError>> {
   const declared = response.headers.get('content-length')
   if (declared !== null) {
     const bytes = Number(declared)
@@ -23,7 +24,7 @@ async function readBoundedHtml(
 
   const body = response.body
   if (body === null) {
-    return ok('')
+    return ok(new Uint8Array())
   }
 
   const reader = body.getReader()
@@ -55,7 +56,7 @@ async function readBoundedHtml(
     bytes.set(chunk, offset)
     offset += chunk.byteLength
   }
-  return ok(new TextDecoder('utf-8').decode(bytes))
+  return ok(bytes)
 }
 
 export const fetchPage: FetchPage = async (url: HttpUrl): Promise<Result<FetchedPage, FetchError>> => {
@@ -87,9 +88,18 @@ export const fetchPage: FetchPage = async (url: HttpUrl): Promise<Result<Fetched
       })
     }
 
-    const html = await readBoundedHtml(response)
-    if (!html.ok) {
-      return html
+    const bytes = await readBoundedBytes(response)
+    if (!bytes.ok) {
+      return bytes
+    }
+
+    const decoded = decodeHtmlBytes(bytes.value, contentType)
+    if (!decoded.ok) {
+      return err({
+        kind: 'fetch_failed',
+        url,
+        reason: decoded.reason,
+      })
     }
 
     const finalUrl = parseHttpUrl(response.url) ?? url
@@ -97,7 +107,7 @@ export const fetchPage: FetchPage = async (url: HttpUrl): Promise<Result<Fetched
       requestedUrl: url,
       finalUrl,
       contentType: contentType || 'text/html',
-      html: html.value,
+      html: decoded.html,
     })
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)

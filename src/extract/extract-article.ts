@@ -8,7 +8,7 @@ import type {
   Result,
 } from '../types'
 import { err, ok, parseHttpUrl } from '../types'
-import { CONTENT_SELECTORS, MIN_CONTENT_CHARS, NOISE_SELECTOR } from './constants'
+import { CONTENT_SELECTORS, MIN_CONTENT_CHARS, NOISE_SELECTOR, PARSE_HTML_OPTIONS } from './constants'
 import { sanitizeContentHtml, visibleTextLength } from './sanitize-html'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -191,18 +191,46 @@ function paragraphScore(el: HTMLElement): number {
   return score
 }
 
+function locationBonus(el: HTMLElement): number {
+  if (el.getAttribute('itemprop') === 'articleBody' || el.closest('[itemprop="articleBody"]') !== null) {
+    return 2.2
+  }
+  const tag = el.rawTagName.toLowerCase()
+  if (tag === 'main' || el.getAttribute('role') === 'main' || el.closest('main, [role="main"]') !== null) {
+    return 1.8
+  }
+  const haystack = `${el.getAttribute('class') ?? ''} ${el.id}`.toLowerCase()
+  if (/featured|teaser|excerpt|preview|related|popular|sidebar/.test(haystack)) {
+    return 0.25
+  }
+  if (el.closest('.featured, .teaser, .excerpt, .preview, aside') !== null) {
+    return 0.25
+  }
+  return 1
+}
+
 function pickContentNode(root: HTMLElement): HTMLElement | null {
+  const seen = new Set<HTMLElement>()
+  const candidates: HTMLElement[] = []
   for (const selector of CONTENT_SELECTORS) {
-    const candidate = root.querySelector(selector)
-    if (candidate !== null && paragraphScore(candidate) >= MIN_CONTENT_CHARS) {
-      return candidate
+    for (const el of root.querySelectorAll(selector)) {
+      if (!seen.has(el)) {
+        seen.add(el)
+        candidates.push(el)
+      }
+    }
+  }
+  for (const el of root.querySelectorAll('article, section, div')) {
+    if (!seen.has(el)) {
+      seen.add(el)
+      candidates.push(el)
     }
   }
 
   let best: HTMLElement | null = null
   let bestScore = 0
-  for (const candidate of root.querySelectorAll('article, section, div')) {
-    const score = paragraphScore(candidate)
+  for (const candidate of candidates) {
+    const score = paragraphScore(candidate) * locationBonus(candidate)
     if (score > bestScore) {
       best = candidate
       bestScore = score
@@ -211,10 +239,23 @@ function pickContentNode(root: HTMLElement): HTMLElement | null {
   return bestScore >= MIN_CONTENT_CHARS ? best : null
 }
 
+function documentBaseUrl(root: HTMLElement, finalUrl: HttpUrl): HttpUrl {
+  const href = root.querySelector('base')?.getAttribute('href')?.trim()
+  if (href === undefined || href.length === 0) {
+    return finalUrl
+  }
+  try {
+    const resolved = parseHttpUrl(new URL(href, finalUrl).href)
+    return resolved ?? finalUrl
+  } catch {
+    return finalUrl
+  }
+}
+
 export const extractArticle: ExtractArticle = async (
   page: FetchedPage,
 ): Promise<Result<ExtractedContent, ExtractFailedError>> => {
-  const root = parse(page.html)
+  const root = parse(page.html, PARSE_HTML_OPTIONS)
   const jsonLd = jsonLdNodes(root)
   const jsonLdArticle = jsonLd[0]
 
@@ -236,6 +277,7 @@ export const extractArticle: ExtractArticle = async (
   )
   const publishedAt = publishedRaw !== null ? toIsoDate(publishedRaw) : null
   const canonicalUrl = canonicalFrom(root, page.finalUrl)
+  const baseUrl = documentBaseUrl(root, page.finalUrl)
 
   stripNoise(root)
   const contentNode = pickContentNode(root)
@@ -253,7 +295,7 @@ export const extractArticle: ExtractArticle = async (
     }
   }
 
-  const contentHtml = sanitizeContentHtml(contentNode, canonicalUrl)
+  const contentHtml = sanitizeContentHtml(contentNode, baseUrl)
   if (visibleTextLength(contentHtml) < MIN_CONTENT_CHARS) {
     return err({
       kind: 'extract_failed',
