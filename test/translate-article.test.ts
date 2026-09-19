@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { translateArticle } from '../src/translate/openai'
-import { OPENAI_CHAT_URL } from '../src/translate/constants'
-import { parseHttpUrl, type ExtractedArticle, type HttpUrl } from '../src/types'
+import { OPENAI_CHAT_URL, TRANSLATE_TIMEOUT_MS } from '../src/translate/constants'
+import { parseHttpUrl, type ExtractedArticle, type HttpUrl, type TranslateDeps } from '../src/types'
 
 function url(value: string): HttpUrl {
   const parsed = parseHttpUrl(value)
@@ -84,6 +84,75 @@ describe('translateArticle', () => {
       expect(result.value.contentHtml).toContain('<pre><code>')
     } finally {
       vi.unstubAllGlobals()
+    }
+  })
+
+  it('fails with the extracted article when OPENAI_API_KEY is missing', async () => {
+    const input = article()
+    for (const deps of [{}, { OPENAI_API_KEY: '' }, { OPENAI_API_KEY: '   ' }] as TranslateDeps[]) {
+      const result = await translateArticle(input, deps)
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.kind).toBe('translate_failed')
+      expect(result.error.extracted).toEqual(input)
+      expect(result.error.reason).toContain('OPENAI_API_KEY')
+    }
+  })
+
+  it('times out hanging OpenAI fetch and body reads', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => {})),
+    )
+    try {
+      const input = article()
+      const pending = translateArticle(input, { OPENAI_API_KEY: 'sk-test' })
+      await vi.advanceTimersByTimeAsync(TRANSLATE_TIMEOUT_MS)
+      const result = await pending
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.kind).toBe('translate_failed')
+      expect(result.error.extracted).toEqual(input)
+      expect(result.error.reason).toContain('timed out')
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it('times out when the OpenAI response body never arrives', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            new ReadableStream({
+              start() {
+                // Never enqueue or close; the body hang must be bounded.
+              },
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    )
+    try {
+      const pending = translateArticle(article(), { OPENAI_API_KEY: 'sk-test' })
+      await vi.advanceTimersByTimeAsync(TRANSLATE_TIMEOUT_MS)
+      const result = await pending
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.reason).toContain('timed out')
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
     }
   })
 

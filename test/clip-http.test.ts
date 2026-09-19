@@ -152,6 +152,31 @@ describe('POST /clip', () => {
     expect(body.error?.code).toBe('extract_failed')
   })
 
+  it('returns 503 with extracted article when OPENAI_API_KEY is unset', async () => {
+    const app = appWithFetch(async (url) =>
+      ok({
+        requestedUrl: url,
+        finalUrl: url,
+        contentType: 'text/html',
+        html: fixtureHtml('en-tech.html'),
+      }),
+    )
+    const response = await app.request(
+      '/clip',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/en/compatibility-date' }),
+      },
+      {} as Cloudflare.Env,
+    )
+    expect(response.status).toBe(503)
+    const body = await readJson(response)
+    expect(body.error?.code).toBe('translate_failed')
+    expect(body.error?.extracted?.contentHtml).toContain('nodejs_compat')
+    expect(body.error?.extracted?.language).toBe('non-ja')
+  })
+
   it('returns 503 with extracted article when translation fails', async () => {
     const translateArticle: TranslateArticle = async (extracted) =>
       err({ kind: 'translate_failed', extracted, reason: 'OpenAI HTTP 500' })
