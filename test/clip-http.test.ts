@@ -324,6 +324,57 @@ describe('POST /clip E2E', () => {
     expect(response.status).toBe(400)
     expect((await readJson(response)).error?.code).toBe('invalid_url')
   })
+
+  it('accepts Android share payloads as JSON, text/plain, or form body', async () => {
+    const fetched: string[] = []
+    const { app } = appWithFetch(async (url) => {
+      fetched.push(url)
+      return ok({
+        requestedUrl: url,
+        finalUrl: url,
+        contentType: 'text/html',
+        html: fixtureHtml('ja-tech.html'),
+      })
+    })
+
+    const jsonShare = await app.request(
+      '/clip',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
+        body: JSON.stringify({ url: '記事タイトル\nhttps://example.com/ja/workers-cpu' }),
+      },
+      BINDINGS,
+    )
+    expect(jsonShare.status).toBe(200)
+    expect((await readJson(jsonShare)).status).toBe('ready')
+
+    const plain = await app.request(
+      '/clip',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'text/plain', authorization: bearerAuthorization() },
+        body: 'https://example.com/ja/workers-cpu',
+      },
+      BINDINGS,
+    )
+    expect(plain.status).toBe(200)
+
+    const form = await app.request(
+      '/clip',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/x-www-form-urlencoded',
+          authorization: bearerAuthorization(),
+        },
+        body: 'url=https%3A%2F%2Fexample.com%2Fja%2Fworkers-cpu',
+      },
+      BINDINGS,
+    )
+    expect(form.status).toBe(200)
+    expect(fetched.every((url) => url === 'https://example.com/ja/workers-cpu')).toBe(true)
+  })
 })
 
 describe('fetchPage', () => {

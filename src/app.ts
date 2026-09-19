@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
 import { parseClipUrl } from './extract/parse-clip-url'
-import { isClipRequestBody } from './http/clip-request'
+import { parseClipShareText } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
 import { buildOpdsCatalog, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
 import { createR2Store } from './store/r2'
@@ -39,21 +39,18 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
       return unauthorizedResponse('bearer')
     }
-    let body: unknown
+    let raw: string
     try {
-      body = await c.req.json()
+      raw = await c.req.text()
     } catch {
       return toErrorResponse({ kind: 'invalid_url', url: '' })
     }
-    if (!isClipRequestBody(body)) {
-      const url =
-        typeof body === 'object' && body !== null && 'url' in body
-          ? String(body.url)
-          : ''
-      return toErrorResponse({ kind: 'invalid_url', url })
+    const shareText = parseClipShareText(c.req.header('content-type'), raw)
+    if (shareText === null) {
+      return toErrorResponse({ kind: 'invalid_url', url: '' })
     }
 
-    const parsed = parseClipUrl(body)
+    const parsed = parseClipUrl({ url: shareText })
     if (!parsed.ok) {
       return toErrorResponse(parsed.error)
     }
