@@ -86,18 +86,17 @@ CI の `typecheck, unit, e2e` が失敗した run ではデプロイジョブは
 
 ### 初回だけ — Cloudflare 側（Workers Secret）
 
-R2 バケット `xteink-read-later-articles` がアカウントに必要。アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。
+アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。R2 バケット `xteink-read-later-articles` は main のデプロイジョブが無ければ作る（手元で作ってもよい）。
 
 ```bash
 npx wrangler login
-npx wrangler r2 bucket create xteink-read-later-articles
 npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put CLIP_TOKEN
 npx wrangler secret put OPDS_USERNAME
 npx wrangler secret put OPDS_PASSWORD
 ```
 
-プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。
+プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。
 
 ### GitHub Secrets（Actions が Cloudflare に認証するため）
 
@@ -105,7 +104,7 @@ npx wrangler secret put OPDS_PASSWORD
 
 | Name | 中身 |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers**。対象アカウントだけに scope する |
+| `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers** に加え、Account 権限 **Workers R2 Storage: Edit**（バケット作成と bind）。対象アカウントだけに scope する |
 | `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの [Account ID](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/) |
 
 次は **GitHub Secrets に入れない**（Cloudflare の `wrangler secret put` 側）: `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD`。
