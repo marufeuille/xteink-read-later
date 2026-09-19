@@ -22,6 +22,8 @@ curl -sS http://localhost:8787/clip \
 
 成功時は title / author / publishedAt / canonicalUrl / contentHtml / translated を JSON で返す。英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。失敗時は `error.code` と `error.message` で原因を返す。翻訳失敗時（503）は `error.extracted` に抽出結果を残す。
 
+EPUB 3 は `src/epub/build-epub.ts` で生成する（フォントは埋め込まない）。`POST /clip` からファイルを返すのは次の issue。
+
 `.dev.vars` の `OPENAI_API_KEY` を使う（リポジトリには入れない）。
 
 | 状態 | 意味 |
