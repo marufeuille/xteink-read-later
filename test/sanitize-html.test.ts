@@ -169,3 +169,35 @@ describe('XML-illegal chars and img drop', () => {
     expect(html).toContain('Hello world')
   })
 })
+
+describe('tables and nested lists', () => {
+  it('round-trips a table through Markdown HTML passthrough', () => {
+    const html =
+      '<table><thead><tr><th>Flag</th><th>Meaning</th></tr></thead>' +
+      '<tbody><tr><td>nodejs_compat</td><td>Node builtins</td></tr></tbody></table>'
+    const markdown = htmlToMarkdown(html, BASE)
+    expect(markdown).toContain('<table')
+    expect(markdown).toContain('<th>Flag</th>')
+    expect(markdown).toContain('<td>nodejs_compat</td>')
+    const roundTrip = markdownToHtml(markdown, BASE)
+    expect(roundTrip).toContain('<table')
+    expect(roundTrip).toContain('<th>Flag</th>')
+    expect(roundTrip).toContain('<td>Node builtins</td>')
+  })
+
+  it('keeps nested list items through Markdown and back to HTML', () => {
+    const html =
+      '<ul><li>Parent item<ul><li>Nested child</li><li>Second child</li></ul></li><li>Sibling</li></ul>'
+    const markdown = htmlToMarkdown(html, BASE)
+    expect(markdown).toContain('Parent item')
+    expect(markdown).toContain('Nested child')
+    expect(markdown).toContain('Second child')
+    expect(markdown).toContain('Sibling')
+    const roundTrip = markdownToHtml(markdown, BASE)
+    expect(roundTrip).toContain('<li>')
+    expect(roundTrip).toContain('Parent item')
+    expect(roundTrip).toContain('Nested child')
+    expect(roundTrip).toContain('Second child')
+    expect(roundTrip).toContain('Sibling')
+  })
+})

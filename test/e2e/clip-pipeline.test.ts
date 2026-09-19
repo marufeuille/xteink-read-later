@@ -132,6 +132,34 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).toContain('{&quot;compatibility_date&quot;:&quot;2026-09-19&quot;}')
   })
 
+  it('drops img and NUL from EPUB after a mocked OpenAI markdown reply', async () => {
+    const pageUrl = 'https://example.com/en/compatibility-date'
+    installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('en-tech.html') } },
+      openai: async () =>
+        openaiMessageResponse(
+          'ダミー見出し',
+          'Dummy body text for the chapter.\n\0More dummy text.\n\nSee ![SVG chart caption](https://example.com/chart.svg) after the dummy paragraph.',
+        ),
+    })
+    const hono = app()
+    const response = await clip(hono, pageUrl)
+    expect(response.status).toBe(200)
+    const body = await readJson(response)
+    const epubResponse = await hono.request(
+      body.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter.includes('\u0000')).toBe(false)
+    expect(chapter).not.toMatch(/<img\b/i)
+    expect(chapter).not.toContain('example.com/chart.svg')
+    expect(chapter).toContain('Dummy body text for the chapter.')
+    expect(chapter).toContain('SVG chart caption')
+  })
+
   it('keeps the extracted article when the OpenAI mock fails', async () => {
     const pageUrl = 'https://example.com/en/compatibility-date'
     installNetworkMock({
