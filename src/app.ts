@@ -2,11 +2,12 @@ import { Hono } from 'hono'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { isClipRequestBody } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
-import type { AppEnv, ClipTranslatedBody } from './types'
-import type { TranslatePipeline } from './translate/pipeline'
+import type { AppEnv, ArticleStore, ClipPipeline, ClipReadyBody } from './types'
+import { articleEpubKey, isArticleId } from './types'
 
 export type AppDeps = {
-  readonly translatePipeline: TranslatePipeline
+  readonly clipPipeline: ClipPipeline
+  readonly store: ArticleStore
 }
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
@@ -32,20 +33,70 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       return toErrorResponse(parsed.error)
     }
 
-    const result = await deps.translatePipeline(parsed.value, {
+    const result = await deps.clipPipeline(parsed.value, {
       OPENAI_API_KEY: c.env.OPENAI_API_KEY,
     })
     if (!result.ok) {
       return toErrorResponse(result.error)
     }
 
-    const { id, article, timingsMs } = result.value
-    const response: ClipTranslatedBody = {
+    const { id, article, epub, timingsMs } = result.value
+    await deps.store.put({
       id,
-      ...article,
+      title: article.title,
+      author: article.author,
+      publishedAt: article.publishedAt,
+      sourceUrl: article.sourceUrl,
+      canonicalUrl: article.canonicalUrl,
+      language: article.language,
+      translated: article.translated,
+      epub,
+    })
+
+    const response: ClipReadyBody = {
+      id,
+      title: article.title,
+      author: article.author,
+      publishedAt: article.publishedAt,
+      sourceUrl: article.sourceUrl,
+      canonicalUrl: article.canonicalUrl,
+      language: article.language,
+      translated: article.translated,
+      status: 'ready',
+      epubPath: `/${articleEpubKey(id)}`,
       timingsMs,
     }
     return c.json(response, 200)
+  })
+
+  app.get('/articles/:id', async (c) => {
+    const id = c.req.param('id')
+    if (!isArticleId(id)) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    const meta = await deps.store.getMeta(id)
+    if (meta === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    return c.json(meta, 200)
+  })
+
+  app.get('/articles/:id/book.epub', async (c) => {
+    const id = c.req.param('id')
+    if (!isArticleId(id)) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    const epub = await deps.store.getEpub(id)
+    if (epub === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    return new Response(epub, {
+      status: 200,
+      headers: {
+        'content-type': 'application/epub+zip',
+        'content-disposition': `attachment; filename="${id}.epub"`,
+      },
+    })
   })
 
   return app

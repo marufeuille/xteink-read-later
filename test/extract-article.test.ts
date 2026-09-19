@@ -95,6 +95,18 @@ describe('extractArticle', () => {
     expect(result.value.contentHtml).not.toContain('class="token"')
   })
 
+  it('keeps highlighter comments inside pre/code instead of stripping them as page noise', async () => {
+    const result = await extractArticle(page('/payments', 'code-comments.html'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('Do not retry this non-idempotent operation.')
+    expect(result.value.contentHtml).toContain('submitPayment()')
+    expect(result.value.contentHtml).toContain('second highlighter comment token')
+    expect(result.value.contentHtml).toMatch(/<pre>\s*<code>/)
+  })
+
   it('prefers the main article over a featured preview article', async () => {
     const result = await extractArticle(page('/posts/real-story', 'featured-preview.html'))
     expect(result.ok).toBe(true)
