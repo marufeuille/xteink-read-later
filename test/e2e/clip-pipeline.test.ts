@@ -8,10 +8,11 @@ import { MAX_HTML_BYTES } from '../../src/extract/constants'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
 import { OPENAI_CHAT_URL } from '../../src/translate/constants'
+import { bearerAuthorization, TEST_BINDINGS } from '../bindings'
 import { installNetworkMock, openaiMessageResponse } from './mock-network'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
-const BINDINGS = { OPENAI_API_KEY: 'sk-test' } as Cloudflare.Env
+const BINDINGS = TEST_BINDINGS
 
 function fixtureHtml(name: string): string {
   return readFileSync(join(fixtures, '..', 'fixtures', name), 'utf8')
@@ -40,7 +41,7 @@ async function clip(hono: ReturnType<typeof createApp>, url: string, env: Cloudf
     '/clip',
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
       body: JSON.stringify({ url }),
     },
     env,

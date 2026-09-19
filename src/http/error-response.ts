@@ -1,7 +1,7 @@
-import type { ErrorBody, ExtractError, NotFoundError, PipelineError, TranslateFailedBody, TranslateFailedError } from '../types'
+import type { ErrorBody, ExtractError, NotFoundError, PipelineError, TranslateFailedBody, TranslateFailedError, UnauthorizedError } from '../types'
 import { httpStatusByErrorKind } from '../types'
 
-export function errorMessage(error: PipelineError | NotFoundError): string {
+export function errorMessage(error: PipelineError | NotFoundError | UnauthorizedError): string {
   switch (error.kind) {
     case 'invalid_url':
       return error.url.length > 0
@@ -17,6 +17,8 @@ export function errorMessage(error: PipelineError | NotFoundError): string {
       return `Translation failed: ${error.reason}`
     case 'not_found':
       return 'Article not found'
+    case 'unauthorized':
+      return 'Unauthorized'
   }
 }
 

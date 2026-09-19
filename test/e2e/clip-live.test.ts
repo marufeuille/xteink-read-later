@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { createApp } from '../../src/app'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
+import { bearerAuthorization } from '../bindings'
 
 const live = process.env.E2E_LIVE === '1'
 
@@ -20,7 +21,14 @@ describe.skipIf(!live)('live clip E2E', () => {
       if (url === undefined || url.trim().length === 0) {
         throw new Error('E2E_LIVE=1 requires E2E_LIVE_URL')
       }
-      const env = { OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '' } as Cloudflare.Env
+      const clipToken = process.env.CLIP_TOKEN ?? ''
+      if (clipToken.length === 0) {
+        throw new Error('E2E_LIVE=1 requires CLIP_TOKEN')
+      }
+      const env = {
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
+        CLIP_TOKEN: clipToken,
+      } as Cloudflare.Env
       const app = createApp({
         clipPipeline: createClipPipeline(),
         store: createMemoryStore(),
@@ -29,7 +37,10 @@ describe.skipIf(!live)('live clip E2E', () => {
         '/clip',
         {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            authorization: bearerAuthorization(clipToken),
+          },
           body: JSON.stringify({ url }),
         },
         env,

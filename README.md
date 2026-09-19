@@ -17,37 +17,44 @@ npm run dev
 ```bash
 curl -sS http://localhost:8787/clip \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
   -d '{"url":"https://example.com/article"}'
 ```
 
 1 リクエストで fetch → 抽出 → 言語判定 → 翻訳/整形 → EPUB 生成まで走る。成功時は `status: "ready"` と `epubPath`、`timingsMs` を返す。EPUB とメタデータは R2（`wrangler dev` ではローカルシミュレーション）へ保存する。同一 canonical URL の再送は同じ `id` で上書きし、`createdAt` は初回のまま `updatedAt` だけ更新する。
 
+`POST /clip` と `DELETE /articles/:id` は `.dev.vars` の `CLIP_TOKEN` を Bearer で要求する（本番も同じ）。OPDS は CrossPoint JP 向けに HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`。空パスワード不可）。比較は timing-safe。token はレスポンスにもログにも出さない。
+
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
   -d '{"url":"https://example.com/article"}'
 curl -sS -o book.epub "http://localhost:8787$(jq -r .epubPath clip.json)"
-curl -sS -X DELETE "http://localhost:8787/articles/$(jq -r .id clip.json)"
+curl -sS -X DELETE "http://localhost:8787/articles/$(jq -r .id clip.json)" \
+  -H "Authorization: Bearer $CLIP_TOKEN"
 ```
 
-手動削除は `DELETE /articles/:id`。存在しない id は 404。
+手動削除は `DELETE /articles/:id`。token 不一致は 401、存在しない id は 404。
 
-OPDS 1.2 相当の Atom カタログは `GET /opds`。新しい記事が上で、各 entry の `http://opds-spec.org/acquisition` リンクから EPUB を取る。CrossPoint JP にはこの URL を登録する（HTTP Basic は MAR-38）。
+OPDS 1.2 相当の Atom カタログは `GET /opds`。新しい記事が上で、各 entry の `http://opds-spec.org/acquisition` リンクから EPUB を取る。CrossPoint JP にはこの URL を HTTP Basic 付きで登録する。
 
 ```bash
-curl -sS http://localhost:8787/opds
-curl -sS -o book.epub "http://localhost:8787/opds/download/$(jq -r .id clip.json).epub"
+curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
+curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" \
+  -o book.epub "http://localhost:8787/opds/download/$(jq -r .id clip.json).epub"
 ```
 
 ログは stage 別の JSON（`fetch` / `extract` / `translate` / `epub` / `store`）で所要時間と失敗 `errorKind` を出す。
 
 英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。失敗時は `error.code` と `error.message` で原因を返す。翻訳失敗時（503）は `error.extracted` に抽出結果を残す。
 
-`.dev.vars` の `OPENAI_API_KEY` を使う（リポジトリには入れない）。
+`.dev.vars` の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。
 
 | 状態 | 意味 |
 | --- | --- |
 | 400 | URL 不正 |
+| 401 | CLIP_TOKEN または OPDS Basic が無い / 不一致 |
 | 404 | 記事が無い |
 | 413 | 取得 HTML が上限超過 |
 | 422 | 本文を抽出できない |
@@ -90,6 +97,7 @@ npm run deploy
 ```bash
 curl -sS https://xteink-read-later.<account>.workers.dev/clip \
   -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
   -d '{"url":"https://example.com/article"}'
 ```
 

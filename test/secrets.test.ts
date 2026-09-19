@@ -7,6 +7,7 @@ import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
 import { createMemoryStore } from '../src/store/memory'
 import { err, ok, type FetchPage } from '../src/types'
+import { bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
 
 const SECRET = 'sk-secret-must-not-leak-123'
 const jaHtml = readFileSync(
@@ -35,14 +36,15 @@ describe('secret handling', () => {
       '/clip',
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
       },
-      { OPENAI_API_KEY: SECRET } as Cloudflare.Env,
+      { ...TEST_BINDINGS, OPENAI_API_KEY: SECRET },
     )
     const text = await response.text()
     expect(response.status).toBe(503)
     expect(text).not.toContain(SECRET)
+    expect(text).not.toContain(TEST_CLIP_TOKEN)
     expect(text).toContain('translate_failed')
   })
 })
