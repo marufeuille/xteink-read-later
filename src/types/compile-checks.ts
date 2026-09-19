@@ -112,6 +112,18 @@ type _opdsDownloadUsesBasic = Assert<
     : false
 >
 
+type _getArticleUsesBasic = Assert<
+  ApiRoutes['getArticle']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
+type _getArticleEpubUsesBasic = Assert<
+  ApiRoutes['getArticleEpub']['auth'] extends { readonly scheme: 'basic' }
+    ? true
+    : false
+>
+
+type _epubFailedIs500 = Assert<Equals<(typeof httpStatusByErrorKind)['epub_failed'], 500>>
+
 type _storeDeleteReturnsBoolean = Assert<
   ReturnType<ArticleStore['delete']> extends Promise<boolean> ? true : false
 >
@@ -165,6 +177,9 @@ export type CompileChecks = {
   readonly clipUsesBearer: _clipUsesBearer
   readonly opdsUsesBasic: _opdsUsesBasic
   readonly opdsDownloadUsesBasic: _opdsDownloadUsesBasic
+  readonly getArticleUsesBasic: _getArticleUsesBasic
+  readonly getArticleEpubUsesBasic: _getArticleEpubUsesBasic
+  readonly epubFailedIs500: _epubFailedIs500
   readonly storeDeleteReturnsBoolean: _storeDeleteReturnsBoolean
   readonly pipelinesReturnResults: _pipelinesReturnResults
   readonly keysAreObjectKeys: _keysAreObjectKeys

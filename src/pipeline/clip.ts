@@ -74,12 +74,12 @@ export function createClipPipeline(
         articleId: extracted.value.id,
         stage: 'epub',
         durationMs: epubMs,
-        errorKind: 'extract_failed',
+        errorKind: 'epub_failed',
       })
       return {
         ok: false,
         error: {
-          kind: 'extract_failed',
+          kind: 'epub_failed',
           url,
           reason: `EPUB generation failed: ${reason}`,
         },

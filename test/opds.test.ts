@@ -126,6 +126,14 @@ describe('OPDS HTTP', () => {
     expect(xml.indexOf('新しい記事')).toBeLessThan(xml.indexOf('古い記事'))
     expect(xml).toContain(`https://read.example.com/opds/download/${newer}.epub`)
 
+    const trailing = await app.request(
+      'https://read.example.com/opds/',
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
+    expect(trailing.status).toBe(200)
+    expect(await trailing.text()).toContain(`https://read.example.com/opds/download/${newer}.epub`)
+
     const download = await app.request(
       `https://read.example.com/opds/download/${newer}.epub`,
       { headers: { authorization: basicAuthorization() } },
