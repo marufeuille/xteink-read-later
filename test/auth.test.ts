@@ -156,6 +156,34 @@ describe('HTTP auth', () => {
     )
     expect(okCatalog.status).toBe(200)
 
+    const noAuthArticle = await app.request(`/articles/${id}`, {}, TEST_BINDINGS)
+    expect(noAuthArticle.status).toBe(401)
+    expect(noAuthArticle.headers.get('www-authenticate')).toBe('Basic realm="Xteink Read Later"')
+
+    const bearerArticle = await app.request(
+      `/articles/${id}`,
+      { headers: { authorization: bearerAuthorization() } },
+      TEST_BINDINGS,
+    )
+    expect(bearerArticle.status).toBe(401)
+
+    const okArticle = await app.request(
+      `/articles/${id}`,
+      { headers: { authorization: basicAuthorization() } },
+      TEST_BINDINGS,
+    )
+    expect(okArticle.status).toBe(200)
+
+    const noAuthEpub = await app.request(`/articles/${id}/book.epub`, {}, TEST_BINDINGS)
+    expect(noAuthEpub.status).toBe(401)
+
+    const okEpub = await app.request(
+      `/articles/${id}/book.epub`,
+      { headers: { authorization: basicAuthorization() } },
+      TEST_BINDINGS,
+    )
+    expect(okEpub.status).toBe(200)
+
     const emptyPassword = await app.request(
       'https://read.example.com/opds',
       { headers: { authorization: basicAuthorization(TEST_OPDS_USERNAME, '') } },

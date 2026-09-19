@@ -23,14 +23,15 @@ curl -sS http://localhost:8787/clip \
 
 1 リクエストで fetch → 抽出 → 言語判定 → 翻訳/整形 → EPUB 生成まで走る。成功時は `status: "ready"` と `epubPath`、`timingsMs` を返す。EPUB とメタデータは R2（`wrangler dev` ではローカルシミュレーション）へ保存する。同一 canonical URL の再送は同じ `id` で上書きし、`createdAt` は初回のまま `updatedAt` だけ更新する。
 
-`POST /clip` と `DELETE /articles/:id` は `.dev.vars` の `CLIP_TOKEN` を Bearer で要求する（本番も同じ）。OPDS は CrossPoint JP 向けに HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`。空パスワード不可）。比較は timing-safe。token はレスポンスにもログにも出さない。
+`POST /clip` と `DELETE /articles/:id` は `.dev.vars` の `CLIP_TOKEN` を Bearer で要求する（本番も同じ）。`GET /opds`、`GET /articles/:id`、`GET /articles/:id/book.epub`、`GET /opds/download/:id.epub` は CrossPoint JP 向けに HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`。空パスワード不可）。比較は timing-safe。token はレスポンスにもログにも出さない。`POST /clip` と `GET /opds` は末尾スラッシュありなしを同じルートとして扱う（404 にしない）。
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer $CLIP_TOKEN" \
   -d '{"url":"https://example.com/article"}'
-curl -sS -o book.epub "http://localhost:8787$(jq -r .epubPath clip.json)"
+curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" \
+  -o book.epub "http://localhost:8787$(jq -r .epubPath clip.json)"
 curl -sS -X DELETE "http://localhost:8787/articles/$(jq -r .id clip.json)" \
   -H "Authorization: Bearer $CLIP_TOKEN"
 ```
@@ -58,6 +59,7 @@ curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" \
 | 404 | 記事が無い |
 | 413 | 取得 HTML が上限超過 |
 | 422 | 本文を抽出できない |
+| 500 | EPUB 生成失敗（`epub_failed`。抽出失敗の 422 とは別） |
 | 502 | 対象ページの取得失敗 |
 | 503 | 翻訳失敗（抽出結果は `error.extracted`） |
 

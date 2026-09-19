@@ -77,11 +77,11 @@ export type RouteSpec<
 
 export type ApiRoutes = {
   readonly clip: RouteSpec<'POST', '/clip', BearerAuth, ClipSuccessBody>
-  readonly getArticle: RouteSpec<'GET', '/articles/:id', null, ArticleMeta>
+  readonly getArticle: RouteSpec<'GET', '/articles/:id', BasicAuth, ArticleMeta>
   readonly getArticleEpub: RouteSpec<
     'GET',
     '/articles/:id/book.epub',
-    null,
+    BasicAuth,
     EpubBytes
   >
   readonly deleteArticle: RouteSpec<

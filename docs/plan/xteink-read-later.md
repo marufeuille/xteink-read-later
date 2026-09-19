@@ -133,17 +133,20 @@ Phase 1 の途中（MAR-30 完了時点）では `contentHtml` を返し、`epub
 | `400` | URL 不正 |
 | `401` | token なし / 不一致 |
 | `413` | 取得 HTML が上限超過 |
-| `422` | 本文抽出不能 |
+| `422` | 本文抽出不能（`extract_failed`） |
+| `500` | EPUB 生成失敗（`epub_failed`） |
 | `502` | 対象ページ取得失敗 |
 | `503` | 翻訳プロバイダ失敗（抽出結果は失わない。レスポンスに `extracted` を残す） |
 
+`POST /clip` と `POST /clip/` は同じルート。
+
 ### `GET /articles/:id`
 
-`meta.json` 相当。未存在は `404`。
+`meta.json` 相当。OPDS と同じ HTTP Basic。未存在は `404`。未認証は `401`。
 
 ### `GET /articles/:id/book.epub`
 
-`application/epub+zip`。未存在は `404`。
+`application/epub+zip`。OPDS と同じ HTTP Basic。未存在は `404`。未認証は `401`。
 
 ### `DELETE /articles/:id`
 
@@ -151,7 +154,7 @@ Bearer 必須。R2 上の当該記事を削除。MAR-35 の手動削除。
 
 ### `GET /opds`
 
-OPDS 1.2 相当の Atom カタログ。新しい記事が上。各 entry に acquisition link（EPUB）。
+OPDS 1.2 相当の Atom カタログ。新しい記事が上。各 entry に acquisition link（EPUB）。`GET /opds` と `GET /opds/` は同じルート。
 
 ### `GET /opds/download/:id.epub`
 

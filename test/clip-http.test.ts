@@ -20,7 +20,12 @@ import {
   type TranslateArticle,
 } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
-import { bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
+import {
+  basicAuthorization,
+  bearerAuthorization,
+  TEST_BINDINGS,
+  TEST_CLIP_TOKEN,
+} from './bindings'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
 const BINDINGS = TEST_BINDINGS
@@ -80,6 +85,14 @@ async function clip(app: ReturnType<typeof createApp>, url: string): Promise<Res
   )
 }
 
+async function opdsGet(
+  app: ReturnType<typeof createApp>,
+  path: string,
+  env: Cloudflare.Env = BINDINGS,
+): Promise<Response> {
+  return app.request(path, { headers: { authorization: basicAuthorization() } }, env)
+}
+
 async function readJson(response: Response): Promise<ClipJson> {
   const body: unknown = await response.json()
   if (typeof body !== 'object' || body === null) {
@@ -108,7 +121,7 @@ describe('POST /clip E2E', () => {
     expect(body.epubPath).toMatch(/^\/articles\/art_[a-f0-9]{32}\/book\.epub$/)
     expect(body.timingsMs?.epub).toBeGreaterThanOrEqual(0)
 
-    const epubResponse = await app.request(body.epubPath ?? '', {}, BINDINGS)
+    const epubResponse = await opdsGet(app, body.epubPath ?? '')
     expect(epubResponse.status).toBe(200)
     expect(epubResponse.headers.get('content-type')).toBe('application/epub+zip')
     const bytes = new Uint8Array(await epubResponse.arrayBuffer())
@@ -143,7 +156,7 @@ describe('POST /clip E2E', () => {
     const body = await readJson(response)
     expect(body.translated).toBe(true)
     expect(body.language).toBe('ja')
-    const epubResponse = await app.request(body.epubPath ?? '', {}, BINDINGS)
+    const epubResponse = await opdsGet(app, body.epubPath ?? '')
     const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
     const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
     expect(chapter).toContain('compatibility_date')
@@ -180,7 +193,7 @@ describe('POST /clip E2E', () => {
     )
     expect(first.status).toBe(200)
     const firstBody = await readJson(first)
-    const metaRes = await app.request(`/articles/${firstBody.id}`, {}, env)
+    const metaRes = await opdsGet(app, `/articles/${firstBody.id}`, env)
     expect(metaRes.status).toBe(200)
     const firstMeta = (await metaRes.json()) as { createdAt: string; updatedAt: string; title: string }
 
@@ -195,11 +208,11 @@ describe('POST /clip E2E', () => {
     )
     const secondBody = await readJson(second)
     expect(secondBody.id).toBe(firstBody.id)
-    const secondMetaRes = await app.request(`/articles/${secondBody.id}`, {}, env)
+    const secondMetaRes = await opdsGet(app, `/articles/${secondBody.id}`, env)
     const secondMeta = (await secondMetaRes.json()) as { createdAt: string; updatedAt: string }
     expect(secondMeta.createdAt).toBe(firstMeta.createdAt)
 
-    const epubRes = await app.request(firstBody.epubPath ?? '', {}, env)
+    const epubRes = await opdsGet(app, firstBody.epubPath ?? '', env)
     expect(epubRes.status).toBe(200)
     expect(epubRes.headers.get('content-type')).toBe('application/epub+zip')
 
@@ -209,7 +222,7 @@ describe('POST /clip E2E', () => {
       env,
     )
     expect(deleted.status).toBe(200)
-    expect(await app.request(firstBody.epubPath ?? '', {}, env)).toMatchObject({ status: 404 })
+    expect(await opdsGet(app, firstBody.epubPath ?? '', env)).toMatchObject({ status: 404 })
     expect(
       await app.request(
         `/articles/${firstBody.id}`,
@@ -305,9 +318,57 @@ describe('POST /clip E2E', () => {
   it('returns 404 for an unknown article and EPUB', async () => {
     const { app } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
     const missingId = 'art_0123456789abcdef0123456789abcdef'
-    expect((await app.request(`/articles/${missingId}`, {}, BINDINGS)).status).toBe(404)
-    expect((await app.request(`/articles/${missingId}/book.epub`, {}, BINDINGS)).status).toBe(404)
-    expect((await app.request('/articles/not-an-id', {}, BINDINGS)).status).toBe(404)
+    expect((await opdsGet(app, `/articles/${missingId}`)).status).toBe(404)
+    expect((await opdsGet(app, `/articles/${missingId}/book.epub`)).status).toBe(404)
+    expect((await opdsGet(app, '/articles/not-an-id')).status).toBe(404)
+  })
+
+  it('accepts a trailing slash on POST /clip', async () => {
+    const { app } = appWithFetch(async (url) =>
+      ok({
+        requestedUrl: url,
+        finalUrl: url,
+        contentType: 'text/html',
+        html: fixtureHtml('ja-tech.html'),
+      }),
+    )
+    const response = await app.request(
+      '/clip/',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
+        body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
+      },
+      BINDINGS,
+    )
+    expect(response.status).toBe(200)
+    expect((await readJson(response)).status).toBe('ready')
+  })
+
+  it('returns 500 epub_failed when EPUB generation throws', async () => {
+    const app = createApp({
+      clipPipeline: createClipPipeline({
+        extractPipeline: createExtractPipeline({
+          fetchPage: async (url) =>
+            ok({
+              requestedUrl: url,
+              finalUrl: url,
+              contentType: 'text/html',
+              html: fixtureHtml('ja-tech.html'),
+            }),
+        }),
+        translateArticle: jaTranslate,
+        buildEpub: async () => {
+          throw new Error('zip boom')
+        },
+      }),
+      store: createMemoryStore(),
+    })
+    const response = await clip(app, 'https://example.com/ja/workers-cpu')
+    expect(response.status).toBe(500)
+    const body = await readJson(response)
+    expect(body.error?.code).toBe('epub_failed')
+    expect(body.error?.message).toContain('zip boom')
   })
 
   it('returns 400 when the JSON body is missing a url string', async () => {

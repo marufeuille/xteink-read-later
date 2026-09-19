@@ -1,4 +1,13 @@
-import type { ErrorBody, ExtractError, NotFoundError, PipelineError, TranslateFailedBody, TranslateFailedError, UnauthorizedError } from '../types'
+import type {
+  ErrorBody,
+  EpubFailedError,
+  ExtractError,
+  NotFoundError,
+  PipelineError,
+  TranslateFailedBody,
+  TranslateFailedError,
+  UnauthorizedError,
+} from '../types'
 import { httpStatusByErrorKind } from '../types'
 
 export function errorMessage(error: PipelineError | NotFoundError | UnauthorizedError): string {
@@ -13,6 +22,8 @@ export function errorMessage(error: PipelineError | NotFoundError | Unauthorized
       return `Failed to fetch ${error.url}: ${error.reason}`
     case 'extract_failed':
       return `Could not extract an article from ${error.url}: ${error.reason}`
+    case 'epub_failed':
+      return `Could not build an EPUB: ${error.reason}`
     case 'translate_failed':
       return `Translation failed: ${error.reason}`
     case 'not_found':
@@ -22,7 +33,7 @@ export function errorMessage(error: PipelineError | NotFoundError | Unauthorized
   }
 }
 
-export function toErrorBody(error: ExtractError | NotFoundError): ErrorBody {
+export function toErrorBody(error: ExtractError | NotFoundError | EpubFailedError): ErrorBody {
   const message = errorMessage(error)
   switch (error.kind) {
     case 'invalid_url':
@@ -33,6 +44,8 @@ export function toErrorBody(error: ExtractError | NotFoundError): ErrorBody {
       return { error: { status: 502, code: 'fetch_failed', message } }
     case 'extract_failed':
       return { error: { status: 422, code: 'extract_failed', message } }
+    case 'epub_failed':
+      return { error: { status: 500, code: 'epub_failed', message } }
     case 'not_found':
       return { error: { status: 404, code: 'not_found', message } }
   }

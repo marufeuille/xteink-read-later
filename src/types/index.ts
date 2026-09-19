@@ -11,6 +11,7 @@ export type {
 export type {
   ErrorKind,
   ExtractError,
+  EpubFailedError,
   ExtractFailedError,
   FetchError,
   FetchFailedError,

@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
 import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { parseClipShareText } from './http/clip-request'
@@ -35,7 +35,7 @@ function storeFor(env: Cloudflare.Env, deps: AppDeps): ArticleStore {
 export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
-  app.post('/clip', async (c) => {
+  const clip = async (c: Context<AppEnv>) => {
     if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
       return unauthorizedResponse('bearer')
     }
@@ -90,9 +90,22 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       timingsMs,
     }
     return c.json(response, 200)
-  })
+  }
+
+  app.on('POST', ['/clip', '/clip/'], clip)
+
+  const requireOpdsBasic = async (c: Context<AppEnv>) => {
+    if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
+      return unauthorizedResponse('basic')
+    }
+    return null
+  }
 
   app.get('/articles/:id', async (c) => {
+    const denied = await requireOpdsBasic(c)
+    if (denied !== null) {
+      return denied
+    }
     const id = c.req.param('id')
     if (!isArticleId(id)) {
       return toErrorResponse({ kind: 'not_found' })
@@ -105,6 +118,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   })
 
   app.get('/articles/:id/book.epub', async (c) => {
+    const denied = await requireOpdsBasic(c)
+    if (denied !== null) {
+      return denied
+    }
     const id = c.req.param('id')
     if (!isArticleId(id)) {
       return toErrorResponse({ kind: 'not_found' })
@@ -116,9 +133,10 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     return epubFileResponse(id, epub)
   })
 
-  app.get('/opds', async (c) => {
-    if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
-      return unauthorizedResponse('basic')
+  const opdsCatalog = async (c: Context<AppEnv>) => {
+    const denied = await requireOpdsBasic(c)
+    if (denied !== null) {
+      return denied
     }
     const origin = parseHttpUrl(new URL(c.req.url).origin)
     if (origin === null) {
@@ -132,11 +150,14 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
         'content-type': `${OPDS_CATALOG_TYPE};charset=utf-8`,
       },
     })
-  })
+  }
+
+  app.on('GET', ['/opds', '/opds/'], opdsCatalog)
 
   app.get('/opds/download/:file', async (c) => {
-    if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
-      return unauthorizedResponse('basic')
+    const denied = await requireOpdsBasic(c)
+    if (denied !== null) {
+      return denied
     }
     const id = parseOpdsDownloadFile(c.req.param('file'))
     if (id === null) {

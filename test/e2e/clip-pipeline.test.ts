@@ -8,7 +8,7 @@ import { MAX_HTML_BYTES } from '../../src/extract/constants'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
 import { OPENAI_CHAT_URL } from '../../src/translate/constants'
-import { bearerAuthorization, TEST_BINDINGS } from '../bindings'
+import { basicAuthorization, bearerAuthorization, TEST_BINDINGS } from '../bindings'
 import { installNetworkMock, openaiMessageResponse } from './mock-network'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
@@ -77,7 +77,11 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(body.epubPath).toMatch(/^\/articles\/art_[a-f0-9]{32}\/book\.epub$/)
     expect(fetchedUrls).toEqual([pageUrl])
 
-    const epubResponse = await hono.request(body.epubPath ?? '', {}, BINDINGS)
+    const epubResponse = await hono.request(
+      body.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
     expect(epubResponse.status).toBe(200)
     const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
     expect(strFromU8(files['META-INF/container.xml'] ?? new Uint8Array())).toContain(
@@ -87,7 +91,11 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).toContain('npx wrangler dev')
     expect(chapter).toMatch(/<pre[^>]*>\s*<code>npx wrangler dev<\/code>\s*<\/pre>/)
 
-    const meta = await hono.request(`/articles/${body.id}`, {}, BINDINGS)
+    const meta = await hono.request(
+      `/articles/${body.id}`,
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
     expect(meta.status).toBe(200)
     expect(((await meta.json()) as { title: string }).title).toBe(body.title)
   })
@@ -111,7 +119,11 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(body.title).toBe('compatibility_date を最新に保つ')
     expect(fetchedUrls).toEqual([pageUrl, OPENAI_CHAT_URL])
 
-    const epubResponse = await hono.request(body.epubPath ?? '', {}, BINDINGS)
+    const epubResponse = await hono.request(
+      body.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
     const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
     const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
     expect(chapter).toContain('nodejs_compat')
