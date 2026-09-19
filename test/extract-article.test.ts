@@ -107,6 +107,49 @@ describe('extractArticle', () => {
     expect(result.value.contentHtml).toMatch(/<pre>\s*<code>/)
   })
 
+  it('fails when the extracted body is too short', async () => {
+    const result = await extractArticle(page('/tiny', 'too-short.html'))
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.kind).toBe('extract_failed')
+    expect(result.error.reason).toMatch(/too short|No article body found/i)
+  })
+
+  it('fails when the page has a body but no title', async () => {
+    const result = await extractArticle(page('/untitled', 'missing-title.html'))
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.kind).toBe('extract_failed')
+    expect(result.error.reason).toBe('Missing title')
+  })
+
+  it('reads title, authors, and date from JSON-LD @graph', async () => {
+    const result = await extractArticle(page('/graph', 'json-ld-graph.html'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.title).toBe('Committee reaches a late vote')
+    expect(result.value.author).toBe('Ada Lovelace, Grace Hopper')
+    expect(result.value.publishedAt).toBe('2026-06-02T12:00:00.000Z')
+    expect(result.value.contentHtml).toContain('unique-graph-body')
+  })
+
+  it('prefers itemprop=articleBody over a longer featured teaser', async () => {
+    const result = await extractArticle(page('/itemprop', 'itemprop-article-body.html'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('unique-itemprop-body')
+    expect(result.value.contentHtml).not.toContain('unique-featured-teaser')
+    expect(result.value.contentHtml).not.toContain('completely different story')
+  })
+
   it('prefers the main article over a featured preview article', async () => {
     const result = await extractArticle(page('/posts/real-story', 'featured-preview.html'))
     expect(result.ok).toBe(true)

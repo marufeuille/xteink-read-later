@@ -9,9 +9,19 @@ describe('parseClipUrl', () => {
     expect(http.ok).toBe(true)
   })
 
+  it('trims surrounding whitespace', () => {
+    const parsed = parseClipUrl({ url: '  https://example.com/a  ' })
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) {
+      return
+    }
+    expect(parsed.value).toBe('https://example.com/a')
+  })
+
   it('rejects non-http schemes and malformed values', () => {
     expect(parseClipUrl({ url: 'ftp://example.com/a' }).ok).toBe(false)
     expect(parseClipUrl({ url: 'javascript:alert(1)' }).ok).toBe(false)
     expect(parseClipUrl({ url: 'not-a-url' }).ok).toBe(false)
+    expect(parseClipUrl({ url: '' }).ok).toBe(false)
   })
 })

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Itemprop body wins</title>
+  </head>
+  <body>
+    <div class="featured">
+      <p>
+        Featured teaser about a completely different story that is padded with extra
+        sentences so a length-only picker would prefer this block. It mentions
+        unique-featured-teaser and keeps going about sidebar recaps, related headlines,
+        and promotional blurbs that must not become the extracted article body.
+      </p>
+    </div>
+    <div itemprop="articleBody">
+      <h1>Itemprop body wins</h1>
+      <p>
+        The canonical article lives in itemprop articleBody. Readers should see
+        unique-itemprop-body here rather than the featured teaser, even when the teaser
+        looks long enough on its own.
+      </p>
+    </div>
+  </body>
+</html>

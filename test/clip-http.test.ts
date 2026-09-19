@@ -219,6 +219,38 @@ describe('POST /clip E2E', () => {
     const body = await readJson(response)
     expect(body.error?.extracted?.contentHtml).toContain('nodejs_compat')
   })
+
+  it('returns 413 when the fetched HTML is too large', async () => {
+    const { app } = appWithFetch(async () =>
+      err({ kind: 'payload_too_large', bytes: MAX_HTML_BYTES + 1 }),
+    )
+    const response = await clip(app, 'https://example.com/huge')
+    expect(response.status).toBe(413)
+    expect((await readJson(response)).error?.code).toBe('payload_too_large')
+  })
+
+  it('returns 404 for an unknown article and EPUB', async () => {
+    const { app } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
+    const missingId = 'art_0123456789abcdef0123456789abcdef'
+    expect((await app.request(`/articles/${missingId}`, {}, BINDINGS)).status).toBe(404)
+    expect((await app.request(`/articles/${missingId}/book.epub`, {}, BINDINGS)).status).toBe(404)
+    expect((await app.request('/articles/not-an-id', {}, BINDINGS)).status).toBe(404)
+  })
+
+  it('returns 400 when the JSON body is missing a url string', async () => {
+    const { app } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
+    const response = await app.request(
+      '/clip',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ href: 'https://example.com/a' }),
+      },
+      BINDINGS,
+    )
+    expect(response.status).toBe(400)
+    expect((await readJson(response)).error?.code).toBe('invalid_url')
+  })
 })
 
 describe('fetchPage', () => {
@@ -313,6 +345,51 @@ describe('fetchPage', () => {
       expect(result.error.kind).toBe('fetch_failed')
       if (result.error.kind === 'fetch_failed') {
         expect(result.error.reason).toContain('Unsupported HTML charset')
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('fails for a non-HTML content type', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('{"ok":true}', {
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    )
+    try {
+      const result = await fetchPage(mustUrl('https://example.com/api'))
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.kind).toBe('fetch_failed')
+      if (result.error.kind === 'fetch_failed') {
+        expect(result.error.reason).toContain('Unsupported content type')
+      }
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('fails when the remote page returns a non-OK status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('missing', { status: 404 })),
+    )
+    try {
+      const result = await fetchPage(mustUrl('https://example.com/missing'))
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.kind).toBe('fetch_failed')
+      if (result.error.kind === 'fetch_failed') {
+        expect(result.error.reason).toBe('HTTP 404')
       }
     } finally {
       vi.unstubAllGlobals()

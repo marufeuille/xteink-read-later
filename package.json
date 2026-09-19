@@ -6,7 +6,10 @@
     "dev": "wrangler dev",
     "generate-types": "wrangler types",
     "typecheck": "wrangler types && tsc --noEmit",
-    "test": "vitest run"
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "vitest run",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:live": "E2E_LIVE=1 vitest run --config vitest.e2e.config.ts"
   },
   "dependencies": {
     "fflate": "^0.8.3",
