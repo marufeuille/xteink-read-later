@@ -16,9 +16,16 @@ export type ClipTimingsMs = {
 
 export type ClipExtractTimingsMs = Pick<ClipTimingsMs, 'fetch' | 'extract'>
 
+export type ClipTranslateTimingsMs = Pick<ClipTimingsMs, 'fetch' | 'extract' | 'translate'>
+
 export type ClipExtractBody = ExtractedArticle & {
   readonly id: ArticleId
   readonly timingsMs: ClipExtractTimingsMs
+}
+
+export type ClipTranslatedBody = TranslatedArticle & {
+  readonly id: ArticleId
+  readonly timingsMs: ClipTranslateTimingsMs
 }
 
 export type ClipReadyBody = ArticleFields & {
@@ -30,7 +37,7 @@ export type ClipReadyBody = ArticleFields & {
   readonly timingsMs: ClipTimingsMs
 }
 
-export type ClipSuccessBody = ClipExtractBody | ClipReadyBody
+export type ClipSuccessBody = ClipExtractBody | ClipTranslatedBody | ClipReadyBody
 
 export type ErrorBody = {
   [K in ErrorKind]: {

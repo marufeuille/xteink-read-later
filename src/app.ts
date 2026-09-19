@@ -2,10 +2,11 @@ import { Hono } from 'hono'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { isClipRequestBody } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
-import type { AppEnv, ClipExtractBody, ExtractPipeline } from './types'
+import type { AppEnv, ClipTranslatedBody } from './types'
+import type { TranslatePipeline } from './translate/pipeline'
 
 export type AppDeps = {
-  readonly extractPipeline: ExtractPipeline
+  readonly translatePipeline: TranslatePipeline
 }
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
@@ -31,13 +32,15 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       return toErrorResponse(parsed.error)
     }
 
-    const result = await deps.extractPipeline(parsed.value)
+    const result = await deps.translatePipeline(parsed.value, {
+      OPENAI_API_KEY: c.env.OPENAI_API_KEY,
+    })
     if (!result.ok) {
       return toErrorResponse(result.error)
     }
 
     const { id, article, timingsMs } = result.value
-    const response: ClipExtractBody = {
+    const response: ClipTranslatedBody = {
       id,
       ...article,
       timingsMs,

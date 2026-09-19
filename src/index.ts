@@ -1,4 +1,4 @@
 import { createApp } from './app'
-import { extractPipeline } from './extract/pipeline'
+import { translatePipeline } from './translate/pipeline'
 
-export default createApp({ extractPipeline })
+export default createApp({ translatePipeline })

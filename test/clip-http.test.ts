@@ -3,12 +3,22 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app'
-import { createExtractPipeline } from '../src/extract/pipeline'
-import { fetchPage } from '../src/extract/fetch-page'
 import { MAX_HTML_BYTES } from '../src/extract/constants'
-import { err, ok, parseHttpUrl, type FetchPage, type HttpUrl } from '../src/types'
+import { fetchPage } from '../src/extract/fetch-page'
+import { createExtractPipeline } from '../src/extract/pipeline'
+import { createTranslatePipeline } from '../src/translate/pipeline'
+import {
+  err,
+  ok,
+  parseHttpUrl,
+  type ExtractedArticle,
+  type FetchPage,
+  type HttpUrl,
+  type TranslateArticle,
+} from '../src/types'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
+const BINDINGS = { OPENAI_API_KEY: 'sk-test' } as Cloudflare.Env
 
 function fixtureHtml(name: string): string {
   return readFileSync(join(fixtures, 'fixtures', name), 'utf8')
@@ -25,13 +35,31 @@ function mustUrl(value: string): HttpUrl {
 type ClipJson = {
   title?: string
   language?: string
+  translated?: boolean
   contentHtml?: string
-  timingsMs?: { fetch: number; extract: number }
-  error?: { code: string; message: string }
+  timingsMs?: { fetch: number; extract: number; translate: number }
+  error?: { code: string; message: string; extracted?: ExtractedArticle }
 }
 
-function appWithFetch(fetchPageImpl: FetchPage) {
-  return createApp({ extractPipeline: createExtractPipeline({ fetchPage: fetchPageImpl }) })
+function appWithFetch(fetchPageImpl: FetchPage, translateArticle?: TranslateArticle) {
+  return createApp({
+    translatePipeline: createTranslatePipeline({
+      extractPipeline: createExtractPipeline({ fetchPage: fetchPageImpl }),
+      ...(translateArticle !== undefined ? { translateArticle } : {}),
+    }),
+  })
+}
+
+async function clip(app: ReturnType<typeof createApp>, url: string): Promise<Response> {
+  return app.request(
+    '/clip',
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url }),
+    },
+    BINDINGS,
+  )
 }
 
 async function readJson(response: Response): Promise<ClipJson> {
@@ -43,7 +71,7 @@ async function readJson(response: Response): Promise<ClipJson> {
 }
 
 describe('POST /clip', () => {
-  it('returns extracted JSON for a Japanese fixture URL', async () => {
+  it('returns Japanese articles without retranslation', async () => {
     const app = appWithFetch(async (url) =>
       ok({
         requestedUrl: url,
@@ -52,21 +80,27 @@ describe('POST /clip', () => {
         html: fixtureHtml('ja-tech.html'),
       }),
     )
-    const response = await app.request('/clip', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
-    })
+    const response = await clip(app, 'https://example.com/ja/workers-cpu')
     expect(response.status).toBe(200)
     const body = await readJson(response)
     expect(body.title).toBe('Cloudflare Workers の CPU 制限')
     expect(body.language).toBe('ja')
+    expect(body.translated).toBe(false)
     expect(body.contentHtml).toContain('Paid プラン')
-    expect(body.timingsMs?.fetch).toBeGreaterThanOrEqual(0)
-    expect(body.timingsMs?.extract).toBeGreaterThanOrEqual(0)
+    expect(body.contentHtml).toContain('npx wrangler dev')
+    expect(body.timingsMs?.translate).toBeGreaterThanOrEqual(0)
   })
 
-  it('returns extracted JSON for an English fixture URL', async () => {
+  it('returns Japanese content for an English fixture via the translator', async () => {
+    const translateArticle: TranslateArticle = async (extracted) =>
+      ok({
+        ...extracted,
+        title: 'compatibility_date を最新に保つ',
+        contentHtml:
+          '<h1>compatibility_date を最新に保つ</h1><p>nodejs_compat フラグが必要。</p><pre><code>{"compatibility_date":"2026-09-19"}</code></pre>',
+        language: 'ja',
+        translated: true,
+      })
     const app = appWithFetch(async (url) =>
       ok({
         requestedUrl: url,
@@ -74,26 +108,20 @@ describe('POST /clip', () => {
         contentType: 'text/html',
         html: fixtureHtml('en-tech.html'),
       }),
+      translateArticle,
     )
-    const response = await app.request('/clip', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: 'https://example.com/en/compatibility-date' }),
-    })
+    const response = await clip(app, 'https://example.com/en/compatibility-date')
     expect(response.status).toBe(200)
     const body = await readJson(response)
-    expect(body.title).toBe('Keep compatibility_date current')
-    expect(body.language).toBe('non-ja')
-    expect(body.contentHtml).toContain('nodejs_compat')
+    expect(body.language).toBe('ja')
+    expect(body.translated).toBe(true)
+    expect(body.title).toBe('compatibility_date を最新に保つ')
+    expect(body.contentHtml).toContain('{"compatibility_date":"2026-09-19"}')
   })
 
   it('returns 400 for an invalid URL', async () => {
     const app = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
-    const response = await app.request('/clip', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: 'ftp://example.com/x' }),
-    })
+    const response = await clip(app, 'ftp://example.com/x')
     expect(response.status).toBe(400)
     const body = await readJson(response)
     expect(body.error?.code).toBe('invalid_url')
@@ -102,11 +130,7 @@ describe('POST /clip', () => {
 
   it('returns 502 when fetch fails', async () => {
     const app = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'HTTP 404' }))
-    const response = await app.request('/clip', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: 'https://example.com/missing' }),
-    })
+    const response = await clip(app, 'https://example.com/missing')
     expect(response.status).toBe(502)
     const body = await readJson(response)
     expect(body.error?.code).toBe('fetch_failed')
@@ -122,14 +146,30 @@ describe('POST /clip', () => {
         html: fixtureHtml('empty.html'),
       }),
     )
-    const response = await app.request('/clip', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ url: 'https://example.com/empty' }),
-    })
+    const response = await clip(app, 'https://example.com/empty')
     expect(response.status).toBe(422)
     const body = await readJson(response)
     expect(body.error?.code).toBe('extract_failed')
+  })
+
+  it('returns 503 with extracted article when translation fails', async () => {
+    const translateArticle: TranslateArticle = async (extracted) =>
+      err({ kind: 'translate_failed', extracted, reason: 'OpenAI HTTP 500' })
+    const app = appWithFetch(async (url) =>
+      ok({
+        requestedUrl: url,
+        finalUrl: url,
+        contentType: 'text/html',
+        html: fixtureHtml('en-tech.html'),
+      }),
+      translateArticle,
+    )
+    const response = await clip(app, 'https://example.com/en/compatibility-date')
+    expect(response.status).toBe(503)
+    const body = await readJson(response)
+    expect(body.error?.code).toBe('translate_failed')
+    expect(body.error?.extracted?.contentHtml).toContain('nodejs_compat')
+    expect(body.error?.extracted?.language).toBe('non-ja')
   })
 })
 
