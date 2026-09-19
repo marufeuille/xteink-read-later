@@ -47,3 +47,13 @@ curl -sS -o book.epub "http://localhost:8787$(jq -r .epubPath clip.json)"
 npm test
 npm run typecheck
 ```
+
+`npm test` は単体テストと、fixture + OpenAI モックの E2E を実行する。実 `OPENAI_API_KEY` もライブの記事取得も不要。
+
+GitHub Actions が pull request と `main` への push で install / typecheck / 単体 / E2E を回す。**マージしてよい判断基準は CI が緑であること。**
+
+任意のライブ E2E（実ネットワーク。英語記事は OpenAI が必要）はローカル限定:
+
+```bash
+E2E_LIVE=1 E2E_LIVE_URL='https://example.com/article' npm run test:e2e:live
+```

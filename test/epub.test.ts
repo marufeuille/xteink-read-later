@@ -149,4 +149,33 @@ describe('buildEpub', () => {
     expect(navIds).toEqual(chapterIds)
     expect(new Set(chapterIds).size).toBe(chapterIds.length)
   })
+
+  it('writes EPUB 3 container, OPF manifest, and escaped metadata', async () => {
+    const article = translated({
+      title: 'A & B <C>',
+      author: 'Ada & Grace',
+      publishedAt: '2026-04-12T00:00:00.000Z',
+      contentHtml: '<h1>A &amp; B</h1><p>Body text for the chapter.</p>',
+    })
+    const epub = await buildEpub(article)
+    const files = unzipSync(epub)
+    const container = strFromU8(files['META-INF/container.xml'] ?? new Uint8Array())
+    const opf = strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(container).toContain('full-path="OEBPS/content.opf"')
+    expect(container).toContain('application/oebps-package+xml')
+    expect(opf).toMatch(/<package[^>]*version="3.0"/)
+    expect(opf).toContain('unique-identifier="bookid"')
+    expect(opf).toContain('<item id="nav" href="nav.xhtml"')
+    expect(opf).toContain('<item id="chapter" href="chapter.xhtml"')
+    expect(opf).toContain('<item id="css" href="style.css"')
+    expect(opf).toContain('<itemref idref="chapter"/>')
+    expect(opf).toContain('<dc:title>A &amp; B &lt;C&gt;</dc:title>')
+    expect(opf).toContain('<dc:creator>Ada &amp; Grace</dc:creator>')
+    expect(opf).toContain('<dc:date>2026-04-12T00:00:00.000Z</dc:date>')
+    expect(opf).toContain('<dc:language>ja</dc:language>')
+    expect(chapter).toContain('xml:lang="ja"')
+    expect(chapter).toContain('著者: Ada &amp; Grace')
+    expect(chapter).toContain('公開日: 2026-04-12T00:00:00.000Z')
+  })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { translateArticle } from '../src/translate/openai'
-import { OPENAI_CHAT_URL, TRANSLATE_TIMEOUT_MS } from '../src/translate/constants'
+import { OPENAI_CHAT_URL, OPENAI_MAX_INPUT_CHARS, TRANSLATE_TIMEOUT_MS } from '../src/translate/constants'
 import { parseHttpUrl, type ExtractedArticle, type HttpUrl, type TranslateDeps } from '../src/types'
 
 function url(value: string): HttpUrl {
@@ -171,6 +171,101 @@ describe('translateArticle', () => {
       expect(result.error.kind).toBe('translate_failed')
       expect(result.error.extracted).toEqual(input)
       expect(result.error.reason).toContain('500')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('accepts JSON wrapped in markdown fences', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          choices: [
+            {
+              message: {
+                content:
+                  '```json\n{"title":"フェンス付き","contentHtml":"<p>本文</p><pre><code>ok</code></pre>"}\n```',
+              },
+            },
+          ],
+        }),
+      ),
+    )
+    try {
+      const result = await translateArticle(article(), { OPENAI_API_KEY: 'sk-test' })
+      expect(result.ok).toBe(true)
+      if (!result.ok) {
+        return
+      }
+      expect(result.value.title).toBe('フェンス付き')
+      expect(result.value.contentHtml).toContain('<pre><code>ok</code></pre>')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps the extracted article when the model JSON is invalid', async () => {
+    const payloads = [
+      Response.json({ choices: [{ message: { content: 'not-json' } }] }),
+      Response.json({ choices: [{ message: { content: '{"title":"only"}' } }] }),
+      Response.json({ choices: [{ message: { content: '{"title":"","contentHtml":"<p>x</p>"}' } }] }),
+      Response.json({ choices: [] }),
+    ]
+    for (const payload of payloads) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => payload.clone()),
+      )
+      try {
+        const input = article()
+        const result = await translateArticle(input, { OPENAI_API_KEY: 'sk-test' })
+        expect(result.ok).toBe(false)
+        if (result.ok) {
+          return
+        }
+        expect(result.error.kind).toBe('translate_failed')
+        expect(result.error.extracted).toEqual(input)
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    }
+  })
+
+  it('does not call OpenAI when extracted HTML exceeds the size limit', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const input = article({ contentHtml: `<p>${'a'.repeat(OPENAI_MAX_INPUT_CHARS + 1)}</p>` })
+      const result = await translateArticle(input, { OPENAI_API_KEY: 'sk-test' })
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.extracted).toEqual(input)
+      expect(result.error.reason).toContain('size limit')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('keeps the extracted article when fetch throws', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('network down')
+      }),
+    )
+    try {
+      const input = article()
+      const result = await translateArticle(input, { OPENAI_API_KEY: 'sk-test' })
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.extracted).toEqual(input)
+      expect(result.error.reason).toContain('network down')
     } finally {
       vi.unstubAllGlobals()
     }
