@@ -210,4 +210,17 @@ describe('buildEpub', () => {
     expect(chapter).toContain('SVG chart caption')
     expect(chapter).toContain('Dummy body.')
   })
+
+  it('strips page CLI warn tokens from chapter XHTML and keeps dct render', async () => {
+    const article = translated({
+      contentHtml:
+        '<p>Dummy charts body.</p>' +
+        '<pre><code>dct render\nWARN-BAR-BAND-WIDTH-TOO-NARROW\nWARN-TABLE-COLUMNS-OVERFLOW\n</code></pre>',
+    })
+    const files = unzipSync(await buildEpub(article))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('dct render')
+    expect(chapter).not.toContain('WARN-BAR-BAND-WIDTH-TOO-NARROW')
+    expect(chapter).not.toContain('WARN-TABLE-COLUMNS-OVERFLOW')
+  })
 })

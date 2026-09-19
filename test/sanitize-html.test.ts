@@ -185,6 +185,42 @@ describe('tables and nested lists', () => {
     expect(roundTrip).toContain('<td>Node builtins</td>')
   })
 
+  it('turns GFM pipe tables into HTML tables with sanitized cell links', () => {
+    const markdown = [
+      '| Flag | Docs |',
+      '| --- | --- |',
+      '| nodejs_compat | [wrangler](https://example.com/docs/wrangler) |',
+      '| cpu_ms | see <a href="https://example.com/docs/cpu">CPU limit</a> |',
+    ].join('\n')
+    const html = markdownToHtml(markdown, BASE)
+    expect(html).toContain('<table>')
+    expect(html).toContain('<th>Flag</th>')
+    expect(html).toContain('<th>Docs</th>')
+    expect(html).toContain('<td>nodejs_compat</td>')
+    expect(html).toContain('<a href="https://example.com/docs/wrangler">wrangler</a>')
+    expect(html).toContain('<a href="https://example.com/docs/cpu">CPU limit</a>')
+    expect(html).not.toContain('<p>|')
+    expect(html).not.toContain('&lt;a')
+    expect(html).not.toMatch(/<a(?![^>]*\bhref=)/)
+  })
+
+  it('does not treat a lone pipe line as a table', () => {
+    const html = markdownToHtml('Use cpu_ms | nodejs_compat together.', BASE)
+    expect(html).toBe('<p>Use cpu_ms | nodejs_compat together.</p>')
+    expect(html).not.toContain('<table')
+  })
+
+  it('strips page CLI warn tokens from fenced code and keeps dct render', () => {
+    const html = markdownToHtml(
+      ['Dummy charts body.', '', '```', 'dct render', 'WARN-BAR-BAND-WIDTH-TOO-NARROW', 'WARN-TABLE-COLUMNS-OVERFLOW', '```'].join('\n'),
+      BASE,
+    )
+    expect(html).toContain('dct render')
+    expect(html).toContain('<pre><code>')
+    expect(html).not.toContain('WARN-BAR-BAND-WIDTH-TOO-NARROW')
+    expect(html).not.toContain('WARN-TABLE-COLUMNS-OVERFLOW')
+  })
+
   it('keeps nested list items through Markdown and back to HTML', () => {
     const html =
       '<ul><li>Parent item<ul><li>Nested child</li><li>Second child</li></ul></li><li>Sibling</li></ul>'

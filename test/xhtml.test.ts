@@ -23,4 +23,13 @@ describe('htmlFragmentToXhtml', () => {
     expect(xhtml).toContain('SVG chart caption')
     expect(xhtml).not.toContain('example.com/chart.svg')
   })
+
+  it('strips page CLI warn tokens from reading body and keeps dct render', () => {
+    const xhtml = htmlFragmentToXhtml(
+      '<p>Dummy charts body.</p><pre><code>dct render\nWARN-BAR-BAND-WIDTH-TOO-NARROW\nWARN-TABLE-COLUMNS-OVERFLOW\n</code></pre>',
+    )
+    expect(xhtml).toContain('dct render')
+    expect(xhtml).not.toContain('WARN-BAR-BAND-WIDTH-TOO-NARROW')
+    expect(xhtml).not.toContain('WARN-TABLE-COLUMNS-OVERFLOW')
+  })
 })
