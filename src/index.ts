@@ -1,6 +1,4 @@
-import { Hono } from 'hono'
-import type { AppEnv } from './types'
+import { createApp } from './app'
+import { extractPipeline } from './extract/pipeline'
 
-const app = new Hono<AppEnv>()
-
-export default app
+export default createApp({ extractPipeline })
