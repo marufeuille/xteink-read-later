@@ -21,6 +21,7 @@ export type {
   NotFoundError,
   PayloadTooLargeError,
   PipelineError,
+  InvalidEpubError,
   TranslateFailedError,
   UnauthorizedError,
 } from './errors'
@@ -39,6 +40,7 @@ export type {
   ClipTranslateTimingsMs,
   ErrorBody,
   PipelineLog,
+  PurchasedBookBody,
   TranslateFailedBody,
 } from './http'
 export type {
@@ -52,11 +54,13 @@ export type {
 export {
   articleEpubKey,
   articleIdFromCanonicalUrl,
+  articleIdFromBytes,
   articleMetaKey,
   asArticleId,
   asEpubBytes,
   isArticleId,
   parseHttpUrl,
+  purchasedCanonicalUrl,
 } from './id'
 export type { BuildOpdsCatalog, OpdsAcquisition, OpdsCatalog } from './opds'
 export type {

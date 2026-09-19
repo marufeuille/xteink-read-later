@@ -35,6 +35,23 @@ export async function articleIdFromCanonicalUrl(canonicalUrl: HttpUrl): Promise<
   return asArticleId(`art_${hex}`)
 }
 
+export async function articleIdFromBytes(bytes: Uint8Array): Promise<ArticleId> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32)
+  return asArticleId(`art_${hex}`)
+}
+
+export function purchasedCanonicalUrl(id: ArticleId): HttpUrl {
+  const url = parseHttpUrl(`https://purchased.invalid/books/${id}`)
+  if (url === null) {
+    throw new TypeError(`Invalid purchased canonical URL for ${id}`)
+  }
+  return url
+}
+
 export function parseHttpUrl(value: string): HttpUrl | null {
   if (!URL.canParse(value)) {
     return null

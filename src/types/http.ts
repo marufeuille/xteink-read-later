@@ -39,6 +39,14 @@ export type ClipReadyBody = ArticleFields & {
 
 export type ClipSuccessBody = ClipExtractBody | ClipTranslatedBody | ClipReadyBody
 
+export type PurchasedBookBody = ArticleFields & {
+  readonly id: ArticleId
+  readonly language: 'ja'
+  readonly translated: false
+  readonly status: 'ready'
+  readonly epubPath: `/${ArticleEpubKey}`
+}
+
 export type ErrorBody = {
   [K in ErrorKind]: {
     readonly error: {
@@ -97,6 +105,7 @@ export type ApiRoutes = {
     BasicAuth,
     EpubBytes
   >
+  readonly postPurchasedBook: RouteSpec<'POST', '/books', BearerAuth, PurchasedBookBody>
 }
 
 export type PipelineLog = {

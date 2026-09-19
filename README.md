@@ -46,6 +46,18 @@ curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" \
   -o book.epub "http://localhost:8787/opds/download/$(jq -r .id clip.json).epub"
 ```
 
+購入した EPUB は書店サイトから取らない。手元のファイルを `POST /books` で上げ、同じ OPDS カタログに載せる。翻訳・抽出・サニタイズはしない。
+
+```bash
+curl -sS http://localhost:8787/books \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
+  -F "title=本のタイトル" \
+  -F "author=著者名" \
+  -F "epub=@book.epub;type=application/epub+zip"
+```
+
+同じ EPUB バイト列の再送は同じ `id` で上書きする。秘密値と本文はログにも README にも出さない。
+
 ログは stage 別の JSON（`fetch` / `extract` / `translate` / `epub` / `store`）で所要時間と失敗 `errorKind` を出す。
 
 英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。失敗時は `error.code` と `error.message` で原因を返す。翻訳失敗時（503）は `error.extracted` に抽出結果を残す。

@@ -160,6 +160,10 @@ OPDS 1.2 相当の Atom カタログ。新しい記事が上。各 entry に acq
 
 カタログから辿る取得 URL。中身は `GET /articles/:id/book.epub` と同じ。
 
+### `POST /books`
+
+購入済み EPUB の取り込み。Bearer `CLIP_TOKEN`。multipart（`title` 必須、`author` / `publishedAt` 任意、`epub` ファイル）。翻訳・抽出・外部ショップ fetch はしない。`POST /books` と `POST /books/` は同じルート。
+
 OPDS は CrossPoint JP が **HTTP Basic** のみサポートするため、`Authorization: Basic` を要求する。Bearer は使わない。ユーザー名/パスワードは Workers Secret。空パスワード不可（端末が username-only を送らないため）。
 
 ## 6. データ
