@@ -34,6 +34,8 @@ export type {
   ClipRequestBody,
   ClipSuccessBody,
   ClipTimingsMs,
+  ClipTranslatedBody,
+  ClipTranslateTimingsMs,
   ErrorBody,
   PipelineLog,
   TranslateFailedBody,

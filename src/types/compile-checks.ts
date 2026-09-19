@@ -15,6 +15,7 @@ import type {
   ApiRoutes,
   ClipExtractBody,
   ClipReadyBody,
+  ClipTranslatedBody,
   ErrorBody,
   TranslateFailedBody,
 } from './http'
@@ -53,6 +54,16 @@ type _metaKeepsIdentity = Assert<Equals<ArticleMeta['id'], ArticleId>>
 
 type _extractBodyHasHtml = Assert<
   ClipExtractBody extends { readonly contentHtml: string } ? true : false
+>
+
+type _translatedBodyHasHtmlAndFlag = Assert<
+  ClipTranslatedBody extends {
+    readonly contentHtml: string
+    readonly translated: boolean
+    readonly language: 'ja'
+  }
+    ? true
+    : false
 >
 
 type _readyBodyHasEpubPath = Assert<
@@ -144,6 +155,7 @@ export type CompileChecks = {
   readonly extractedContentHasNoLanguage: _extractedContentHasNoLanguage
   readonly metaKeepsIdentity: _metaKeepsIdentity
   readonly extractBodyHasHtml: _extractBodyHasHtml
+  readonly translatedBodyHasHtmlAndFlag: _translatedBodyHasHtmlAndFlag
   readonly readyBodyHasEpubPath: _readyBodyHasEpubPath
   readonly readyBodyHasNoHtml: _readyBodyHasNoHtml
   readonly readyBodyHasNoCreatedAt: _readyBodyHasNoCreatedAt
