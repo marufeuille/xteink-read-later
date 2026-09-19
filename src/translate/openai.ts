@@ -7,6 +7,7 @@ import type {
   TranslatedArticle,
 } from '../types'
 import { err, ok } from '../types'
+import { htmlToMarkdown, markdownToHtml } from '../extract/sanitize-html'
 import {
   OPENAI_CHAT_URL,
   OPENAI_MAX_INPUT_CHARS,
@@ -64,26 +65,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-function parseModelJson(content: string): { title: string; contentHtml: string } | null {
-  const trimmed = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+function unwrapJsonPayload(content: string): string {
+  const trimmed = content.trim()
+  const lines = trimmed.split('\n')
+  const first = lines[0]
+  const last = lines[lines.length - 1]
+  if (
+    lines.length >= 3 &&
+    first !== undefined &&
+    last !== undefined &&
+    /^```(?:json)?\s*$/i.test(first) &&
+    /^```\s*$/.test(last)
+  ) {
+    return lines.slice(1, -1).join('\n').trim()
+  }
+  return trimmed
+}
+
+function parseModelJson(content: string): { title: string; markdown: string } | null {
   let parsed: unknown
   try {
-    parsed = JSON.parse(trimmed)
+    parsed = JSON.parse(unwrapJsonPayload(content))
   } catch {
     return null
   }
   if (!isRecord(parsed)) {
     return null
   }
-  if (typeof parsed.title !== 'string' || typeof parsed.contentHtml !== 'string') {
+  if (typeof parsed.title !== 'string' || typeof parsed.content !== 'string') {
     return null
   }
   const title = parsed.title.trim()
-  const contentHtml = parsed.contentHtml.trim()
-  if (title.length === 0 || contentHtml.length === 0) {
+  const markdown = parsed.content.trim()
+  if (title.length === 0 || markdown.length === 0) {
     return null
   }
-  return { title, contentHtml }
+  return { title, markdown }
 }
 
 function choiceContent(payload: unknown): string | null {
@@ -97,23 +114,46 @@ function choiceContent(payload: unknown): string | null {
   return first.message.content
 }
 
+function articleFromMarkdown(
+  article: ExtractedArticle,
+  title: string,
+  markdown: string,
+  translated: boolean,
+): Result<TranslatedArticle, TranslateFailedError> {
+  const contentHtml = markdownToHtml(markdown, article.canonicalUrl)
+  if (contentHtml.length === 0) {
+    return fail(article, translated ? 'OpenAI response was not valid title/content JSON' : 'Sanitized article was empty')
+  }
+  return ok({
+    title,
+    author: article.author,
+    publishedAt: article.publishedAt,
+    sourceUrl: article.sourceUrl,
+    canonicalUrl: article.canonicalUrl,
+    contentHtml,
+    language: 'ja',
+    translated,
+  })
+}
+
 export const translateArticle: TranslateArticle = async (
   article,
   deps: TranslateDeps,
 ): Promise<Result<TranslatedArticle, TranslateFailedError>> => {
+  const source = htmlToMarkdown(article.contentHtml, article.canonicalUrl)
+  if (source.length === 0) {
+    return fail(article, 'Sanitized article was empty')
+  }
+
   if (article.language === 'ja') {
-    return ok({
-      ...article,
-      language: 'ja',
-      translated: false,
-    })
+    return articleFromMarkdown(article, article.title, source, false)
   }
 
   const apiKey = openaiApiKey(deps)
   if (apiKey === null) {
     return fail(article, 'OPENAI_API_KEY is not set')
   }
-  if (article.contentHtml.length > OPENAI_MAX_INPUT_CHARS) {
+  if (source.length > OPENAI_MAX_INPUT_CHARS) {
     return fail(article, 'Extracted HTML exceeds the translation size limit')
   }
 
@@ -140,7 +180,7 @@ export const translateArticle: TranslateArticle = async (
                 mode: 'translate',
                 sourceLanguage: article.language,
                 title: article.title,
-                contentHtml: article.contentHtml,
+                content: source,
               }),
             },
           ],
@@ -160,19 +200,10 @@ export const translateArticle: TranslateArticle = async (
     }
     const parsed = parseModelJson(content)
     if (parsed === null) {
-      return fail(article, 'OpenAI response was not valid title/contentHtml JSON')
+      return fail(article, 'OpenAI response was not valid title/content JSON')
     }
 
-    return ok({
-      title: parsed.title,
-      author: article.author,
-      publishedAt: article.publishedAt,
-      sourceUrl: article.sourceUrl,
-      canonicalUrl: article.canonicalUrl,
-      contentHtml: parsed.contentHtml,
-      language: 'ja',
-      translated: true,
-    })
+    return articleFromMarkdown(article, parsed.title, parsed.markdown, true)
   } catch (cause) {
     if (controller.signal.aborted || isAbortError(cause)) {
       return fail(article, 'OpenAI request timed out')

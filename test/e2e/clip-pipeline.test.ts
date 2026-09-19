@@ -99,7 +99,7 @@ describe('clip pipeline E2E (fixture network)', () => {
       openai: async () =>
         openaiMessageResponse(
           'compatibility_date を最新に保つ',
-          '<h1>compatibility_date を最新に保つ</h1><p>nodejs_compat が必要。</p><pre><code>{"compatibility_date":"2026-09-19"}</code></pre>',
+          '# compatibility_date を最新に保つ\n\nnodejs_compat が必要。\n\n```\n{"compatibility_date":"2026-09-19"}\n```',
         ),
     })
     const hono = app()
