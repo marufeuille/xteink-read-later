@@ -4,30 +4,68 @@ import { asEpubBytes } from '../types'
 import { CONTAINER_XML, EPUB_CSS } from './templates'
 import { htmlFragmentToXhtml, xmlEscape } from './xhtml'
 
+type HeadingEntry = { href: string; label: string }
+
 function isoNow(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
 
-function headingEntries(xhtml: string): Array<{ href: string; label: string }> {
-  const headings = [...xhtml.matchAll(/<h([1-3])[^>]*>([\s\S]*?)<\/h\1>/gi)]
-  return headings.map((match, index) => {
-    const label = match[2]?.replace(/<[^>]+>/g, '').trim() ?? `Section ${index + 1}`
-    return { href: `chapter.xhtml#h-${index + 1}`, label: label.length > 0 ? label : `Section ${index + 1}` }
-  })
+function idFromAttrs(attrs: string): string | null {
+  const quoted = /\sid\s*=\s*["']([^"']*)["']/i.exec(attrs)
+  if (quoted?.[1] !== undefined && quoted[1].length > 0) {
+    return quoted[1]
+  }
+  const bare = /\sid\s*=\s*([^\s>]+)/i.exec(attrs)
+  if (bare?.[1] !== undefined && bare[1].length > 0) {
+    return bare[1]
+  }
+  return null
 }
 
-function withHeadingIds(xhtml: string): string {
-  let index = 0
-  return xhtml.replace(/<h([1-3])([^>]*)>/gi, (_all, level: string, attrs: string) => {
-    index += 1
-    if (/\sid=/.test(attrs)) {
-      return `<h${level}${attrs}>`
-    }
-    return `<h${level}${attrs} id="h-${index}">`
-  })
+function stripIdAttr(attrs: string): string {
+  return attrs.replace(/\s+id\s*=\s*(["'][^"']*["']|[^\s>]+)/i, '')
 }
 
-function navXhtml(title: string, entries: Array<{ href: string; label: string }>): string {
+function nextGeneratedId(used: Set<string>): string {
+  let n = 1
+  let id = `h-${n}`
+  while (used.has(id)) {
+    n += 1
+    id = `h-${n}`
+  }
+  return id
+}
+
+function assignHeadingId(existing: string | null, used: Set<string>): string {
+  if (existing !== null && !used.has(existing)) {
+    used.add(existing)
+    return existing
+  }
+  const id = nextGeneratedId(used)
+  used.add(id)
+  return id
+}
+
+function withHeadingIds(xhtml: string): { xhtml: string; entries: HeadingEntry[] } {
+  const used = new Set<string>()
+  const entries: HeadingEntry[] = []
+  const updated = xhtml.replace(
+    /<h([1-3])([^>]*)>([\s\S]*?)<\/h\1>/gi,
+    (_all, level: string, attrs: string, inner: string) => {
+      const id = assignHeadingId(idFromAttrs(attrs), used)
+      const label = inner.replace(/<[^>]+>/g, '').trim()
+      const fallback = `Section ${entries.length + 1}`
+      entries.push({
+        href: `chapter.xhtml#${id}`,
+        label: label.length > 0 ? label : fallback,
+      })
+      return `<h${level}${stripIdAttr(attrs)} id="${xmlEscape(id)}">${inner}</h${level}>`
+    },
+  )
+  return { xhtml: updated, entries }
+}
+
+function navXhtml(title: string, entries: HeadingEntry[]): string {
   const items =
     entries.length > 0
       ? entries
@@ -111,15 +149,15 @@ function contentOpf(article: TranslatedArticle, bookId: string, modified: string
 export const buildEpub: BuildEpub = async (article) => {
   const modified = isoNow()
   const bookId = `urn:uuid:${crypto.randomUUID()}`
-  const body = withHeadingIds(htmlFragmentToXhtml(article.contentHtml))
-  const nav = navXhtml(article.title, headingEntries(body))
+  const converted = withHeadingIds(htmlFragmentToXhtml(article.contentHtml))
+  const nav = navXhtml(article.title, converted.entries)
   const mimetype: [Uint8Array, ZipOptions] = [strToU8('application/epub+zip'), { level: 0 }]
   const files: Zippable = {
     mimetype,
     'META-INF/container.xml': strToU8(CONTAINER_XML),
     'OEBPS/content.opf': strToU8(contentOpf(article, bookId, modified)),
     'OEBPS/nav.xhtml': strToU8(nav),
-    'OEBPS/chapter.xhtml': strToU8(chapterXhtml(article, body)),
+    'OEBPS/chapter.xhtml': strToU8(chapterXhtml(article, converted.xhtml)),
     'OEBPS/style.css': strToU8(EPUB_CSS),
   }
   return asEpubBytes(zipSync(files))

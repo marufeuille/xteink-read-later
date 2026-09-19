@@ -1,4 +1,5 @@
 import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
+import { PARSE_HTML_OPTIONS } from '../extract/constants'
 
 const VOID_TAGS = new Set(['br', 'hr', 'img', 'meta', 'link', 'input'])
 
@@ -30,7 +31,7 @@ function serialize(node: Node): string {
 }
 
 export function htmlFragmentToXhtml(fragment: string): string {
-  const root = parse(`<div id="epub-root">${fragment}</div>`)
+  const root = parse(`<div id="epub-root">${fragment}</div>`, PARSE_HTML_OPTIONS)
   const wrapper = root.querySelector('#epub-root')
   if (wrapper === null) {
     return ''

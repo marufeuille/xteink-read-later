@@ -27,6 +27,24 @@ function firstFileName(epub: Uint8Array): { name: string; method: number } {
   return { name, method }
 }
 
+function translated(overrides: Partial<TranslatedArticle> = {}): TranslatedArticle {
+  const url = parseHttpUrl('https://example.com/post')
+  if (url === null) {
+    throw new Error('fixture url')
+  }
+  return {
+    title: '記事',
+    author: null,
+    publishedAt: null,
+    sourceUrl: url,
+    canonicalUrl: url,
+    contentHtml: '<p>placeholder body text for the article.</p>',
+    language: 'ja',
+    translated: false,
+    ...overrides,
+  }
+}
+
 async function articleFromFixture(file: string, path: string): Promise<TranslatedArticle> {
   const url = parseHttpUrl(`https://example.com${path}`)
   if (url === null) {
@@ -98,5 +116,37 @@ describe('buildEpub', () => {
     expect(chapter).toMatch(/<p/)
     expect(css).toBe(EPUB_CSS)
     expect(css).not.toMatch(/font-family:\s*["']?[\w\s]+Noto|Hiragino|Yu Gothic/)
+  })
+
+  it('keeps pre/code as elements in chapter.xhtml', async () => {
+    const article = translated({
+      contentHtml: '<h1>Install</h1><p>Run the following.</p><pre><code>npm install</code></pre>',
+    })
+    const files = unzipSync(await buildEpub(article))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toMatch(/<pre[^>]*>\s*<code>npm install<\/code>\s*<\/pre>/)
+    expect(chapter).not.toContain('&lt;code&gt;')
+  })
+
+  it('points the nav at preserved and generated heading ids without collisions', async () => {
+    const article = translated({
+      contentHtml:
+        '<h1 id="intro">導入</h1><h2 id="usage">使用方法</h2><h2 id="h-1">注意</h2><h3>まとめ</h3>',
+    })
+    const files = unzipSync(await buildEpub(article))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    const nav = strFromU8(files['OEBPS/nav.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('id="intro"')
+    expect(chapter).toContain('id="usage"')
+    expect(chapter).toContain('id="h-1"')
+    expect(nav).toContain('href="chapter.xhtml#intro"')
+    expect(nav).toContain('href="chapter.xhtml#usage"')
+    expect(nav).toContain('href="chapter.xhtml#h-1"')
+    expect(nav).toContain('href="chapter.xhtml#h-2"')
+    expect(nav).not.toContain('href="chapter.xhtml#h-3"')
+    const navIds = [...nav.matchAll(/href="chapter\.xhtml#([^"]+)"/g)].map((match) => match[1])
+    const chapterIds = [...chapter.matchAll(/<h[1-3][^>]*\sid="([^"]+)"/g)].map((match) => match[1])
+    expect(navIds).toEqual(chapterIds)
+    expect(new Set(chapterIds).size).toBe(chapterIds.length)
   })
 })
