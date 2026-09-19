@@ -1,6 +1,118 @@
 # Xteink Read Later
 
-個人利用向けの記事クリップパイプライン。Android の共有シートから Web 記事 URL を送り、本文を抽出して Xteink で読む EPUB にする。
+個人用の後で読むパイプライン。Web 記事は Android から送り、買った EPUB は手元のファイルを載せる。どちらも同じ OPDS カタログから CrossPoint JP / Xteink で読む。
+
+ネイティブアプリは作らない。マルチユーザーの Read Later サービスにもしない。
+
+## 日常の流れ
+
+本番 origin を `WORKER` とする（例: `https://xteink-read-later.<account>.workers.dev`）。**末尾スラッシュは付けない。** 値（token やパスワード）はこの README に書かない。
+
+### 1. 記事をクリップする（Android）
+
+Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xteink Read Later」を選ぶ。Worker が本文を取り、英語なら日本語にして EPUB を保存する。成功なら `status` が `ready`。失敗なら `error.code` と `error.message` がダイアログに出る。
+
+送り先は `POST {worker}/clip`。認証は **Bearer `CLIP_TOKEN`**（JSON 本文や URL クエリには載せない）。
+
+### 2. Xteink で読む
+
+CrossPoint JP に OPDS カタログを **一度だけ** 登録する。そのあと端末の一覧を開き、新しいものが上にあることを確認して EPUB を取る。
+
+登録する URL:
+
+```
+https://xteink-read-later.<account>.workers.dev/opds
+```
+
+- **https** にする（本番）。`http://` の workers.dev は使わない
+- パスは **`/opds`**。origin だけ、`/clip`、`/opds/download/…` はカタログではない
+- CrossPoint には **末尾スラッシュなし** で入れる（サーバは `/opds/` も同じルートだが、端末側の取り違えを避ける）
+- 認証は **HTTP Basic**（`OPDS_USERNAME` / `OPDS_PASSWORD`）。**`CLIP_TOKEN` や Bearer は使わない**
+- 空パスワードは使わない（端末が username-only を送らない）
+
+英語記事を共有したあとは、カタログ先頭の EPUB が日本語になっていることを端末で確認する。
+
+### 3. 買った EPUB をカタログに載せる
+
+ネット書店からは取らない。パソコンに置いてある EPUB を `CLIP_TOKEN` 付きで上げる。翻訳も抽出もサニタイズもしない。同じファイルを再送すると同じ `id` で上書きする。
+
+```bash
+curl -sS "$WORKER/books" \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
+  -F "title=本のタイトル" \
+  -F "author=著者名" \
+  -F "epub=@book.epub;type=application/epub+zip"
+```
+
+上げたあとは手順 2 と同じカタログを更新して読む。秘密値と本文はログにも README にも出さない。
+
+削除は `DELETE /articles/:id`（Bearer `CLIP_TOKEN`）。無い id は 404。
+
+## HTTP Shortcuts
+
+入れるもの: [HTTP Shortcuts](https://http-shortcuts.rmy.ch/)（[F-Droid](https://f-droid.org/packages/ch.rmy.android.http_shortcuts/) / [Play](https://play.google.com/store/apps/details?id=ch.rmy.android.http_shortcuts)）。ショートカット定義はリポジトリに置かない。
+
+`CLIP_TOKEN` は `.dev.vars`（ローカル）または `wrangler secret put CLIP_TOKEN`（本番）と同じもの。
+
+`POST /clip` は JSON `{"url":"…"}` のほか、`text/plain` と `application/x-www-form-urlencoded`（`url` / `text` / `link`）も受ける。タイトル＋URL の共有文からは最初の `http(s)` URL を使う。
+
+### 再現手順
+
+1. HTTP Shortcuts を入れる。右下の + から HTTP ショートカットを新規作成。名前は「Xteink Read Later」。
+2. グローバル変数:
+   - `worker`: Static。値は `WORKER`（末尾スラッシュなし）。
+   - `clip_token`: Static。値は `CLIP_TOKEN`。「Treat value as secret」と「Exclude stored value from exports」をオン。
+   - `shared_url`: Static。「Allow Receiving Value from Share Dialog」をオン。受け取る部分は **text**。
+3. ショートカット本体:
+   - 方法: `POST`
+   - URL: `{worker}/clip`
+   - Authentication: **Bearer**。トークンに `{clip_token}` を入れる。
+   - Request Body: Custom Text。`Content-Type: application/json`
+
+```json
+{ "url": "{shared_url}" }
+```
+
+4. Trigger & Execution Settings で **Direct Share target** をオン（Android 11 以降）。
+5. Response Handling:
+   - On Success: Dialog か Toast。`title` と `status`（`ready`）が分かること。
+   - On Failure（2xx 以外）: Dialog。`error.code` と `error.message` が分かること。
+6. Scripting は任意。**関数の外に `return` を書かない**（HTTP Shortcuts が「return not in a function」で Worker の JSON を隠す）。`JSON.parse` は try/catch する。
+
+Run on Success:
+
+```js
+let title = ''
+let status = ''
+try {
+  const body = JSON.parse(response.body)
+  title = body.title || ''
+  status = body.status || ''
+} catch (e) {}
+showToast(title + ' · ' + status)
+```
+
+Run on Failure:
+
+```js
+let message = response.body
+try {
+  const body = JSON.parse(response.body)
+  if (body.error) {
+    message = body.error.code + ': ' + body.error.message
+  }
+} catch (e) {}
+showDialog(message, 'Xteink Read Later')
+```
+
+手元から確認するとき:
+
+```bash
+curl -sS "$WORKER/clip" \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
+  -d '{"url":"https://example.com/article"}'
+```
 
 ## 開発
 
@@ -10,20 +122,11 @@ cp .dev.vars.example .dev.vars
 npm run dev
 ```
 
-`wrangler dev` は既定で `http://localhost:8787` を開く。
+`wrangler dev` は既定で `http://localhost:8787` を開く。`.dev.vars` の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。
 
-### 本文抽出（MAR-30）
+1 リクエストの `POST /clip` で fetch → 抽出 → 言語判定 → 翻訳/整形 → EPUB まで走る。成功時は `status: "ready"` と `epubPath`、`timingsMs`。EPUB とメタデータは R2（`wrangler dev` ではローカルシミュレーション）。同一 canonical URL の再送は同じ `id` で上書きし、`createdAt` は初回のまま `updatedAt` だけ更新する。
 
-```bash
-curl -sS http://localhost:8787/clip \
-  -H 'content-type: application/json' \
-  -H "Authorization: Bearer $CLIP_TOKEN" \
-  -d '{"url":"https://example.com/article"}'
-```
-
-1 リクエストで fetch → 抽出 → 言語判定 → 翻訳/整形 → EPUB 生成まで走る。成功時は `status: "ready"` と `epubPath`、`timingsMs` を返す。EPUB とメタデータは R2（`wrangler dev` ではローカルシミュレーション）へ保存する。同一 canonical URL の再送は同じ `id` で上書きし、`createdAt` は初回のまま `updatedAt` だけ更新する。
-
-`POST /clip` と `DELETE /articles/:id` は `.dev.vars` の `CLIP_TOKEN` を Bearer で要求する（本番も同じ）。`GET /opds`、`GET /articles/:id`、`GET /articles/:id/book.epub`、`GET /opds/download/:id.epub` は CrossPoint JP 向けに HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`。空パスワード不可）。比較は timing-safe。token はレスポンスにもログにも出さない。`POST /clip` と `GET /opds` は末尾スラッシュありなしを同じルートとして扱う（404 にしない）。
+`POST /clip`・`POST /books`・`DELETE /articles/:id` は Bearer `CLIP_TOKEN`。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` は末尾スラッシュありなしを同じルートとして扱う。
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
@@ -32,44 +135,17 @@ curl -sS -o clip.json http://localhost:8787/clip \
   -d '{"url":"https://example.com/article"}'
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" \
   -o book.epub "http://localhost:8787$(jq -r .epubPath clip.json)"
-curl -sS -X DELETE "http://localhost:8787/articles/$(jq -r .id clip.json)" \
-  -H "Authorization: Bearer $CLIP_TOKEN"
-```
-
-手動削除は `DELETE /articles/:id`。token 不一致は 401、存在しない id は 404。
-
-OPDS 1.2 相当の Atom カタログは `GET /opds`。新しい記事が上で、各 entry の `http://opds-spec.org/acquisition` リンクから EPUB を取る。CrossPoint JP にはこの URL を HTTP Basic 付きで登録する。
-
-```bash
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
-curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" \
-  -o book.epub "http://localhost:8787/opds/download/$(jq -r .id clip.json).epub"
 ```
 
-購入した EPUB は書店サイトから取らない。手元のファイルを `POST /books` で上げ、同じ OPDS カタログに載せる。翻訳・抽出・サニタイズはしない。
-
-```bash
-curl -sS http://localhost:8787/books \
-  -H "Authorization: Bearer $CLIP_TOKEN" \
-  -F "title=本のタイトル" \
-  -F "author=著者名" \
-  -F "epub=@book.epub;type=application/epub+zip"
-```
-
-同じ EPUB バイト列の再送は同じ `id` で上書きする。秘密値と本文はログにも README にも出さない。
-
-ログは stage 別の JSON（`fetch` / `extract` / `translate` / `epub` / `store`）で所要時間と失敗 `errorKind` を出す。
-
-英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。失敗時は `error.code` と `error.message` で原因を返す。翻訳失敗時（503）は `error.extracted` に抽出結果を残す。
-
-`.dev.vars` の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。
+ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store`）。token と記事全文は出さない。英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。翻訳失敗（503）は `error.extracted` に抽出結果を残す。
 
 | 状態 | 意味 |
 | --- | --- |
-| 400 | URL 不正 |
+| 400 | URL 不正、または購入 EPUB の multipart 不正（`invalid_epub`） |
 | 401 | CLIP_TOKEN または OPDS Basic が無い / 不一致 |
 | 404 | 記事が無い |
-| 413 | 取得 HTML が上限超過 |
+| 413 | 取得 HTML または購入 EPUB が上限超過 |
 | 422 | 本文を抽出できない |
 | 500 | EPUB 生成失敗（`epub_failed`。抽出失敗の 422 とは別） |
 | 502 | 対象ページの取得失敗 |
@@ -82,7 +158,7 @@ npm test
 npm run typecheck
 ```
 
-`npm test` は単体テストと、fixture + OpenAI モックの E2E を実行する。実 `OPENAI_API_KEY` もライブの記事取得も不要。
+`npm test` は単体と、fixture + OpenAI モックの E2E。実 `OPENAI_API_KEY` もライブの記事取得も不要。
 
 GitHub Actions が pull request と `main` への push で install / typecheck / 単体 / E2E を回す。**マージしてよい判断基準は CI が緑であること。** `main` ではそのジョブが通ったあとだけ Worker をデプロイする。
 
@@ -135,78 +211,3 @@ curl -sS https://xteink-read-later.<account>.workers.dev/clip \
 ```
 
 ログは stage / durationMs / errorKind のみ。token や記事全文は出さない。手動で送りたいときだけ `npm run deploy` できる。
-
-## Android 共有シート（MAR-40）
-
-ネイティブの Android アプリは作らない。Chrome などから共有シートで [HTTP Shortcuts](https://http-shortcuts.rmy.ch/) に渡し、`POST /clip` する。ショートカット定義はリポジトリにバイナリを置かない。
-
-入れるもの: **HTTP Shortcuts**（[F-Droid](https://f-droid.org/packages/ch.rmy.android.http_shortcuts/) / [Play](https://play.google.com/store/apps/details?id=ch.rmy.android.http_shortcuts)）。Xteink 用の専用アプリは不要。
-
-本番 origin を `WORKER` とする（例: `https://xteink-read-later.<account>.workers.dev`、末尾スラッシュなし）。`CLIP_TOKEN` は本文や URL クエリに載せない。Workers が要求するのと同じ `Authorization: Bearer …` を付ける。値は `.dev.vars`（ローカル）または `wrangler secret put CLIP_TOKEN`（本番）と同じもの。この README には値を書かない。
-
-`POST /clip` は JSON `{"url":"…"}` のほか、共有シート向けに `text/plain`（本文が URL または URL を含むテキスト）と `application/x-www-form-urlencoded`（`url` / `text` / `link`）も受ける。タイトル＋URL のような共有文からは最初の `http(s)` URL を使う。
-
-### HTTP Shortcuts の再現手順
-
-1. HTTP Shortcuts を入れる。右下の + から HTTP ショートカットを新規作成。名前は「Xteink Read Later」。
-2. グローバル変数:
-   - `worker`: Static。値は `WORKER`。
-   - `clip_token`: Static。値は `CLIP_TOKEN`。「Treat value as secret」と「Exclude stored value from exports」をオン。
-   - `shared_url`: Static。「Allow Receiving Value from Share Dialog」をオン。受け取る部分は **text**。
-3. ショートカット本体:
-   - 方法: `POST`
-   - URL: `{worker}/clip`
-   - Authentication: **Bearer**。トークンに `{clip_token}` を入れる（カスタムヘッダで `Authorization: Bearer {clip_token}` でも同じ）。
-   - Request Body: Custom Text。`Content-Type: application/json`
-
-```json
-{ "url": "{shared_url}" }
-```
-
-4. Trigger & Execution Settings で **Direct Share target** をオン（Android 11 以降。共有シートにこのショートカットが出る）。
-5. Response Handling:
-   - On Success: Dialog か Toast。レスポンス JSON の `title` と `status`（`ready`）が分かること。
-   - On Failure（2xx 以外）: Dialog。`error.code` と `error.message` が分かること。
-6. 任意の Scripting（JSON を読みやすくする）:
-
-Run on Success:
-
-```js
-const body = JSON.parse(response.body)
-showToast(body.title + ' · ' + body.status)
-```
-
-Run on Failure:
-
-```js
-let message = response.body
-try {
-  const body = JSON.parse(response.body)
-  if (body.error) {
-    message = body.error.code + ': ' + body.error.message
-  }
-} catch (e) {}
-showDialog(message, 'Xteink Read Later')
-```
-
-Chrome で記事を開き、共有 → 「Xteink Read Later」（または HTTP Shortcuts）→ 成功/失敗がダイアログか Toast で分かれば入口は足りる。英語記事なら `translated: true` の日本語 EPUB が R2 に載る。
-
-cURL から取り込む場合の形（token の値は自分の環境の変数に差し替える）:
-
-```bash
-curl -sS "$WORKER/clip" \
-  -H 'content-type: application/json' \
-  -H "Authorization: Bearer $CLIP_TOKEN" \
-  -d '{"url":"https://example.com/article"}'
-```
-
-### その後 Xteink で読む
-
-CrossPoint JP に OPDS フィードを登録する。
-
-- カタログ: `WORKER/opds`
-- 認証: HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`。空パスワードは使わない）
-- 並び: 新しい記事が上
-- 取得: 各 entry の `application/epub+zip` acquisition リンク（`WORKER/opds/download/{id}.epub`）
-
-英語記事を共有したあとは、カタログ先頭の EPUB が日本語になっていることを端末で確認する。

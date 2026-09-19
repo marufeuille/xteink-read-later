@@ -1,11 +1,23 @@
 # Xteink Read Later 開発計画
 
-対象: [Linear project Xteink Read Later](https://linear.app/marufeuille/project/xteink-read-later-b91329ef0ae8)  
-リポジトリ現状: `main` にコミットなし。ソース・設定・ドキュメントは未作成。
+対象: [Linear project Xteink Read Later](https://linear.app/marufeuille/project/xteink-read-later-b91329ef0ae8)
+
+## 現状（コードと一致させる）
+
+`main` に Worker ソースがある。GitHub Actions が PR / `main` で typecheck・単体・fixture E2E を回し、緑の `main` だけ `wrangler deploy` する。入口は **Android 共有シート + HTTP Shortcuts**（iOS Shortcut ではない）。読む側は CrossPoint JP / Xteink の OPDS。購入 EPUB は `POST /books` で手元ファイルを載せる（書店からは取らない）。
+
+認証:
+
+- `POST /clip` / `POST /books` / `DELETE /articles/:id` → Bearer `CLIP_TOKEN`
+- `GET /opds` / 記事メタ / EPUB 取得 → HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`。空パスワード不可）
+
+日常の手順（平易版）は README の「日常の流れ」。秘密値と記事本文はドキュメントに出さない。
+
+以下のフェーズ表は着手当時の順。実装済み。残課題の検討は MAR-44（翻訳モデル）と MAR-45（非同期 clip）で、この計画の MVP 範囲外。
 
 ## 1. 何を作るか
 
-スマホで見つけた Web 記事を共有操作だけで送り、必要なら AI で日本語化・整形した EPUB として Xteink X3（CrossPoint JP）から取得して読む、個人用パイプライン。
+スマホで見つけた Web 記事を共有操作だけで送り、必要なら AI で日本語化・整形した EPUB として Xteink X3（CrossPoint JP）から取得して読む、個人用パイプライン。買った EPUB は同じカタログに載せる。
 
 一般的な Read Later サービス（マルチユーザー、管理 UI、読了同期、Kindle/Kobo）は作らない。
 
@@ -85,7 +97,7 @@ Workers Free の CPU 10ms では本文抽出と EPUB 生成が落ちる想定。
 
 ### `POST /clip`
 
-変換の唯一の入口。Android の共有ショートカットもこれを叩く。
+記事クリップの入口。Android の共有ショートカットもこれを叩く。購入 EPUB は `POST /books`。
 
 Request:
 
@@ -124,7 +136,7 @@ Content-Type: application/json
 }
 ```
 
-Phase 1 の途中（MAR-30 完了時点）では `contentHtml` を返し、`epubPath` はまだなくてよい。MAR-33 完了時点で上の形に揃える。
+Phase 1 の途中（MAR-30 完了時点）では `contentHtml` を返し、`epubPath` はまだなくてよい。MAR-33 完了時点で上の形に揃える。現行の成功レスポンスは `status: "ready"` と `epubPath` で、HTML 本文は返さない。
 
 失敗:
 
@@ -156,6 +168,8 @@ Bearer 必須。R2 上の当該記事を削除。MAR-35 の手動削除。
 
 OPDS 1.2 相当の Atom カタログ。新しい記事が上。各 entry に acquisition link（EPUB）。`GET /opds` と `GET /opds/` は同じルート。
 
+CrossPoint 登録の注意: 本番は https、カタログ URL は `/opds`（origin だけや `/opds/` は端末に入れない）、HTTP Basic のみ（`CLIP_TOKEN` は使わない）、空パスワード不可。
+
 ### `GET /opds/download/:id.epub`
 
 カタログから辿る取得 URL。中身は `GET /articles/:id/book.epub` と同じ。
@@ -175,7 +189,7 @@ articles/{id}/meta.json
 articles/{id}/book.epub
 ```
 
-`id` は canonical URL の SHA-256 先頭（推測困難な固定長）。同一 canonical の再送は **上書き**（最新 EPUB が残る。`createdAt` は初回を維持し `updatedAt` を更新）。
+`id` は clip では canonical URL の SHA-256 先頭、購入 EPUB ではファイルバイトの SHA-256 先頭（推測困難な固定長）。同一キーの再送は **上書き**（最新 EPUB が残る。`createdAt` は初回を維持し `updatedAt` を更新）。購入 EPUB の canonical は `https://purchased.invalid/books/{id}`（外部ショップは fetch しない）。
 
 `meta.json`:
 
@@ -232,7 +246,7 @@ JS レンダリング必須のサイトは対象外。失敗は `422`。
 | 名前 | 種別 | 用途 |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Secret | 翻訳 |
-| `CLIP_TOKEN` | Secret | `POST /clip` / `DELETE` |
+| `CLIP_TOKEN` | Secret | `POST /clip` / `POST /books` / `DELETE` |
 | `OPDS_USERNAME` | Secret | OPDS Basic |
 | `OPDS_PASSWORD` | Secret | OPDS Basic |
 | `ARTICLES` | R2 binding | EPUB と meta |
@@ -246,8 +260,8 @@ token 比較は timing-safe。ログに token・記事全文を出さない。�
 - HTTP（Hono）: 認証、バリデーション、ステータスコード
 - fetch/extract: URL 取得と本文抽出。Workers では jsdom 非対応が前提
 - language: `ja` / `non-ja`
-- translate: OpenAI。入力は抽出 HTML、出力も構造付き HTML
-- epub: EPUB 3 バイナリ
+- translate: OpenAI。入力は抽出 HTML を Markdown 化したもの、出力 Markdown を HTML に戻して EPUB へ
+- epub: EPUB 3 バイナリ。XML 禁止 C0 とリモート img は落とす
 - store: R2 の get/put/delete/list
 - opds: Atom XML
 
@@ -354,6 +368,11 @@ token 比較は timing-safe。ログに token・記事全文を出さない。�
 | カスタムドメイン | 最初は `*.workers.dev`。実機 HTTPS で問題が出たら付ける |
 | 代表記事 3 本 | 実装時に日本語技術ブログ / 英語技術ブログ / 英語ニュースを固定 fixture にする |
 
-## 13. 最初に着手する範囲
+## 13. 残っている検討
 
-MAR-30 のみ。空リポジトリの足場と `POST /clip` の抽出まで。翻訳・EPUB・R2・OPDS・Android 共有は後続 Issue の境界を跨がない。
+MVP（抽出〜OPDS〜Android 共有〜購入 EPUB）は `main` に載っている。計画を覆す検討は別 Issue:
+
+- MAR-44: 翻訳を DeepL または専用モデルへ
+- MAR-45: clip の非同期化
+
+この 2 つは実装しない限り、同期 HTTP + OpenAI Markdown 往復が現行契約。
