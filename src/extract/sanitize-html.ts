@@ -1,7 +1,7 @@
 import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
 import { parseHttpUrl, type HttpUrl } from '../types'
 import { PARSE_HTML_OPTIONS } from './constants'
-import { imgAltText, stripXmlIllegalChars } from './xml-text'
+import { imgAltText, stripPageCliWarnings, stripXmlIllegalChars } from './xml-text'
 
 const ALLOWED_TAGS = new Set([
   'p',
@@ -403,6 +403,21 @@ function stashHtml(slots: string[], html: string): string {
   return `${SLOT_OPEN}${index}${SLOT_CLOSE}`
 }
 
+function hrefFromHtmlAttrs(attrs: string): string {
+  const match = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i.exec(attrs)
+  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim()
+}
+
+function residualAnchorHtml(attrs: string, inner: string, base: HttpUrl): string {
+  const label = inner.replace(/<[^>]+>/g, '').trim()
+  const href = hrefFromHtmlAttrs(attrs)
+  const resolved = href.length > 0 ? resolveHref(base, href) : null
+  if (resolved === null || label.length === 0) {
+    return escapeText(label)
+  }
+  return `<a href="${escapeAttr(resolved)}">${escapeText(label)}</a>`
+}
+
 function inlineMarkdown(text: string, base: HttpUrl): string {
   const slots: string[] = []
   let current = text
@@ -413,6 +428,10 @@ function inlineMarkdown(text: string, base: HttpUrl): string {
   current = current.replace(/`([^`]+)`/g, (_all, code: string) => {
     return stashHtml(slots, `<code>${escapeText(code.replaceAll('\\`', '`'))}</code>`)
   })
+  current = current.replace(/<a\b([^>]*)>([\s\S]*?)<\/a>/gi, (_all, attrs: string, inner: string) => {
+    return stashHtml(slots, residualAnchorHtml(attrs, inner, base))
+  })
+  current = current.replace(/<\/?a\b[^>]*>/gi, '')
   current = current.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_all, label: string, href: string) => {
     const resolved = resolveHref(base, href.trim())
     if (resolved === null) {
@@ -440,12 +459,92 @@ function isFenceClose(line: string): boolean {
   return /^```\s*$/.test(line)
 }
 
-function startsBlock(line: string): boolean {
+function splitTableRow(line: string): string[] {
+  let trimmed = line.trim()
+  if (!trimmed.includes('|')) {
+    return []
+  }
+  if (trimmed.startsWith('|')) {
+    trimmed = trimmed.slice(1)
+  }
+  if (trimmed.endsWith('|') && !trimmed.endsWith('\\|')) {
+    trimmed = trimmed.slice(0, -1)
+  }
+  const cells: string[] = []
+  let current = ''
+  for (let index = 0; index < trimmed.length; index += 1) {
+    const char = trimmed[index]
+    if (char === '\\' && trimmed[index + 1] === '|') {
+      current += '|'
+      index += 1
+      continue
+    }
+    if (char === '|') {
+      cells.push(current.trim())
+      current = ''
+      continue
+    }
+    current += char
+  }
+  cells.push(current.trim())
+  return cells
+}
+
+function isPipeTableDelimiter(line: string): boolean {
+  const cells = splitTableRow(line)
+  if (cells.length === 0) {
+    return false
+  }
+  return cells.every((cell) => /^:?-+:?$/.test(cell.replace(/\s+/g, '')))
+}
+
+function isPipeTableRow(line: string): boolean {
+  return splitTableRow(line).length > 0 && !isPipeTableDelimiter(line)
+}
+
+function isPipeTableStart(lines: readonly string[], index: number): boolean {
+  const line = lines[index] ?? ''
+  const next = lines[index + 1] ?? ''
+  return isPipeTableRow(line) && isPipeTableDelimiter(next)
+}
+
+function isTableContinueRow(line: string): boolean {
+  if (line.trim() === '' || isFenceOpen(line) !== null) {
+    return false
+  }
+  if (/^(#{1,6})\s+\S/.test(line) || /^---+$/.test(line.trim()) || line.startsWith('<table')) {
+    return false
+  }
+  if (/^>\s?/.test(line) || /^\s{0,3}[-*]\s+\S/.test(line) || /^\s{0,3}\d+\.\s+\S/.test(line)) {
+    return false
+  }
+  return isPipeTableRow(line)
+}
+
+function pipeTableHtml(header: readonly string[], rows: readonly string[][], base: HttpUrl): string {
+  const columns = header.length
+  if (columns === 0) {
+    return ''
+  }
+  const th = header.map((cell) => `<th>${inlineMarkdown(cell, base)}</th>`).join('')
+  const body = rows
+    .map((row) => {
+      const cells = Array.from({ length: columns }, (_, index) => row[index] ?? '')
+      const tds = cells.map((cell) => `<td>${inlineMarkdown(cell, base)}</td>`).join('')
+      return `<tr>${tds}</tr>`
+    })
+    .join('')
+  return `<table><thead><tr>${th}</tr></thead><tbody>${body}</tbody></table>`
+}
+
+function startsBlock(lines: readonly string[], index: number): boolean {
+  const line = lines[index] ?? ''
   return (
     isFenceOpen(line) !== null ||
     /^(#{1,6})\s+\S/.test(line) ||
     /^---+$/.test(line.trim()) ||
     line.startsWith('<table') ||
+    isPipeTableStart(lines, index) ||
     /^>\s?/.test(line) ||
     /^\s{0,3}[-*]\s+\S/.test(line) ||
     /^\s{0,3}\d+\.\s+\S/.test(line)
@@ -453,7 +552,7 @@ function startsBlock(line: string): boolean {
 }
 
 export function markdownToHtml(markdown: string, base: HttpUrl): string {
-  const lines = stripXmlIllegalChars(markdown).replaceAll('\r\n', '\n').split('\n')
+  const lines = stripXmlIllegalChars(stripPageCliWarnings(markdown)).replaceAll('\r\n', '\n').split('\n')
   const blocks: string[] = []
   let index = 0
 
@@ -508,6 +607,21 @@ export function markdownToHtml(markdown: string, base: HttpUrl): string {
       continue
     }
 
+    if (isPipeTableStart(lines, index)) {
+      const header = splitTableRow(line)
+      index += 2
+      const rows: string[][] = []
+      while (index < lines.length && isTableContinueRow(lines[index] ?? '')) {
+        rows.push(splitTableRow(lines[index] ?? ''))
+        index += 1
+      }
+      const table = pipeTableHtml(header, rows, base)
+      if (table.length > 0) {
+        blocks.push(table)
+      }
+      continue
+    }
+
     if (/^>\s?/.test(line)) {
       const quoted: string[] = []
       while (index < lines.length && /^>\s?/.test(lines[index] ?? '')) {
@@ -550,7 +664,7 @@ export function markdownToHtml(markdown: string, base: HttpUrl): string {
     const para: string[] = []
     while (index < lines.length) {
       const current = lines[index] ?? ''
-      if (current.trim() === '' || startsBlock(current)) {
+      if (current.trim() === '' || startsBlock(lines, index)) {
         break
       }
       para.push(current.trim())
