@@ -1,0 +1,59 @@
+declare const articleIdBrand: unique symbol
+declare const httpUrlBrand: unique symbol
+declare const epubBytesBrand: unique symbol
+
+export type ArticleId = string & { readonly [articleIdBrand]: void }
+export type HttpUrl = string & { readonly [httpUrlBrand]: void }
+export type EpubBytes = Uint8Array & { readonly [epubBytesBrand]: void }
+
+export type ArticleMetaKey = `articles/${ArticleId}/meta.json`
+export type ArticleEpubKey = `articles/${ArticleId}/book.epub`
+export type ArticleObjectKey = ArticleMetaKey | ArticleEpubKey
+
+const ARTICLE_ID_PATTERN = /^art_[a-f0-9]{32}$/
+
+export function isArticleId(value: string): value is ArticleId {
+  return ARTICLE_ID_PATTERN.test(value)
+}
+
+export function asArticleId(value: string): ArticleId {
+  if (!isArticleId(value)) {
+    throw new TypeError(`Invalid article id: ${value}`)
+  }
+  return value
+}
+
+export async function articleIdFromCanonicalUrl(canonicalUrl: HttpUrl): Promise<ArticleId> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(canonicalUrl),
+  )
+  const hex = [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('')
+    .slice(0, 32)
+  return asArticleId(`art_${hex}`)
+}
+
+export function parseHttpUrl(value: string): HttpUrl | null {
+  if (!URL.canParse(value)) {
+    return null
+  }
+  const url = new URL(value)
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return null
+  }
+  return url.href as HttpUrl
+}
+
+export function asEpubBytes(value: Uint8Array): EpubBytes {
+  return value as EpubBytes
+}
+
+export function articleMetaKey(id: ArticleId): ArticleMetaKey {
+  return `articles/${id}/meta.json`
+}
+
+export function articleEpubKey(id: ArticleId): ArticleEpubKey {
+  return `articles/${id}/book.epub`
+}

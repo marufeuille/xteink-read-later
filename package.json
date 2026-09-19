@@ -1,0 +1,18 @@
+{
+  "name": "xteink-read-later",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "generate-types": "wrangler types",
+    "typecheck": "wrangler types && tsc --noEmit"
+  },
+  "dependencies": {
+    "hono": "^4.9.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^5.9.2",
+    "wrangler": "^4.37.1"
+  }
+}
