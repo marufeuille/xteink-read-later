@@ -70,7 +70,7 @@ npm run typecheck
 
 `npm test` は単体テストと、fixture + OpenAI モックの E2E を実行する。実 `OPENAI_API_KEY` もライブの記事取得も不要。
 
-GitHub Actions が pull request と `main` への push で install / typecheck / 単体 / E2E を回す。**マージしてよい判断基準は CI が緑であること。**
+GitHub Actions が pull request と `main` への push で install / typecheck / 単体 / E2E を回す。**マージしてよい判断基準は CI が緑であること。** `main` ではそのジョブが通ったあとだけ Worker をデプロイする。
 
 任意のライブ E2E（実ネットワーク。英語記事は OpenAI が必要）はローカル限定:
 
@@ -80,7 +80,13 @@ E2E_LIVE=1 E2E_LIVE_URL='https://example.com/article' npm run test:e2e:live
 
 ## Cloudflare Workers へデプロイ
 
-同じ `src/` を `wrangler deploy` する。Workers Paid を前提（`limits.cpu_ms = 30000`）。秘密情報はソースに置かず Workers Secret にする。R2 バケット `xteink-read-later-articles` がアカウントに必要。
+`main` への push / merge で GitHub Actions が `wrangler deploy` する。日常のデプロイにローカルの `npm run deploy` は使わない。Workers Paid を前提（`limits.cpu_ms = 30000`）。秘密情報はソースにも Git にも入れない。
+
+CI の `typecheck, unit, e2e` が失敗した run ではデプロイジョブは走らない。**マージしてよいのはそのチェックが緑のときだけ。**
+
+### 初回だけ — Cloudflare 側（Workers Secret）
+
+R2 バケット `xteink-read-later-articles` がアカウントに必要。アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。
 
 ```bash
 npx wrangler login
@@ -89,8 +95,22 @@ npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put CLIP_TOKEN
 npx wrangler secret put OPDS_USERNAME
 npx wrangler secret put OPDS_PASSWORD
-npm run deploy
 ```
+
+プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。
+
+### GitHub Secrets（Actions が Cloudflare に認証するため）
+
+リポジトリの **Settings → Secrets and variables → Actions → New repository secret** に次の 2 つだけ足す。値は README に書かない。
+
+| Name | 中身 |
+| --- | --- |
+| `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers**。対象アカウントだけに scope する |
+| `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの [Account ID](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/) |
+
+次は **GitHub Secrets に入れない**（Cloudflare の `wrangler secret put` 側）: `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD`。
+
+Secrets 未設定のまま `main` にマージすると、チェックは通ってもデプロイジョブが落ちる。
 
 デプロイ後:
 
@@ -101,7 +121,7 @@ curl -sS https://xteink-read-later.<account>.workers.dev/clip \
   -d '{"url":"https://example.com/article"}'
 ```
 
-ログは stage / durationMs / errorKind のみ。token や記事全文は出さない。
+ログは stage / durationMs / errorKind のみ。token や記事全文は出さない。手動で送りたいときだけ `npm run deploy` できる。
 
 ## Android 共有シート（MAR-40）
 
