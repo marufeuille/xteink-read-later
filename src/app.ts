@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { isClipRequestBody } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
@@ -35,6 +36,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   app.post('/clip', async (c) => {
+    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
+      return unauthorizedResponse('bearer')
+    }
     let body: unknown
     try {
       body = await c.req.json()
@@ -116,6 +120,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   })
 
   app.get('/opds', async (c) => {
+    if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
+      return unauthorizedResponse('basic')
+    }
     const origin = parseHttpUrl(new URL(c.req.url).origin)
     if (origin === null) {
       return toErrorResponse({ kind: 'invalid_url', url: new URL(c.req.url).origin })
@@ -131,6 +138,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   })
 
   app.get('/opds/download/:file', async (c) => {
+    if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
+      return unauthorizedResponse('basic')
+    }
     const id = parseOpdsDownloadFile(c.req.param('file'))
     if (id === null) {
       return toErrorResponse({ kind: 'not_found' })
@@ -143,6 +153,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
   })
 
   app.delete('/articles/:id', async (c) => {
+    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
+      return unauthorizedResponse('bearer')
+    }
     const id = c.req.param('id')
     if (!isArticleId(id)) {
       return toErrorResponse({ kind: 'not_found' })

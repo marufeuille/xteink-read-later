@@ -20,9 +20,10 @@ import {
   type TranslateArticle,
 } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
+import { bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
-const BINDINGS = { OPENAI_API_KEY: 'sk-test' } as Cloudflare.Env
+const BINDINGS = TEST_BINDINGS
 
 function fixtureHtml(name: string): string {
   return readFileSync(join(fixtures, 'fixtures', name), 'utf8')
@@ -72,7 +73,7 @@ async function clip(app: ReturnType<typeof createApp>, url: string): Promise<Res
     '/clip',
     {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
       body: JSON.stringify({ url }),
     },
     BINDINGS,
@@ -167,12 +168,12 @@ describe('POST /clip E2E', () => {
       }),
       createStore: createR2Store,
     })
-    const env = { OPENAI_API_KEY: 'sk-test', ARTICLES: bucket } as Cloudflare.Env
+    const env = { ...TEST_BINDINGS, ARTICLES: bucket } as Cloudflare.Env
     const first = await app.request(
       '/clip',
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
       },
       env,
@@ -187,7 +188,7 @@ describe('POST /clip E2E', () => {
       '/clip',
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
       },
       env,
@@ -202,10 +203,20 @@ describe('POST /clip E2E', () => {
     expect(epubRes.status).toBe(200)
     expect(epubRes.headers.get('content-type')).toBe('application/epub+zip')
 
-    const deleted = await app.request(`/articles/${firstBody.id}`, { method: 'DELETE' }, env)
+    const deleted = await app.request(
+      `/articles/${firstBody.id}`,
+      { method: 'DELETE', headers: { authorization: bearerAuthorization() } },
+      env,
+    )
     expect(deleted.status).toBe(200)
     expect(await app.request(firstBody.epubPath ?? '', {}, env)).toMatchObject({ status: 404 })
-    expect(await app.request(`/articles/${firstBody.id}`, { method: 'DELETE' }, env)).toMatchObject({
+    expect(
+      await app.request(
+        `/articles/${firstBody.id}`,
+        { method: 'DELETE', headers: { authorization: bearerAuthorization() } },
+        env,
+      ),
+    ).toMatchObject({
       status: 404,
     })
   })
@@ -251,10 +262,10 @@ describe('POST /clip E2E', () => {
       '/clip',
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ url: 'https://example.com/en/compatibility-date' }),
       },
-      {} as Cloudflare.Env,
+      { CLIP_TOKEN: TEST_CLIP_TOKEN } as Cloudflare.Env,
     )
     expect(response.status).toBe(503)
     const body = await readJson(response)
@@ -305,7 +316,7 @@ describe('POST /clip E2E', () => {
       '/clip',
       {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ href: 'https://example.com/a' }),
       },
       BINDINGS,

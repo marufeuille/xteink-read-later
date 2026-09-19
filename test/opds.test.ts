@@ -12,8 +12,9 @@ import {
   type ArticleWrite,
   type HttpUrl,
 } from '../src/types'
+import { basicAuthorization, TEST_BINDINGS } from './bindings'
 
-const BINDINGS = { OPENAI_API_KEY: 'sk-test' } as Cloudflare.Env
+const BINDINGS = TEST_BINDINGS
 
 function url(value: string): HttpUrl {
   const parsed = parseHttpUrl(value)
@@ -114,21 +115,29 @@ describe('OPDS HTTP', () => {
       }),
       store,
     })
-    const catalog = await app.request('https://read.example.com/opds', {}, BINDINGS)
+    const catalog = await app.request(
+      'https://read.example.com/opds',
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
     expect(catalog.status).toBe(200)
     expect(catalog.headers.get('content-type')).toContain('application/atom+xml')
     const xml = await catalog.text()
     expect(xml.indexOf('新しい記事')).toBeLessThan(xml.indexOf('古い記事'))
     expect(xml).toContain(`https://read.example.com/opds/download/${newer}.epub`)
 
-    const download = await app.request(`https://read.example.com/opds/download/${newer}.epub`, {}, BINDINGS)
+    const download = await app.request(
+      `https://read.example.com/opds/download/${newer}.epub`,
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
     expect(download.status).toBe(200)
     expect(download.headers.get('content-type')).toBe('application/epub+zip')
     expect(new Uint8Array(await download.arrayBuffer())).toEqual(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]))
 
     const missing = await app.request(
       'https://read.example.com/opds/download/art_cccccccccccccccccccccccccccccccc.epub',
-      {},
+      { headers: { authorization: basicAuthorization() } },
       BINDINGS,
     )
     expect(missing.status).toBe(404)
