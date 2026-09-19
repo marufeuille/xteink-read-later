@@ -1,10 +1,11 @@
 import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
 import { PARSE_HTML_OPTIONS } from '../extract/constants'
+import { imgAltText, stripXmlIllegalChars } from '../extract/xml-text'
 
-const VOID_TAGS = new Set(['br', 'hr', 'img', 'meta', 'link', 'input'])
+const VOID_TAGS = new Set(['br', 'hr', 'meta', 'link', 'input'])
 
 export function xmlEscape(value: string): string {
-  return value
+  return stripXmlIllegalChars(value)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
     .replaceAll('>', '&gt;')
@@ -20,6 +21,10 @@ function serialize(node: Node): string {
     return ''
   }
   const tag = node.rawTagName.toLowerCase()
+  if (tag === 'img') {
+    const alt = imgAltText(node.getAttribute('alt') ?? '')
+    return alt.length > 0 ? xmlEscape(alt) : ''
+  }
   const attrs = Object.entries(node.attributes)
     .map(([key, val]) => ` ${key}="${xmlEscape(val)}"`)
     .join('')
@@ -31,10 +36,11 @@ function serialize(node: Node): string {
 }
 
 export function htmlFragmentToXhtml(fragment: string): string {
-  const root = parse(`<div id="epub-root">${fragment}</div>`, PARSE_HTML_OPTIONS)
+  const cleaned = stripXmlIllegalChars(fragment)
+  const root = parse(`<div id="epub-root">${cleaned}</div>`, PARSE_HTML_OPTIONS)
   const wrapper = root.querySelector('#epub-root')
   if (wrapper === null) {
     return ''
   }
-  return wrapper.childNodes.map(serialize).join('')
+  return stripXmlIllegalChars(wrapper.childNodes.map(serialize).join(''))
 }

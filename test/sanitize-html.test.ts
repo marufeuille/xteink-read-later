@@ -116,3 +116,56 @@ describe('sanitizeContentHtml', () => {
     expect(html).toContain('{"compatibility_date":"2026-09-19"}')
   })
 })
+
+describe('XML-illegal chars and img drop', () => {
+  const dummy =
+    '<p>Intro\u0000 text</p>' +
+    '<pre>Keep\ttabs and\nline feeds.</pre>' +
+    '<p>Bell\u0007 gone.</p>' +
+    '<p><img src="https://example.com/chart.svg" alt="SVG chart caption"></p>' +
+    '<p><img src="https://example.com/photo.png" alt="PNG photo caption"></p>' +
+    '<p><img src="data:image/png;base64,AAAA" alt="Data URI caption"></p>' +
+    '<p><img src="https://example.com/no-alt.svg"></p>'
+
+  it('strips NUL and other C0 from Markdown while keeping tab and LF', () => {
+    const markdown = htmlToMarkdown(dummy, BASE)
+    expect(markdown).not.toContain('\u0000')
+    expect(markdown).not.toContain('\u0007')
+    expect(markdown).toContain('\t')
+    expect(markdown).toContain('\n')
+    expect(markdown).toContain('Intro text')
+    expect(markdown).toContain('Keep\ttabs and\nline feeds.')
+  })
+
+  it('drops svg, png, and data-URI img, keeping short alt text', () => {
+    const markdown = htmlToMarkdown(dummy, BASE)
+    expect(markdown).not.toMatch(/!\[/)
+    expect(markdown).not.toContain('<img')
+    expect(markdown).toContain('SVG chart caption')
+    expect(markdown).toContain('PNG photo caption')
+    expect(markdown).toContain('Data URI caption')
+    expect(markdown).not.toContain('example.com/chart.svg')
+    expect(markdown).not.toContain('example.com/photo.png')
+    expect(markdown).not.toContain('data:image/png')
+  })
+
+  it('does not resurrect Markdown images as HTML img', () => {
+    const html = markdownToHtml(
+      'See ![SVG chart caption](https://example.com/chart.svg) and ![PNG photo caption](https://example.com/photo.png) and ![Data URI caption](data:image/png;base64,AAAA).',
+      BASE,
+    )
+    expect(html).not.toMatch(/<img\b/i)
+    expect(html).not.toContain('\u0000')
+    expect(html).toContain('SVG chart caption')
+    expect(html).toContain('PNG photo caption')
+    expect(html).toContain('Data URI caption')
+    expect(html).not.toContain('example.com/chart.svg')
+  })
+
+  it('strips C0 from markdownToHtml output', () => {
+    const html = markdownToHtml('Hello\u0000 world\u0007.', BASE)
+    expect(html).not.toContain('\u0000')
+    expect(html).not.toContain('\u0007')
+    expect(html).toContain('Hello world')
+  })
+})

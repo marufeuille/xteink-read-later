@@ -1,6 +1,7 @@
 import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
 import { parseHttpUrl, type HttpUrl } from '../types'
 import { PARSE_HTML_OPTIONS } from './constants'
+import { imgAltText, stripXmlIllegalChars } from './xml-text'
 
 const ALLOWED_TAGS = new Set([
   'p',
@@ -31,7 +32,6 @@ const ALLOWED_TAGS = new Set([
   'td',
   'figure',
   'figcaption',
-  'img',
 ])
 
 const DROP_TAGS = new Set([
@@ -73,7 +73,7 @@ const ADS_CLASS_RE =
 
 const WRAPPER_TAGS = new Set(['div', 'section', 'span', 'picture', 'article', 'main', 'header'])
 
-const VOID_TAGS = new Set(['br', 'hr', 'img'])
+const VOID_TAGS = new Set(['br', 'hr'])
 const BLOCK_TAGS = new Set([
   'p',
   'h1',
@@ -101,7 +101,10 @@ type SerializeCtx = {
 }
 
 function escapeText(value: string): string {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+  return stripXmlIllegalChars(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
 }
 
 function escapeAttr(value: string): string {
@@ -156,11 +159,8 @@ function languageClass(el: HTMLElement): string {
   return match?.[1] ?? ''
 }
 
-function imgParts(el: HTMLElement, base: HttpUrl): { src: string | null; alt: string } {
-  const rawSrc = el.getAttribute('src')?.trim() ?? ''
-  const src = rawSrc.length > 0 ? resolveHref(base, rawSrc) : null
-  const alt = el.getAttribute('alt')?.trim() ?? ''
-  return { src, alt }
+function imgFallback(el: HTMLElement): string {
+  return imgAltText(el.getAttribute('alt') ?? '')
 }
 
 function attributesFor(tag: string, el: HTMLElement, base: HttpUrl): string {
@@ -171,13 +171,6 @@ function attributesFor(tag: string, el: HTMLElement, base: HttpUrl): string {
     }
     const resolved = resolveHref(base, href.trim())
     return resolved === null ? '' : ` href="${escapeAttr(resolved)}"`
-  }
-  if (tag === 'img') {
-    const { src, alt } = imgParts(el, base)
-    if (src === null) {
-      return ''
-    }
-    return ` src="${escapeAttr(src)}" alt="${escapeAttr(alt)}"`
   }
   if (tag === 'code' || tag === 'pre') {
     const className = el.getAttribute('class')
@@ -222,12 +215,8 @@ function htmlNode(node: Node, ctx: SerializeCtx): string {
     tag === 'pre' || tag === 'code' ? { ...ctx, inPre: true } : ctx
 
   if (tag === 'img') {
-    const attrs = attributesFor(tag, node, ctx.base)
-    if (attrs.length === 0) {
-      const alt = node.getAttribute('alt')?.trim() ?? ''
-      return alt.length > 0 ? `<p>${escapeText(alt)}</p>` : ''
-    }
-    return `<img${attrs}>`
+    const alt = imgFallback(node)
+    return alt.length > 0 ? escapeText(alt) : ''
   }
 
   if (WRAPPER_TAGS.has(tag)) {
@@ -298,11 +287,7 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
   const tag = node.rawTagName.toLowerCase()
 
   if (tag === 'img') {
-    const { src, alt } = imgParts(node, ctx.base)
-    if (src === null) {
-      return alt
-    }
-    return `![${alt}](${src})`
+    return imgFallback(node)
   }
 
   if (tag === 'br') {
@@ -396,34 +381,34 @@ function rootCtx(base: HttpUrl): SerializeCtx {
 }
 
 export function sanitizeContentHtml(root: HTMLElement, base: HttpUrl): string {
-  return normalizeBlocks(htmlChildren(root, rootCtx(base)))
+  return stripXmlIllegalChars(normalizeBlocks(htmlChildren(root, rootCtx(base))))
 }
 
 export function sanitizeFragmentHtml(html: string, base: HttpUrl): string {
-  const root = parse(html, PARSE_HTML_OPTIONS)
+  const root = parse(stripXmlIllegalChars(html), PARSE_HTML_OPTIONS)
   return sanitizeContentHtml(root, base)
 }
 
 export function htmlToMarkdown(html: string, base: HttpUrl): string {
-  const root = parse(html, PARSE_HTML_OPTIONS)
-  return normalizeBlocks(markdownChildren(root, rootCtx(base)))
+  const root = parse(stripXmlIllegalChars(html), PARSE_HTML_OPTIONS)
+  return stripXmlIllegalChars(normalizeBlocks(markdownChildren(root, rootCtx(base))))
 }
+
+const SLOT_OPEN = '\uE000'
+const SLOT_CLOSE = '\uE001'
 
 function stashHtml(slots: string[], html: string): string {
   const index = slots.length
   slots.push(html)
-  return `\u0000${index}\u0000`
+  return `${SLOT_OPEN}${index}${SLOT_CLOSE}`
 }
 
 function inlineMarkdown(text: string, base: HttpUrl): string {
   const slots: string[] = []
   let current = text
-  current = current.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_all, alt: string, href: string) => {
-    const resolved = resolveHref(base, href.trim())
-    if (resolved === null) {
-      return stashHtml(slots, escapeText(alt))
-    }
-    return stashHtml(slots, `<img src="${escapeAttr(resolved)}" alt="${escapeAttr(alt)}">`)
+  current = current.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_all, alt: string) => {
+    const altText = imgAltText(alt)
+    return altText.length > 0 ? stashHtml(slots, escapeText(altText)) : stashHtml(slots, '')
   })
   current = current.replace(/`([^`]+)`/g, (_all, code: string) => {
     return stashHtml(slots, `<code>${escapeText(code.replaceAll('\\`', '`'))}</code>`)
@@ -441,7 +426,7 @@ function inlineMarkdown(text: string, base: HttpUrl): string {
   current = current.replace(/\*([^*]+)\*/g, (_all, inner: string) => {
     return stashHtml(slots, `<em>${escapeText(inner)}</em>`)
   })
-  return escapeText(current).replace(/\u0000(\d+)\u0000/g, (_all, index: string) => {
+  return escapeText(current).replace(/\uE000(\d+)\uE001/g, (_all, index: string) => {
     return slots[Number(index)] ?? ''
   })
 }
@@ -468,7 +453,7 @@ function startsBlock(line: string): boolean {
 }
 
 export function markdownToHtml(markdown: string, base: HttpUrl): string {
-  const lines = markdown.replaceAll('\r\n', '\n').split('\n')
+  const lines = stripXmlIllegalChars(markdown).replaceAll('\r\n', '\n').split('\n')
   const blocks: string[] = []
   let index = 0
 
@@ -576,7 +561,7 @@ export function markdownToHtml(markdown: string, base: HttpUrl): string {
     }
   }
 
-  return blocks.join('')
+  return stripXmlIllegalChars(blocks.join(''))
 }
 
 export function visibleTextLength(html: string): number {
