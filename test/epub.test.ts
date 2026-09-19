@@ -4,6 +4,7 @@ import { extractArticle } from '../src/extract/extract-article'
 import { assignLanguage } from '../src/extract/pipeline'
 import { detectLanguage, extractHtmlLang } from '../src/extract/detect-language'
 import { buildEpub } from '../src/epub/build-epub'
+import { htmlFragmentToXhtml } from '../src/epub/xhtml'
 import { EPUB_CSS } from '../src/epub/templates'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -177,5 +178,36 @@ describe('buildEpub', () => {
     expect(chapter).toContain('xml:lang="ja"')
     expect(chapter).toContain('著者: Ada &amp; Grace')
     expect(chapter).toContain('公開日: 2026-04-12T00:00:00.000Z')
+  })
+
+  it('strips NUL and remote img from chapter XHTML, keeping alt text', async () => {
+    const article = translated({
+      contentHtml:
+        '<p>Dummy\u0000 body.</p>' +
+        '<p>Keep\ttab and\nLF.</p>' +
+        '<p>Bell\u0007 gone.</p>' +
+        '<p><img src="https://example.com/chart.svg" alt="SVG chart caption"/></p>' +
+        '<p><img src="https://example.com/photo.png" alt="PNG photo caption"/></p>' +
+        '<p><img src="data:image/png;base64,AAAA" alt="Data URI caption"/></p>' +
+        '<p><img src="https://example.com/blank.svg"/></p>',
+    })
+    const xhtml = htmlFragmentToXhtml(article.contentHtml)
+    expect(xhtml).not.toContain('\u0000')
+    expect(xhtml).not.toContain('\u0007')
+    expect(xhtml).toContain('\t')
+    expect(xhtml).toContain('\n')
+    expect(xhtml).not.toMatch(/<img\b/i)
+    expect(xhtml).toContain('SVG chart caption')
+    expect(xhtml).toContain('PNG photo caption')
+    expect(xhtml).toContain('Data URI caption')
+    expect(xhtml).not.toContain('example.com/chart.svg')
+    expect(xhtml).not.toContain('data:image/png')
+
+    const files = unzipSync(await buildEpub(article))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter.includes('\u0000')).toBe(false)
+    expect(chapter).not.toMatch(/<img\b/i)
+    expect(chapter).toContain('SVG chart caption')
+    expect(chapter).toContain('Dummy body.')
   })
 })
