@@ -18,12 +18,12 @@ function requestUrl(input: RequestInfo | URL): string {
   return input.url
 }
 
-export function openaiMessageResponse(title: string, contentHtml: string): Response {
+export function openaiMessageResponse(title: string, content: string): Response {
   return Response.json({
     choices: [
       {
         message: {
-          content: JSON.stringify({ title, contentHtml }),
+          content: JSON.stringify({ title, content }),
         },
       },
     ],

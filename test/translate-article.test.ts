@@ -57,8 +57,8 @@ describe('translateArticle', () => {
           message: {
             content: JSON.stringify({
               title: 'compatibility_date を最新に保つ',
-              contentHtml:
-                '<h1>compatibility_date を最新に保つ</h1><p>wrangler.jsonc で指定する。</p><pre><code>{"compatibility_date":"2026-09-19"}</code></pre>',
+              content:
+                '# compatibility_date を最新に保つ\n\nwrangler.jsonc で指定する。\n\n```\n{"compatibility_date":"2026-09-19"}\n```',
             }),
           },
         },
@@ -185,7 +185,7 @@ describe('translateArticle', () => {
             {
               message: {
                 content:
-                  '```json\n{"title":"フェンス付き","contentHtml":"<p>本文</p><pre><code>ok</code></pre>"}\n```',
+                  '```json\n{"title":"フェンス付き","content":"本文\\n\\n```\\nok\\n```"}\n```',
               },
             },
           ],
@@ -209,7 +209,7 @@ describe('translateArticle', () => {
     const payloads = [
       Response.json({ choices: [{ message: { content: 'not-json' } }] }),
       Response.json({ choices: [{ message: { content: '{"title":"only"}' } }] }),
-      Response.json({ choices: [{ message: { content: '{"title":"","contentHtml":"<p>x</p>"}' } }] }),
+      Response.json({ choices: [{ message: { content: '{"title":"html-only","contentHtml":"<p>x</p>"}' } }] }),
       Response.json({ choices: [] }),
     ]
     for (const payload of payloads) {
@@ -229,6 +229,50 @@ describe('translateArticle', () => {
       } finally {
         vi.unstubAllGlobals()
       }
+    }
+  })
+
+  it('sends compact markdown without tag soup to OpenAI', async () => {
+    const payload = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              title: 'compatibility_date を最新に保つ',
+              content: '# compatibility_date を最新に保つ\n\nwrangler.jsonc で指定する。',
+            }),
+          },
+        },
+      ],
+    }
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? init.body : ''
+      const body = JSON.parse(raw) as {
+        messages: Array<{ role: string; content: string }>
+      }
+      const user = JSON.parse(body.messages[1]?.content ?? '{}') as {
+        content?: string
+        contentHtml?: string
+      }
+      expect(user.contentHtml).toBeUndefined()
+      expect(user.content).toContain('# Keep compatibility_date current')
+      expect(user.content).toContain('nodejs_compat')
+      expect(user.content).not.toMatch(/<script|<nav|<iframe|<svg|<form/i)
+      expect(user.content).not.toContain('window.ads')
+      expect(user.content).not.toContain('Sponsored advertisement')
+      return Response.json(payload)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const soup =
+        '<script>window.ads="banner"</script><nav>Home</nav><iframe src="https://ads.example"></iframe><svg></svg><form><input name="x"></form><div class="advertisement">Sponsored advertisement</div><h1>Keep compatibility_date current</h1><p>Node.js built-ins need the nodejs_compat compatibility flag.</p>'
+      const result = await translateArticle(article({ contentHtml: soup }), {
+        OPENAI_API_KEY: 'sk-test',
+      })
+      expect(fetchMock).toHaveBeenCalledOnce()
+      expect(result.ok).toBe(true)
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 

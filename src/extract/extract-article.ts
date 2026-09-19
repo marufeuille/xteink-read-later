@@ -9,7 +9,7 @@ import type {
 } from '../types'
 import { err, ok, parseHttpUrl } from '../types'
 import { CONTENT_SELECTORS, MIN_CONTENT_CHARS, NOISE_SELECTOR, PARSE_HTML_OPTIONS } from './constants'
-import { sanitizeContentHtml, visibleTextLength } from './sanitize-html'
+import { isAdsLikeClass, sanitizeContentHtml, visibleTextLength } from './sanitize-html'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -145,13 +145,6 @@ function firstNonEmpty(...values: Array<string | null | undefined>): string | nu
   return null
 }
 
-function noiseClass(el: HTMLElement): boolean {
-  const haystack = `${el.getAttribute('class') ?? ''} ${el.id}`.toLowerCase()
-  return /(?:^|[\s_-])(?:ad|ads|advert|advertisement|sidebar|share|social|related|comment|comments|cookie|newsletter|popup|modal|nav|menu|breadcrumb|promo|cta|subscribe|recommended|popular)(?:$|[\s_-])/.test(
-    haystack,
-  )
-}
-
 function inProtectedCode(el: HTMLElement): boolean {
   return el.closest('pre') !== null || el.closest('code') !== null
 }
@@ -176,7 +169,7 @@ function stripNoise(root: HTMLElement): void {
     if (inProtectedCode(el)) {
       continue
     }
-    if (noiseClass(el) && el.closest('article') === null) {
+    if (isAdsLikeClass(el) && el.closest('article') === null) {
       el.remove()
     }
   }
@@ -304,7 +297,7 @@ export const extractArticle: ExtractArticle = async (
     if (inProtectedCode(el)) {
       continue
     }
-    if (noiseClass(el)) {
+    if (isAdsLikeClass(el)) {
       el.remove()
     }
   }
