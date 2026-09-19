@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createR2Store } from '../src/store/r2'
-import { articleEpubKey, articleMetaKey, asArticleId, asEpubBytes, parseHttpUrl } from '../src/types'
+import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asEpubBytes, clipJobKey, parseHttpUrl } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
 
 function url(value: string) {
@@ -40,6 +40,25 @@ describe('createR2Store', () => {
     expect(await store.getMeta(id)).toBeNull()
     expect(await store.getEpub(id)).toBeNull()
     expect(await store.delete(id)).toBe(false)
+  })
+
+  it('stores job records under jobs/ and does not list them in OPDS meta', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const jobId = asClipJobId('job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+    await store.putJob({
+      jobId,
+      sourceUrl: url('https://example.com/queued'),
+      status: 'queued',
+      articleId: null,
+      error: null,
+      attempt: 0,
+      createdAt: '2026-09-19T00:00:00.000Z',
+      updatedAt: '2026-09-19T00:00:00.000Z',
+    })
+    expect(await bucket.head(clipJobKey(jobId))).not.toBeNull()
+    expect(await store.getJob(jobId)).toMatchObject({ status: 'queued', jobId })
+    expect(await store.listMeta()).toEqual([])
   })
 
   it('overwrites the same canonical article and keeps createdAt', async () => {

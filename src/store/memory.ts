@@ -1,4 +1,12 @@
-import type { ArticleMeta, ArticleStore, ArticleWrite, EpubBytes, ArticleId } from '../types'
+import type {
+  ArticleId,
+  ArticleMeta,
+  ArticleStore,
+  ArticleWrite,
+  ClipJobId,
+  ClipJobRecord,
+  EpubBytes,
+} from '../types'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -7,6 +15,7 @@ function nowIso(): string {
 export function createMemoryStore(): ArticleStore {
   const metas = new Map<ArticleId, ArticleMeta>()
   const epubs = new Map<ArticleId, EpubBytes>()
+  const jobs = new Map<ClipJobId, ClipJobRecord>()
 
   return {
     async getMeta(id) {
@@ -44,6 +53,12 @@ export function createMemoryStore(): ArticleStore {
       return [...metas.values()].sort((a, b) =>
         a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
       )
+    },
+    async getJob(id) {
+      return jobs.get(id) ?? null
+    },
+    async putJob(job: ClipJobRecord) {
+      jobs.set(job.jobId, job)
     },
   }
 }

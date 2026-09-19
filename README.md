@@ -10,9 +10,9 @@
 
 ### 1. 記事をクリップする（Android）
 
-Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xteink Read Later」を選ぶ。Worker が本文を取り、英語なら日本語にして EPUB を保存する。成功なら `status` が `ready`。失敗なら `error.code` と `error.message` がダイアログに出る。
+Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xteink Read Later」を選ぶ。Worker は URL を受けて **202** `status: "queued"` を返し、本文の取得・翻訳・EPUB は Queue の consumer が別 invocation で行う。HTTP Shortcuts は **202 を成功**として扱う。完成は OPDS の更新、または任意で `GET /clip/jobs/:jobId`（同じ Bearer）で確認する。
 
-送り先は `POST {worker}/clip`。認証は **Bearer `CLIP_TOKEN`**（JSON 本文や URL クエリには載せない）。
+送り先は `POST {worker}/clip`。認証は **Bearer `CLIP_TOKEN`**（JSON 本文や URL クエリには載せない）。パス名は変えない。
 
 ### 2. Xteink で読む
 
@@ -75,21 +75,21 @@ curl -sS "$WORKER/books" \
 
 4. Trigger & Execution Settings で **Direct Share target** をオン（Android 11 以降）。
 5. Response Handling:
-   - On Success: Dialog か Toast。`title` と `status`（`ready`）が分かること。
+   - **2xx（202 を含む）は成功。** On Success: Dialog か Toast。`status`（`queued`）と `jobId` が分かること。`title` や `ready` は 202 には出ない。
    - On Failure（2xx 以外）: Dialog。`error.code` と `error.message` が分かること。
 6. Scripting は任意。**関数の外に `return` を書かない**（HTTP Shortcuts が「return not in a function」で Worker の JSON を隠す）。`JSON.parse` は try/catch する。
 
 Run on Success:
 
 ```js
-let title = ''
 let status = ''
+let jobId = ''
 try {
   const body = JSON.parse(response.body)
-  title = body.title || ''
   status = body.status || ''
+  jobId = body.jobId || ''
 } catch (e) {}
-showToast(title + ' · ' + status)
+showToast(status + ' · ' + jobId)
 ```
 
 Run on Failure:
@@ -112,6 +112,9 @@ curl -sS "$WORKER/clip" \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer $CLIP_TOKEN" \
   -d '{"url":"https://example.com/article"}'
+# 202 { "jobId":"job_…", "status":"queued", "sourceUrl":"…" }
+curl -sS "$WORKER/clip/jobs/$JOB_ID" \
+  -H "Authorization: Bearer $CLIP_TOKEN"
 ```
 
 ## 開発
@@ -124,32 +127,35 @@ npm run dev
 
 `wrangler dev` は既定で `http://localhost:8787` を開く。`.dev.vars` の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。
 
-1 リクエストの `POST /clip` で fetch → 抽出 → 言語判定 → 翻訳/整形 → EPUB まで走る。成功時は `status: "ready"` と `epubPath`、`timingsMs`。EPUB とメタデータは R2（`wrangler dev` ではローカルシミュレーション）。同一 canonical URL の再送は同じ `id` で上書きし、`createdAt` は初回のまま `updatedAt` だけ更新する。
+`POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, url }` だけ載せて **202** `status: "queued"` を返す。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあとなら新しい実行を載せる。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。
 
-`POST /clip`・`POST /books`・`DELETE /articles/:id` は Bearer `CLIP_TOKEN`。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` は末尾スラッシュありなしを同じルートとして扱う。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id` は Bearer `CLIP_TOKEN`。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` は末尾スラッシュありなしを同じルートとして扱う。OPDS は **ready の記事だけ**出す。
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer $CLIP_TOKEN" \
   -d '{"url":"https://example.com/article"}'
-curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" \
-  -o book.epub "http://localhost:8787$(jq -r .epubPath clip.json)"
+curl -sS -H "Authorization: Bearer $CLIP_TOKEN" \
+  "http://localhost:8787/clip/jobs/$(jq -r .jobId clip.json)"
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
 ```
 
-ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store`）。token と記事全文は出さない。英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。翻訳失敗（503）は `error.extracted` に抽出結果を残す。
+ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `queue`）。token と記事全文は出さない。英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。
 
 | 状態 | 意味 |
 | --- | --- |
+| 202 | `POST /clip` 受付（`queued`）。Shortcuts では成功 |
 | 400 | URL 不正、または購入 EPUB の multipart 不正（`invalid_epub`） |
 | 401 | CLIP_TOKEN または OPDS Basic が無い / 不一致 |
-| 404 | 記事が無い |
-| 413 | 取得 HTML または購入 EPUB が上限超過 |
-| 422 | 本文を抽出できない |
-| 500 | EPUB 生成失敗（`epub_failed`。抽出失敗の 422 とは別） |
-| 502 | 対象ページの取得失敗 |
-| 503 | 翻訳失敗（抽出結果は `error.extracted`） |
+| 404 | 記事または job が無い |
+| 413 | 購入 EPUB が上限超過 |
+| 422 | （HTTP では出ない。job `extract_failed`） |
+| 500 | （HTTP の clip では出ない。job `epub_failed`） |
+| 502 | （HTTP では出ない。job `fetch_failed`） |
+| 503 | （HTTP では出ない。job `translate_failed`） |
+
+`POST /books` は同期のまま 200 `ready`。
 
 ## テスト
 
@@ -176,7 +182,7 @@ CI の `typecheck, unit, e2e` が失敗した run ではデプロイジョブは
 
 ### 初回だけ — Cloudflare 側（Workers Secret）
 
-アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。R2 バケット `xteink-read-later-articles` は main のデプロイジョブが無ければ作る（手元で作ってもよい）。
+アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。R2 バケット `xteink-read-later-articles` と Queue `xteink-read-later-clip` は main のデプロイジョブが無ければ作る（手元で作ってもよい）。
 
 ```bash
 npx wrangler login
@@ -186,7 +192,7 @@ npx wrangler secret put OPDS_USERNAME
 npx wrangler secret put OPDS_PASSWORD
 ```
 
-プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。
+プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。
 
 ### GitHub Secrets（Actions が Cloudflare に認証するため）
 
@@ -194,7 +200,7 @@ npx wrangler secret put OPDS_PASSWORD
 
 | Name | 中身 |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers** に加え、Account 権限 **Workers R2 Storage: Edit**（バケット作成と bind）。対象アカウントだけに scope する |
+| `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers** に加え、Account 権限 **Workers R2 Storage: Edit**（バケット作成と bind）と **Workers Queues: Edit**（キュー作成と bind）。対象アカウントだけに scope する |
 | `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの [Account ID](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/) |
 
 次は **GitHub Secrets に入れない**（Cloudflare の `wrangler secret put` 側）: `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD`。
@@ -210,4 +216,4 @@ curl -sS https://xteink-read-later.<account>.workers.dev/clip \
   -d '{"url":"https://example.com/article"}'
 ```
 
-ログは stage / durationMs / errorKind のみ。token や記事全文は出さない。手動で送りたいときだけ `npm run deploy` できる。
+ログは stage / durationMs / errorKind / jobId のみ。token や記事全文は出さない。手動で送りたいときだけ `npm run deploy` できる。

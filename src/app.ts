@@ -1,13 +1,32 @@
 import { Hono, type Context } from 'hono'
 import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
+import { toClipJobBody, toClipQueuedBody } from './http/clip-job'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { parseClipShareText } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
 import { parsePurchasedBookForm } from './http/purchased-book'
+import { logPipeline } from './log'
 import { buildOpdsCatalog, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
 import { createR2Store } from './store/r2'
-import type { AppEnv, ArticleId, ArticleStore, ClipPipeline, ClipReadyBody, CreateArticleStore, EpubBytes, PurchasedBookBody } from './types'
-import { articleEpubKey, articleIdFromBytes, asEpubBytes, isArticleId, parseHttpUrl, purchasedCanonicalUrl } from './types'
+import type {
+  AppEnv,
+  ArticleId,
+  ArticleStore,
+  ClipQueueMessage,
+  CreateArticleStore,
+  EpubBytes,
+  PurchasedBookBody,
+} from './types'
+import {
+  articleEpubKey,
+  articleIdFromBytes,
+  asEpubBytes,
+  clipJobIdFromUrl,
+  isArticleId,
+  isClipJobId,
+  parseHttpUrl,
+  purchasedCanonicalUrl,
+} from './types'
 
 function epubFileResponse(id: ArticleId, epub: EpubBytes): Response {
   return new Response(epub, {
@@ -20,9 +39,9 @@ function epubFileResponse(id: ArticleId, epub: EpubBytes): Response {
 }
 
 export type AppDeps = {
-  readonly clipPipeline: ClipPipeline
   readonly store?: ArticleStore
   readonly createStore?: CreateArticleStore
+  readonly queue?: Queue<ClipQueueMessage>
 }
 
 function storeFor(env: Cloudflare.Env, deps: AppDeps): ArticleStore {
@@ -33,7 +52,15 @@ function storeFor(env: Cloudflare.Env, deps: AppDeps): ArticleStore {
   return create(env)
 }
 
-export function createApp(deps: AppDeps): Hono<AppEnv> {
+function queueFor(env: Cloudflare.Env, deps: AppDeps): Queue<ClipQueueMessage> {
+  return deps.queue ?? env.CLIP_QUEUE
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   const clip = async (c: Context<AppEnv>) => {
@@ -56,44 +83,55 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       return toErrorResponse(parsed.error)
     }
 
-    const result = await deps.clipPipeline(parsed.value, {
-      OPENAI_API_KEY: c.env.OPENAI_API_KEY,
-    })
-    if (!result.ok) {
-      return toErrorResponse(result.error)
-    }
-
+    const url = parsed.value
+    const jobId = await clipJobIdFromUrl(url)
     const store = storeFor(c.env, deps)
-    const { id, article, epub, timingsMs } = result.value
-    await store.put({
-      id,
-      title: article.title,
-      author: article.author,
-      publishedAt: article.publishedAt,
-      sourceUrl: article.sourceUrl,
-      canonicalUrl: article.canonicalUrl,
-      language: article.language,
-      translated: article.translated,
-      epub,
-    })
-
-    const response: ClipReadyBody = {
-      id,
-      title: article.title,
-      author: article.author,
-      publishedAt: article.publishedAt,
-      sourceUrl: article.sourceUrl,
-      canonicalUrl: article.canonicalUrl,
-      language: article.language,
-      translated: article.translated,
-      status: 'ready',
-      epubPath: `/${articleEpubKey(id)}`,
-      timingsMs,
+    const existing = await store.getJob(jobId)
+    if (existing !== null && (existing.status === 'queued' || existing.status === 'running')) {
+      c.header('Location', `/clip/jobs/${jobId}`)
+      return c.json(toClipQueuedBody(existing), 202)
     }
-    return c.json(response, 200)
+
+    const queued = {
+      jobId,
+      sourceUrl: url,
+      status: 'queued' as const,
+      articleId: null,
+      error: null,
+      attempt: 0,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    }
+    await store.putJob(queued)
+    const started = Date.now()
+    await queueFor(c.env, deps).send({ jobId, url })
+    logPipeline({
+      jobId,
+      stage: 'queue',
+      durationMs: Date.now() - started,
+    })
+    c.header('Location', `/clip/jobs/${jobId}`)
+    return c.json(toClipQueuedBody(queued), 202)
   }
 
   app.on('POST', ['/clip', '/clip/'], clip)
+
+  const getClipJob = async (c: Context<AppEnv>) => {
+    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
+      return unauthorizedResponse('bearer')
+    }
+    const jobId = c.req.param('jobId')
+    if (jobId === undefined || !isClipJobId(jobId)) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    const job = await storeFor(c.env, deps).getJob(jobId)
+    if (job === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    return c.json(toClipJobBody(job), 200)
+  }
+
+  app.on('GET', ['/clip/jobs/:jobId', '/clip/jobs/:jobId/'], getClipJob)
 
   const uploadBook = async (c: Context<AppEnv>) => {
     if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {

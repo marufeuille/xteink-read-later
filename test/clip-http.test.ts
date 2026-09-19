@@ -11,13 +11,16 @@ import { createMemoryStore } from '../src/store/memory'
 import { createR2Store } from '../src/store/r2'
 import { translateArticle as openAiTranslate } from '../src/translate/openai'
 import {
+  clipJobIdFromUrl,
   err,
   ok,
   parseHttpUrl,
+  type ClipPipeline,
   type FetchPage,
   type HttpUrl,
   type TranslateArticle,
 } from '../src/types'
+import { createFakeQueue, type FakeQueue } from './fake-queue'
 import { createFakeR2Bucket } from './fake-r2'
 import {
   basicAuthorization,
@@ -43,10 +46,13 @@ function mustUrl(value: string): HttpUrl {
 
 type ClipJson = {
   id?: string
+  jobId?: string
   title?: string
   language?: string
   translated?: boolean
   status?: string
+  sourceUrl?: string
+  attempt?: number
   epubPath?: string
   timingsMs?: { fetch: number; extract: number; translate: number; epub: number }
   error?: { code: string; message: string; extracted?: { contentHtml?: string; language?: string } }
@@ -62,17 +68,21 @@ const jaTranslate: TranslateArticle = async (article) =>
 
 function appWithFetch(fetchPageImpl: FetchPage, translateArticle: TranslateArticle = jaTranslate) {
   const store = createMemoryStore()
-  const app = createApp({
-    clipPipeline: createClipPipeline({
-      extractPipeline: createExtractPipeline({ fetchPage: fetchPageImpl }),
-      translateArticle,
-    }),
-    store,
+  const queue = createFakeQueue()
+  const clipPipeline = createClipPipeline({
+    extractPipeline: createExtractPipeline({ fetchPage: fetchPageImpl }),
+    translateArticle,
   })
-  return { app, store }
+  const app = createApp({ store, queue })
+  const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+  return { app, store, queue, clipPipeline, env }
 }
 
-async function clip(app: ReturnType<typeof createApp>, url: string): Promise<Response> {
+async function clip(
+  app: ReturnType<typeof createApp>,
+  url: string,
+  env: Cloudflare.Env = BINDINGS,
+): Promise<Response> {
   return app.request(
     '/clip',
     {
@@ -80,8 +90,24 @@ async function clip(app: ReturnType<typeof createApp>, url: string): Promise<Res
       headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
       body: JSON.stringify({ url }),
     },
-    BINDINGS,
+    env,
   )
+}
+
+async function drain(
+  queue: FakeQueue,
+  env: Cloudflare.Env,
+  deps: { clipPipeline: ClipPipeline; store: ReturnType<typeof createMemoryStore> },
+): Promise<void> {
+  await queue.drain(env, deps)
+}
+
+async function getJob(
+  app: ReturnType<typeof createApp>,
+  jobId: string,
+  env: Cloudflare.Env,
+): Promise<Response> {
+  return app.request(`/clip/jobs/${jobId}`, { headers: { authorization: bearerAuthorization() } }, env)
 }
 
 async function opdsGet(
@@ -101,24 +127,26 @@ async function readJson(response: Response): Promise<ClipJson> {
 }
 
 describe('POST /clip', () => {
-  it('saves the EPUB through the R2 store and overwrites the same canonical URL', async () => {
+  it('returns 202 queued without fetching, then the consumer writes EPUB', async () => {
     const bucket = createFakeR2Bucket()
-    const app = createApp({
-      clipPipeline: createClipPipeline({
-        extractPipeline: createExtractPipeline({
-          fetchPage: async (url) =>
-            ok({
-              requestedUrl: url,
-              finalUrl: url,
-              contentType: 'text/html',
-              html: fixtureHtml('ja-tech.html'),
-            }),
-        }),
-        translateArticle: jaTranslate,
+    const queue = createFakeQueue()
+    const clipPipeline = createClipPipeline({
+      extractPipeline: createExtractPipeline({
+        fetchPage: async (url) =>
+          ok({
+            requestedUrl: url,
+            finalUrl: url,
+            contentType: 'text/html',
+            html: fixtureHtml('ja-tech.html'),
+          }),
       }),
-      createStore: createR2Store,
+      translateArticle: jaTranslate,
     })
-    const env = { ...TEST_BINDINGS, ARTICLES: bucket } as Cloudflare.Env
+    const app = createApp({
+      createStore: createR2Store,
+      queue,
+    })
+    const env = { ...TEST_BINDINGS, ARTICLES: bucket, CLIP_QUEUE: queue } as Cloudflare.Env
     const first = await app.request(
       '/clip',
       {
@@ -128,9 +156,25 @@ describe('POST /clip', () => {
       },
       env,
     )
-    expect(first.status).toBe(200)
+    expect(first.status).toBe(202)
+    expect(first.headers.get('location')).toMatch(/^\/clip\/jobs\/job_[a-f0-9]{32}$/)
     const firstBody = await readJson(first)
-    const metaRes = await opdsGet(app, `/articles/${firstBody.id}`, env)
+    expect(firstBody.status).toBe('queued')
+    expect(firstBody.jobId).toMatch(/^job_[a-f0-9]{32}$/)
+    expect(firstBody.title).toBeUndefined()
+    expect(firstBody.epubPath).toBeUndefined()
+    expect(firstBody.timingsMs).toBeUndefined()
+
+    const queuedCatalog = await opdsGet(app, '/opds', env)
+    expect(await queuedCatalog.text()).not.toContain('<entry>')
+
+    await queue.drain(env, { clipPipeline, createStore: createR2Store })
+    const ready = await readJson(await getJob(app, firstBody.jobId ?? '', env))
+    expect(ready.status).toBe('ready')
+    expect(ready.id).toMatch(/^art_[a-f0-9]{32}$/)
+    expect(ready.epubPath).toBe(`/articles/${ready.id}/book.epub`)
+
+    const metaRes = await opdsGet(app, `/articles/${ready.id}`, env)
     expect(metaRes.status).toBe(200)
     const firstMeta = (await metaRes.json()) as { createdAt: string; updatedAt: string; title: string }
 
@@ -143,26 +187,30 @@ describe('POST /clip', () => {
       },
       env,
     )
-    const secondBody = await readJson(second)
-    expect(secondBody.id).toBe(firstBody.id)
-    const secondMetaRes = await opdsGet(app, `/articles/${secondBody.id}`, env)
+    expect(second.status).toBe(202)
+    const secondQueued = await readJson(second)
+    expect(secondQueued.jobId).toBe(firstBody.jobId)
+    await queue.drain(env, { clipPipeline, createStore: createR2Store })
+    const secondReady = await readJson(await getJob(app, secondQueued.jobId ?? '', env))
+    expect(secondReady.id).toBe(ready.id)
+    const secondMetaRes = await opdsGet(app, `/articles/${secondReady.id}`, env)
     const secondMeta = (await secondMetaRes.json()) as { createdAt: string; updatedAt: string }
     expect(secondMeta.createdAt).toBe(firstMeta.createdAt)
 
-    const epubRes = await opdsGet(app, firstBody.epubPath ?? '', env)
+    const epubRes = await opdsGet(app, secondReady.epubPath ?? '', env)
     expect(epubRes.status).toBe(200)
     expect(epubRes.headers.get('content-type')).toBe('application/epub+zip')
 
     const deleted = await app.request(
-      `/articles/${firstBody.id}`,
+      `/articles/${ready.id}`,
       { method: 'DELETE', headers: { authorization: bearerAuthorization() } },
       env,
     )
     expect(deleted.status).toBe(200)
-    expect(await opdsGet(app, firstBody.epubPath ?? '', env)).toMatchObject({ status: 404 })
+    expect(await opdsGet(app, secondReady.epubPath ?? '', env)).toMatchObject({ status: 404 })
     expect(
       await app.request(
-        `/articles/${firstBody.id}`,
+        `/articles/${ready.id}`,
         { method: 'DELETE', headers: { authorization: bearerAuthorization() } },
         env,
       ),
@@ -172,20 +220,32 @@ describe('POST /clip', () => {
   })
 
   it('returns 400 for an invalid URL', async () => {
-    const { app } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
-    const response = await clip(app, 'ftp://example.com/x')
+    const { app, env } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
+    const response = await clip(app, 'ftp://example.com/x', env)
     expect(response.status).toBe(400)
     expect((await readJson(response)).error?.code).toBe('invalid_url')
   })
 
-  it('returns 502 when fetch fails', async () => {
-    const { app } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'HTTP 404' }))
-    const response = await clip(app, 'https://example.com/missing')
-    expect((await readJson(response)).error?.code).toBe('fetch_failed')
+  it('does not fetch in the HTTP handler; fetch_failed lands on the job', async () => {
+    let fetched = 0
+    const ctx = appWithFetch(async (url) => {
+      fetched += 1
+      return err({ kind: 'fetch_failed', url, reason: 'HTTP 404' })
+    })
+    const response = await clip(ctx.app, 'https://example.com/missing', ctx.env)
+    expect(response.status).toBe(202)
+    expect(fetched).toBe(0)
+    await drain(ctx.queue, ctx.env, ctx)
+    expect(fetched).toBe(4)
+    const body = await readJson(response)
+    const job = await readJson(await getJob(ctx.app, body.jobId ?? '', ctx.env))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('fetch_failed')
+    expect(job.error?.extracted).toBeUndefined()
   })
 
-  it('returns 422 when extraction fails', async () => {
-    const { app } = appWithFetch(async (url) =>
+  it('records extract_failed on the job without extracted HTML', async () => {
+    const ctx = appWithFetch(async (url) =>
       ok({
         requestedUrl: url,
         finalUrl: url,
@@ -193,21 +253,35 @@ describe('POST /clip', () => {
         html: fixtureHtml('empty.html'),
       }),
     )
-    const response = await clip(app, 'https://example.com/empty')
-    expect((await readJson(response)).error?.code).toBe('extract_failed')
+    const response = await clip(ctx.app, 'https://example.com/empty', ctx.env)
+    expect(response.status).toBe(202)
+    await drain(ctx.queue, ctx.env, ctx)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx.app, queued.jobId ?? '', ctx.env))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('extract_failed')
+    expect(job.error?.extracted).toBeUndefined()
+    const text = JSON.stringify(job)
+    expect(text).not.toContain('contentHtml')
   })
 
-  it('returns 503 with extracted article when OPENAI_API_KEY is unset', async () => {
-    const { app } = appWithFetch(
-      async (url) =>
-        ok({
-          requestedUrl: url,
-          finalUrl: url,
-          contentType: 'text/html',
-          html: fixtureHtml('en-tech.html'),
-        }),
-      openAiTranslate,
-    )
+  it('records translate_failed on the job when OPENAI_API_KEY is unset', async () => {
+    const store = createMemoryStore()
+    const queue = createFakeQueue()
+    const clipPipeline = createClipPipeline({
+      extractPipeline: createExtractPipeline({
+        fetchPage: async (url) =>
+          ok({
+            requestedUrl: url,
+            finalUrl: url,
+            contentType: 'text/html',
+            html: fixtureHtml('en-tech.html'),
+          }),
+      }),
+      translateArticle: openAiTranslate,
+    })
+    const app = createApp({ store, queue })
+    const env = { CLIP_TOKEN: TEST_CLIP_TOKEN, CLIP_QUEUE: queue } as unknown as Cloudflare.Env
     const response = await app.request(
       '/clip',
       {
@@ -215,19 +289,21 @@ describe('POST /clip', () => {
         headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ url: 'https://example.com/en/compatibility-date' }),
       },
-      { CLIP_TOKEN: TEST_CLIP_TOKEN } as Cloudflare.Env,
+      env,
     )
-    expect(response.status).toBe(503)
-    const body = await readJson(response)
-    expect(body.error?.code).toBe('translate_failed')
-    expect(body.error?.extracted?.contentHtml).toContain('nodejs_compat')
-    expect(body.error?.extracted?.language).toBe('non-ja')
+    expect(response.status).toBe(202)
+    await queue.drain(env, { clipPipeline, store })
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(app, queued.jobId ?? '', env))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('translate_failed')
+    expect(job.error?.extracted).toBeUndefined()
   })
 
-  it('returns 503 with extracted article when translation fails', async () => {
+  it('records translate_failed on the job without extracted article', async () => {
     const translateArticle: TranslateArticle = async (extracted) =>
       err({ kind: 'translate_failed', extracted, reason: 'OpenAI HTTP 500' })
-    const { app } = appWithFetch(
+    const ctx = appWithFetch(
       async (url) =>
         ok({
           requestedUrl: url,
@@ -237,31 +313,40 @@ describe('POST /clip', () => {
         }),
       translateArticle,
     )
-    const response = await clip(app, 'https://example.com/en/compatibility-date')
-    expect(response.status).toBe(503)
-    const body = await readJson(response)
-    expect(body.error?.extracted?.contentHtml).toContain('nodejs_compat')
+    const response = await clip(ctx.app, 'https://example.com/en/compatibility-date', ctx.env)
+    expect(response.status).toBe(202)
+    await drain(ctx.queue, ctx.env, ctx)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx.app, queued.jobId ?? '', ctx.env))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('translate_failed')
+    expect(job.error?.extracted).toBeUndefined()
+    expect(JSON.stringify(job)).not.toContain('nodejs_compat')
   })
 
-  it('returns 413 when the fetched HTML is too large', async () => {
-    const { app } = appWithFetch(async () =>
-      err({ kind: 'payload_too_large', bytes: MAX_HTML_BYTES + 1 }),
-    )
-    const response = await clip(app, 'https://example.com/huge')
-    expect(response.status).toBe(413)
-    expect((await readJson(response)).error?.code).toBe('payload_too_large')
+  it('records payload_too_large on the job', async () => {
+    const ctx = appWithFetch(async () => err({ kind: 'payload_too_large', bytes: MAX_HTML_BYTES + 1 }))
+    const response = await clip(ctx.app, 'https://example.com/huge', ctx.env)
+    expect(response.status).toBe(202)
+    await drain(ctx.queue, ctx.env, ctx)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx.app, queued.jobId ?? '', ctx.env))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('payload_too_large')
   })
 
-  it('returns 404 for an unknown article and EPUB', async () => {
-    const { app } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
+  it('returns 404 for an unknown article, EPUB, and job', async () => {
+    const { app, env } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
     const missingId = 'art_0123456789abcdef0123456789abcdef'
-    expect((await opdsGet(app, `/articles/${missingId}`)).status).toBe(404)
-    expect((await opdsGet(app, `/articles/${missingId}/book.epub`)).status).toBe(404)
-    expect((await opdsGet(app, '/articles/not-an-id')).status).toBe(404)
+    expect((await opdsGet(app, `/articles/${missingId}`, env)).status).toBe(404)
+    expect((await opdsGet(app, `/articles/${missingId}/book.epub`, env)).status).toBe(404)
+    expect((await opdsGet(app, '/articles/not-an-id', env)).status).toBe(404)
+    expect((await getJob(app, 'job_0123456789abcdef0123456789abcdef', env)).status).toBe(404)
+    expect((await getJob(app, 'not-a-job', env)).status).toBe(404)
   })
 
-  it('accepts a trailing slash on POST /clip', async () => {
-    const { app } = appWithFetch(async (url) =>
+  it('accepts a trailing slash on POST /clip and GET /clip/jobs/:jobId', async () => {
+    const ctx = appWithFetch(async (url) =>
       ok({
         requestedUrl: url,
         finalUrl: url,
@@ -269,48 +354,62 @@ describe('POST /clip', () => {
         html: fixtureHtml('ja-tech.html'),
       }),
     )
-    const response = await app.request(
+    const response = await ctx.app.request(
       '/clip/',
       {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
       },
-      BINDINGS,
+      ctx.env,
     )
-    expect(response.status).toBe(200)
-    expect((await readJson(response)).status).toBe('ready')
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    expect(queued.status).toBe('queued')
+    await drain(ctx.queue, ctx.env, ctx)
+    const jobId = queued.jobId
+    const job = await ctx.app.request(
+      `/clip/jobs/${jobId}/`,
+      { headers: { authorization: bearerAuthorization() } },
+      ctx.env,
+    )
+    expect(job.status).toBe(200)
+    expect((await readJson(job)).status).toBe('ready')
   })
 
-  it('returns 500 epub_failed when EPUB generation throws', async () => {
+  it('records epub_failed on the job after one retry', async () => {
     const logs: string[] = []
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
       logs.push(String(line))
     })
     try {
-      const app = createApp({
-        clipPipeline: createClipPipeline({
-          extractPipeline: createExtractPipeline({
-            fetchPage: async (url) =>
-              ok({
-                requestedUrl: url,
-                finalUrl: url,
-                contentType: 'text/html',
-                html: fixtureHtml('ja-tech.html'),
-              }),
-          }),
-          translateArticle: jaTranslate,
-          buildEpub: async () => {
-            throw new Error('zip boom')
-          },
+      const store = createMemoryStore()
+      const queue = createFakeQueue()
+      const clipPipeline = createClipPipeline({
+        extractPipeline: createExtractPipeline({
+          fetchPage: async (url) =>
+            ok({
+              requestedUrl: url,
+              finalUrl: url,
+              contentType: 'text/html',
+              html: fixtureHtml('ja-tech.html'),
+            }),
         }),
-        store: createMemoryStore(),
+        translateArticle: jaTranslate,
+        buildEpub: async () => {
+          throw new Error('zip boom')
+        },
       })
-      const response = await clip(app, 'https://example.com/ja/workers-cpu')
-      expect(response.status).toBe(500)
-      const body = await readJson(response)
-      expect(body.error?.code).toBe('epub_failed')
-      expect(body.error?.message).toContain('zip boom')
+      const app = createApp({ store, queue })
+      const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+      const response = await clip(app, 'https://example.com/ja/workers-cpu', env)
+      expect(response.status).toBe(202)
+      await queue.drain(env, { clipPipeline, store })
+      const queued = await readJson(response)
+      const job = await readJson(await getJob(app, queued.jobId ?? '', env))
+      expect(job.status).toBe('failed')
+      expect(job.error?.code).toBe('epub_failed')
+      expect(job.error?.message).toContain('zip boom')
       expect(logs.some((line) => line.includes('"stage":"epub"') && line.includes('epub_failed'))).toBe(
         true,
       )
@@ -320,7 +419,7 @@ describe('POST /clip', () => {
   })
 
   it('returns 400 when the JSON body is missing a url string', async () => {
-    const { app } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
+    const { app, env } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
     const response = await app.request(
       '/clip',
       {
@@ -328,15 +427,32 @@ describe('POST /clip', () => {
         headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ href: 'https://example.com/a' }),
       },
-      BINDINGS,
+      env,
     )
     expect(response.status).toBe(400)
     expect((await readJson(response)).error?.code).toBe('invalid_url')
   })
 
+  it('does not re-enqueue the same URL while queued', async () => {
+    const ctx = appWithFetch(async (url) =>
+      ok({
+        requestedUrl: url,
+        finalUrl: url,
+        contentType: 'text/html',
+        html: fixtureHtml('ja-tech.html'),
+      }),
+    )
+    const first = await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
+    const second = await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
+    expect(first.status).toBe(202)
+    expect(second.status).toBe(202)
+    expect(ctx.queue.size).toBe(1)
+    expect((await readJson(first)).jobId).toBe((await readJson(second)).jobId)
+  })
+
   it('accepts Android share payloads as JSON, text/plain, or form body', async () => {
     const fetched: string[] = []
-    const { app } = appWithFetch(async (url) => {
+    const ctx = appWithFetch(async (url) => {
       fetched.push(url)
       return ok({
         requestedUrl: url,
@@ -346,30 +462,31 @@ describe('POST /clip', () => {
       })
     })
 
-    const jsonShare = await app.request(
+    const jsonShare = await ctx.app.request(
       '/clip',
       {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
         body: JSON.stringify({ url: '記事タイトル\nhttps://example.com/ja/workers-cpu' }),
       },
-      BINDINGS,
+      ctx.env,
     )
-    expect(jsonShare.status).toBe(200)
-    expect((await readJson(jsonShare)).status).toBe('ready')
+    expect(jsonShare.status).toBe(202)
+    expect((await readJson(jsonShare)).status).toBe('queued')
+    expect(fetched).toEqual([])
 
-    const plain = await app.request(
+    const plain = await ctx.app.request(
       '/clip',
       {
         method: 'POST',
         headers: { 'content-type': 'text/plain', authorization: bearerAuthorization() },
         body: 'https://example.com/ja/workers-cpu',
       },
-      BINDINGS,
+      ctx.env,
     )
-    expect(plain.status).toBe(200)
+    expect(plain.status).toBe(202)
 
-    const form = await app.request(
+    const form = await ctx.app.request(
       '/clip',
       {
         method: 'POST',
@@ -379,10 +496,20 @@ describe('POST /clip', () => {
         },
         body: 'url=https%3A%2F%2Fexample.com%2Fja%2Fworkers-cpu',
       },
-      BINDINGS,
+      ctx.env,
     )
-    expect(form.status).toBe(200)
+    expect(form.status).toBe(202)
+    await drain(ctx.queue, ctx.env, ctx)
     expect(fetched.every((url) => url === 'https://example.com/ja/workers-cpu')).toBe(true)
+    expect(fetched.length).toBeGreaterThan(0)
+  })
+
+  it('uses a stable jobId for the same normalized URL', async () => {
+    const url = mustUrl('https://example.com/ja/workers-cpu')
+    expect(await clipJobIdFromUrl(url)).toBe(await clipJobIdFromUrl(url))
+    expect(await clipJobIdFromUrl(url)).not.toBe(
+      await clipJobIdFromUrl(mustUrl('https://example.com/en/compatibility-date')),
+    )
   })
 })
 

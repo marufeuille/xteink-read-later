@@ -14,6 +14,8 @@ import type {
 import type {
   ApiRoutes,
   ClipExtractBody,
+  ClipJobFailedBody,
+  ClipQueuedBody,
   ClipReadyBody,
   ClipTranslatedBody,
   ErrorBody,
@@ -23,9 +25,13 @@ import type {
 import {
   articleEpubKey,
   articleMetaKey,
+  clipJobKey,
   type ArticleId,
   type ArticleObjectKey,
+  type ClipJobId,
+  type ClipJobKey,
 } from './id'
+import type { ClipQueueMessage } from './job'
 import type { ClipPipeline, ClipResult, ExtractPipeline, ExtractResult } from './pipeline'
 import type { Result } from './result'
 import type { ArticleStore } from './store'
@@ -105,6 +111,22 @@ type _clipUsesBearer = Assert<
   ApiRoutes['clip']['auth'] extends { readonly scheme: 'bearer' } ? true : false
 >
 
+type _clipJobUsesBearer = Assert<
+  ApiRoutes['getClipJob']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
+
+type _clipSuccessIsQueued = Assert<Equals<ApiRoutes['clip']['success'], ClipQueuedBody>>
+
+type _queuedBodyHasNoTitle = Assert<'title' extends keyof ClipQueuedBody ? false : true>
+
+type _queuedBodyHasNoExtracted = Assert<'extracted' extends keyof ClipQueuedBody ? false : true>
+
+type _failedJobHasNoExtracted = Assert<
+  'extracted' extends keyof ClipJobFailedBody['error'] ? false : true
+>
+
+type _queueMessageKeys = Assert<Equals<keyof ClipQueueMessage, 'jobId' | 'url'>>
+
 type _opdsUsesBasic = Assert<
   ApiRoutes['opdsCatalog']['auth'] extends { readonly scheme: 'basic' }
     ? true
@@ -154,14 +176,20 @@ type _keysAreObjectKeys = Assert<
     [
       ReturnType<typeof articleMetaKey> extends ArticleObjectKey ? true : false,
       ReturnType<typeof articleEpubKey> extends ArticleObjectKey ? true : false,
+      ReturnType<typeof clipJobKey> extends ClipJobKey ? true : false,
     ],
-    [true, true]
+    [true, true, true]
   >
+>
+
+type _jobKeyPrefix = Assert<
+  ReturnType<typeof clipJobKey> extends `jobs/${ClipJobId}.json` ? true : false
 >
 
 type _envHasSecretsAndBucket = Assert<
   Cloudflare.Env extends {
     ARTICLES: R2Bucket
+    CLIP_QUEUE: Queue
     OPENAI_API_KEY: string
     CLIP_TOKEN: string
     OPDS_USERNAME: string
@@ -187,6 +215,12 @@ export type CompileChecks = {
   readonly statusMapCoversPipeline: _statusMapCoversPipeline
   readonly errorBodyStatusMatchesCode: _errorBodyStatusMatchesCode
   readonly clipUsesBearer: _clipUsesBearer
+  readonly clipJobUsesBearer: _clipJobUsesBearer
+  readonly clipSuccessIsQueued: _clipSuccessIsQueued
+  readonly queuedBodyHasNoTitle: _queuedBodyHasNoTitle
+  readonly queuedBodyHasNoExtracted: _queuedBodyHasNoExtracted
+  readonly failedJobHasNoExtracted: _failedJobHasNoExtracted
+  readonly queueMessageKeys: _queueMessageKeys
   readonly opdsUsesBasic: _opdsUsesBasic
   readonly opdsDownloadUsesBasic: _opdsDownloadUsesBasic
   readonly getArticleUsesBasic: _getArticleUsesBasic
@@ -196,5 +230,6 @@ export type CompileChecks = {
   readonly storeDeleteReturnsBoolean: _storeDeleteReturnsBoolean
   readonly pipelinesReturnResults: _pipelinesReturnResults
   readonly keysAreObjectKeys: _keysAreObjectKeys
+  readonly jobKeyPrefix: _jobKeyPrefix
   readonly envHasSecretsAndBucket: _envHasSecretsAndBucket
 }

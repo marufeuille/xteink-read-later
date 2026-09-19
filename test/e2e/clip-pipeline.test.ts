@@ -9,6 +9,7 @@ import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
 import { OPENAI_CHAT_URL } from '../../src/translate/constants'
 import { basicAuthorization, bearerAuthorization, TEST_BINDINGS } from '../bindings'
+import { createFakeQueue } from '../fake-queue'
 import { installNetworkMock, openaiMessageResponse } from './mock-network'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
@@ -20,23 +21,25 @@ function fixtureHtml(name: string): string {
 
 type ClipJson = {
   id?: string
+  jobId?: string
   title?: string
   language?: string
   translated?: boolean
   status?: string
   epubPath?: string
-  timingsMs?: { fetch: number; extract: number; translate: number; epub: number }
   error?: { code: string; message: string; extracted?: { contentHtml?: string; language?: string } }
 }
 
 function app() {
-  return createApp({
-    clipPipeline: createClipPipeline(),
-    store: createMemoryStore(),
-  })
+  const store = createMemoryStore()
+  const queue = createFakeQueue()
+  const clipPipeline = createClipPipeline()
+  const hono = createApp({ store, queue })
+  const env = { ...BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+  return { hono, store, queue, clipPipeline, env }
 }
 
-async function clip(hono: ReturnType<typeof createApp>, url: string, env: Cloudflare.Env = BINDINGS) {
+async function clip(hono: ReturnType<typeof createApp>, url: string, env: Cloudflare.Env) {
   return hono.request(
     '/clip',
     {
@@ -48,12 +51,26 @@ async function clip(hono: ReturnType<typeof createApp>, url: string, env: Cloudf
   )
 }
 
+async function clipAndDrain(ctx: ReturnType<typeof app>, url: string) {
+  const response = await clip(ctx.hono, url, ctx.env)
+  await ctx.queue.drain(ctx.env, { clipPipeline: ctx.clipPipeline, store: ctx.store })
+  return response
+}
+
 async function readJson(response: Response): Promise<ClipJson> {
   const body: unknown = await response.json()
   if (typeof body !== 'object' || body === null) {
     throw new Error('expected JSON object')
   }
   return body as ClipJson
+}
+
+async function getJob(ctx: ReturnType<typeof app>, jobId: string) {
+  return ctx.hono.request(
+    `/clip/jobs/${jobId}`,
+    { headers: { authorization: bearerAuthorization() } },
+    ctx.env,
+  )
 }
 
 afterEach(() => {
@@ -66,21 +83,20 @@ describe('clip pipeline E2E (fixture network)', () => {
     const { fetchedUrls } = installNetworkMock({
       pages: { [pageUrl]: { html: fixtureHtml('ja-tech.html') } },
     })
-    const hono = app()
-    const response = await clip(hono, pageUrl)
-    expect(response.status).toBe(200)
-    const body = await readJson(response)
-    expect(body.status).toBe('ready')
-    expect(body.translated).toBe(false)
-    expect(body.language).toBe('ja')
-    expect(body.title).toBe('Cloudflare Workers の CPU 制限')
-    expect(body.epubPath).toMatch(/^\/articles\/art_[a-f0-9]{32}\/book\.epub$/)
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    expect(queued.status).toBe('queued')
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(job.epubPath).toMatch(/^\/articles\/art_[a-f0-9]{32}\/book\.epub$/)
     expect(fetchedUrls).toEqual([pageUrl])
 
-    const epubResponse = await hono.request(
-      body.epubPath ?? '',
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
       { headers: { authorization: basicAuthorization() } },
-      BINDINGS,
+      ctx.env,
     )
     expect(epubResponse.status).toBe(200)
     const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
@@ -91,13 +107,13 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).toContain('npx wrangler dev')
     expect(chapter).toMatch(/<pre[^>]*>\s*<code>npx wrangler dev<\/code>\s*<\/pre>/)
 
-    const meta = await hono.request(
-      `/articles/${body.id}`,
+    const meta = await ctx.hono.request(
+      `/articles/${job.id}`,
       { headers: { authorization: basicAuthorization() } },
-      BINDINGS,
+      ctx.env,
     )
     expect(meta.status).toBe(200)
-    expect(((await meta.json()) as { title: string }).title).toBe(body.title)
+    expect(((await meta.json()) as { title: string }).title).toBe('Cloudflare Workers の CPU 制限')
   })
 
   it('translates an English URL with a mocked OpenAI response', async () => {
@@ -110,19 +126,18 @@ describe('clip pipeline E2E (fixture network)', () => {
           '# compatibility_date を最新に保つ\n\nnodejs_compat が必要。\n\n```\n{"compatibility_date":"2026-09-19"}\n```',
         ),
     })
-    const hono = app()
-    const response = await clip(hono, pageUrl)
-    expect(response.status).toBe(200)
-    const body = await readJson(response)
-    expect(body.translated).toBe(true)
-    expect(body.language).toBe('ja')
-    expect(body.title).toBe('compatibility_date を最新に保つ')
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
     expect(fetchedUrls).toEqual([pageUrl, OPENAI_CHAT_URL])
 
-    const epubResponse = await hono.request(
-      body.epubPath ?? '',
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
       { headers: { authorization: basicAuthorization() } },
-      BINDINGS,
+      ctx.env,
     )
     const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
     const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
@@ -142,14 +157,15 @@ describe('clip pipeline E2E (fixture network)', () => {
           'Dummy body text for the chapter.\n\0More dummy text.\n\nSee ![SVG chart caption](https://example.com/chart.svg) after the dummy paragraph.',
         ),
     })
-    const hono = app()
-    const response = await clip(hono, pageUrl)
-    expect(response.status).toBe(200)
-    const body = await readJson(response)
-    const epubResponse = await hono.request(
-      body.epubPath ?? '',
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
       { headers: { authorization: basicAuthorization() } },
-      BINDINGS,
+      ctx.env,
     )
     const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
     const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
@@ -160,19 +176,22 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).toContain('SVG chart caption')
   })
 
-  it('keeps the extracted article when the OpenAI mock fails', async () => {
+  it('keeps translate_failed off the HTTP response and off the job body', async () => {
     const pageUrl = 'https://example.com/en/compatibility-date'
     installNetworkMock({
       pages: { [pageUrl]: { html: fixtureHtml('en-tech.html') } },
       openai: async () => new Response('nope', { status: 500 }),
     })
-    const response = await clip(app(), pageUrl)
-    expect(response.status).toBe(503)
-    const body = await readJson(response)
-    expect(body.error?.code).toBe('translate_failed')
-    expect(body.error?.extracted?.language).toBe('non-ja')
-    expect(body.error?.extracted?.contentHtml).toContain('nodejs_compat')
-    expect(body.error?.extracted?.contentHtml).toContain('<pre')
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    expect(queued.error).toBeUndefined()
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('translate_failed')
+    expect(job.error?.extracted).toBeUndefined()
+    expect(JSON.stringify(job)).not.toContain('nodejs_compat')
   })
 
   it('rejects oversize HTML reported by the fixture server', async () => {
@@ -185,8 +204,12 @@ describe('clip pipeline E2E (fixture network)', () => {
         },
       },
     })
-    const response = await clip(app(), pageUrl)
-    expect(response.status).toBe(413)
-    expect((await readJson(response)).error?.code).toBe('payload_too_large')
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('payload_too_large')
   })
 })

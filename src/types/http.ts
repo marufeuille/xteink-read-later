@@ -1,6 +1,6 @@
 import type { ArticleFields, ArticleMeta, ExtractedArticle, TranslatedArticle } from './article'
 import type { ErrorKind, HttpStatusOf, TranslateFailedError } from './errors'
-import type { ArticleEpubKey, ArticleId, EpubBytes } from './id'
+import type { ArticleEpubKey, ArticleId, ClipJobId, EpubBytes, HttpUrl } from './id'
 import type { OpdsCatalog } from './opds'
 
 export type ClipRequestBody = {
@@ -37,7 +37,40 @@ export type ClipReadyBody = ArticleFields & {
   readonly timingsMs: ClipTimingsMs
 }
 
-export type ClipSuccessBody = ClipExtractBody | ClipTranslatedBody | ClipReadyBody
+export type ClipQueuedBody = {
+  readonly jobId: ClipJobId
+  readonly status: 'queued'
+  readonly sourceUrl: HttpUrl
+}
+
+export type ClipJobQueuedOrRunningBody = {
+  readonly jobId: ClipJobId
+  readonly status: 'queued' | 'running'
+  readonly sourceUrl: HttpUrl
+  readonly attempt: number
+}
+
+export type ClipJobReadyBody = {
+  readonly jobId: ClipJobId
+  readonly status: 'ready'
+  readonly sourceUrl: HttpUrl
+  readonly id: ArticleId
+  readonly epubPath: `/${ArticleEpubKey}`
+}
+
+export type ClipJobFailedBody = {
+  readonly jobId: ClipJobId
+  readonly status: 'failed'
+  readonly sourceUrl: HttpUrl
+  readonly error: {
+    readonly code: ErrorKind
+    readonly message: string
+  }
+}
+
+export type ClipJobBody = ClipJobQueuedOrRunningBody | ClipJobReadyBody | ClipJobFailedBody
+
+export type ClipSuccessBody = ClipQueuedBody
 
 export type PurchasedBookBody = ArticleFields & {
   readonly id: ArticleId
@@ -84,7 +117,8 @@ export type RouteSpec<
 }
 
 export type ApiRoutes = {
-  readonly clip: RouteSpec<'POST', '/clip', BearerAuth, ClipSuccessBody>
+  readonly clip: RouteSpec<'POST', '/clip', BearerAuth, ClipQueuedBody>
+  readonly getClipJob: RouteSpec<'GET', '/clip/jobs/:jobId', BearerAuth, ClipJobBody>
   readonly getArticle: RouteSpec<'GET', '/articles/:id', BasicAuth, ArticleMeta>
   readonly getArticleEpub: RouteSpec<
     'GET',
@@ -109,8 +143,9 @@ export type ApiRoutes = {
 }
 
 export type PipelineLog = {
+  readonly jobId?: ClipJobId
   readonly articleId?: ArticleId
-  readonly stage: keyof ClipTimingsMs | 'store'
+  readonly stage: keyof ClipTimingsMs | 'store' | 'queue'
   readonly durationMs: number
   readonly errorKind?: ErrorKind
 }
