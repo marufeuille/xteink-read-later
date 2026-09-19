@@ -1,6 +1,6 @@
 # Xteink Read Later
 
-個人利用向けの記事クリップパイプライン。Web 記事 URL を受け取り、本文を抽出して Xteink で読む EPUB にする。
+個人利用向けの記事クリップパイプライン。Android の共有シートから Web 記事 URL を送り、本文を抽出して Xteink で読む EPUB にする。
 
 ## 開発
 
@@ -103,35 +103,69 @@ curl -sS https://xteink-read-later.<account>.workers.dev/clip \
 
 ログは stage / durationMs / errorKind のみ。token や記事全文は出さない。
 
-## iPhone 共有シート（MAR-37）
+## Android 共有シート（MAR-40）
 
-ネイティブアプリは作らない。Safari の共有シートから iOS ショートカットで `POST /clip` する。ショートカット本体（`.shortcut`）はリポジトリに置かない。
+ネイティブの Android アプリは作らない。Chrome などから共有シートで [HTTP Shortcuts](https://http-shortcuts.rmy.ch/) に渡し、`POST /clip` する。ショートカット定義はリポジトリにバイナリを置かない。
 
-本番 URL を `WORKER` とする（例: `https://xteink-read-later.<account>.workers.dev`）。`CLIP_TOKEN` は Shortcuts の「テキスト」に直書きせず、可能なら「パスワード」辞書か自分だけが知る値にする。
+入れるもの: **HTTP Shortcuts**（[F-Droid](https://f-droid.org/packages/ch.rmy.android.http_shortcuts/) / [Play](https://play.google.com/store/apps/details?id=ch.rmy.android.http_shortcuts)）。Xteink 用の専用アプリは不要。
 
-### ショートカットの再現手順
+本番 origin を `WORKER` とする（例: `https://xteink-read-later.<account>.workers.dev`、末尾スラッシュなし）。`CLIP_TOKEN` は本文や URL クエリに載せない。Workers が要求するのと同じ `Authorization: Bearer …` を付ける。値は `.dev.vars`（ローカル）または `wrangler secret put CLIP_TOKEN`（本番）と同じもの。この README には値を書かない。
 
-1. ショートカット App で新規作成。名前は「Xteink Read Later」。
-2. 情報 > 共有シートに表示。受け取る入力は **URL** のみ。
-3. 「URL」アクションで `WORKER/clip` を作る。
-4. 「URL の内容を取得」:
+`POST /clip` は JSON `{"url":"…"}` のほか、共有シート向けに `text/plain`（本文が URL または URL を含むテキスト）と `application/x-www-form-urlencoded`（`url` / `text` / `link`）も受ける。タイトル＋URL のような共有文からは最初の `http(s)` URL を使う。
+
+### HTTP Shortcuts の再現手順
+
+1. HTTP Shortcuts を入れる。右下の + から HTTP ショートカットを新規作成。名前は「Xteink Read Later」。
+2. グローバル変数:
+   - `worker`: Static。値は `WORKER`。
+   - `clip_token`: Static。値は `CLIP_TOKEN`。「Treat value as secret」と「Exclude stored value from exports」をオン。
+   - `shared_url`: Static。「Allow Receiving Value from Share Dialog」をオン。受け取る部分は **text**。
+3. ショートカット本体:
    - 方法: `POST`
-   - ヘッダ:
-     - `Authorization`: `Bearer CLIP_TOKEN`
-     - `Content-Type`: `application/json`
-   - リクエスト本文: JSON
+   - URL: `{worker}/clip`
+   - Authentication: **Bearer**。トークンに `{clip_token}` を入れる（カスタムヘッダで `Authorization: Bearer {clip_token}` でも同じ）。
+   - Request Body: Custom Text。`Content-Type: application/json`
 
 ```json
-{ "url": "共有された URL" }
+{ "url": "{shared_url}" }
 ```
 
-   Shortcuts では「共有シートの URL」を `url` に入れる。
+4. Trigger & Execution Settings で **Direct Share target** をオン（Android 11 以降。共有シートにこのショートカットが出る）。
+5. Response Handling:
+   - On Success: Dialog か Toast。レスポンス JSON の `title` と `status`（`ready`）が分かること。
+   - On Failure（2xx 以外）: Dialog。`error.code` と `error.message` が分かること。
+6. 任意の Scripting（JSON を読みやすくする）:
 
-5. 「URL の内容を取得」のあとに「辞書を取得」（レスポンス JSON）。
-6. `error` キーがある、または HTTP ステータスが 200 以外なら「通知を表示」で `error.code` と `error.message` を出す。ここで終了。
-7. 成功時は「通知を表示」で `title` と `status`（`ready`）を出す。英語記事なら `translated: true` の日本語 EPUB が R2 に載る。
+Run on Success:
 
-共有シートから Safari の開いている記事を送り、通知で成功/失敗が分かれば入口は足りる。
+```js
+const body = JSON.parse(response.body)
+showToast(body.title + ' · ' + body.status)
+```
+
+Run on Failure:
+
+```js
+let message = response.body
+try {
+  const body = JSON.parse(response.body)
+  if (body.error) {
+    message = body.error.code + ': ' + body.error.message
+  }
+} catch (e) {}
+showDialog(message, 'Xteink Read Later')
+```
+
+Chrome で記事を開き、共有 → 「Xteink Read Later」（または HTTP Shortcuts）→ 成功/失敗がダイアログか Toast で分かれば入口は足りる。英語記事なら `translated: true` の日本語 EPUB が R2 に載る。
+
+cURL から取り込む場合の形（token の値は自分の環境の変数に差し替える）:
+
+```bash
+curl -sS "$WORKER/clip" \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
+  -d '{"url":"https://example.com/article"}'
+```
 
 ### その後 Xteink で読む
 

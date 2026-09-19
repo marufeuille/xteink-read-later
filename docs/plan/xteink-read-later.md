@@ -20,9 +20,9 @@
 | 生成物 | EPUB 3 |
 | 保存 | Cloudflare R2 |
 | 配送 | OPDS フィード |
-| 入口 | iOS Share Sheet + Shortcut |
+| 入口 | Android 共有シート + HTTP Shortcuts |
 
-進め方はプロジェクト記載どおり、**先にローカルで URL → EPUB を通し、その後 Workers / R2 / OPDS / iPhone に載せる**。
+進め方はプロジェクト記載どおり、**先にローカルで URL → EPUB を通し、その後 Workers / R2 / OPDS / Android 共有に載せる**。
 
 ## 3. Linear Issue の読み方
 
@@ -36,11 +36,11 @@ MAR-30 本文抽出
         → MAR-34 Workers デプロイ
           → MAR-35 R2 保存
             → MAR-36 OPDS
-              → MAR-37 iOS Shortcut
-MAR-38 認証 ── 公開 endpoint（MAR-34 以降）と iPhone（MAR-37）の前提
+              → MAR-40 Android 共有
+MAR-38 認証 ── 公開 endpoint（MAR-34 以降）と Android 共有（MAR-40）の前提
 ```
 
-MAR-38 は単独チケットだが、公開 Workers と Shortcut の前に入れないと OpenAI 費用が第三者実行される。OPDS 側は CrossPoint JP が HTTP Basic をサポートするため、clip 用 Bearer とは別 cred にする。
+MAR-38 は単独チケットだが、公開 Workers と Android 共有の前に入れないと OpenAI 費用が第三者実行される。OPDS 側は CrossPoint JP が HTTP Basic をサポートするため、clip 用 Bearer とは別 cred にする。
 
 ## 4. フェーズ
 
@@ -77,7 +77,7 @@ Workers Free の CPU 10ms では本文抽出と EPUB 生成が落ちる想定。
 
 | 順 | Issue | ふるまい |
 | --- | --- | --- |
-| 8 | [MAR-37](https://linear.app/marufeuille/issue/MAR-37) | Safari 共有シート → Shortcut → `POST /clip`。成功/失敗が端末で分かる。その後 OPDS から読める |
+| 8 | [MAR-40](https://linear.app/marufeuille/issue/MAR-40) | Android 共有シート → HTTP Shortcuts → `POST /clip`。成功/失敗が端末で分かる。その後 OPDS から読める |
 
 ## 5. API（ふるまい契約）
 
@@ -85,7 +85,7 @@ Workers Free の CPU 10ms では本文抽出と EPUB 生成が落ちる想定。
 
 ### `POST /clip`
 
-変換の唯一の入口。iOS Shortcut もこれを叩く。
+変換の唯一の入口。Android の共有ショートカットもこれを叩く。
 
 Request:
 
@@ -302,14 +302,14 @@ token 比較は timing-safe。ログに token・記事全文を出さない。�
 - acquisition link から EPUB を取れる
 - CrossPoint JP にフィード登録し、一覧表示・ダウンロード・読書ができる（手動）
 
-### MAR-37
+### MAR-40
 
-- Safari 共有シートから Shortcut を起動できる（手動）
-- 開いている記事 URL を `POST /clip` できる
-- 成功/失敗が iPhone 上で分かる
+- Android の共有シートから HTTP Shortcuts を起動できる（手動）
+- 開いている記事 URL を Bearer `CLIP_TOKEN` 付きで `POST /clip` できる
+- 成功/失敗が Android 上で分かる
 - 英語記事送信後、OPDS から日本語 EPUB を取得できる（手動）
 
-Shortcut 本体はリポジトリにバイナリを置かず、再現手順（URL、ヘッダ、JSON）を README に書く。
+ネイティブアプリは作らない。ショートカット本体はリポジトリにバイナリを置かず、再現手順（URL、ヘッダ、JSON）を README に書く。
 
 ### MAR-38
 
@@ -349,4 +349,4 @@ Shortcut 本体はリポジトリにバイナリを置かず、再現手順（UR
 
 ## 13. 最初に着手する範囲
 
-MAR-30 のみ。空リポジトリの足場と `POST /clip` の抽出まで。翻訳・EPUB・R2・OPDS・Shortcut は後続 Issue の境界を跨がない。
+MAR-30 のみ。空リポジトリの足場と `POST /clip` の抽出まで。翻訳・EPUB・R2・OPDS・Android 共有は後続 Issue の境界を跨がない。
