@@ -102,3 +102,44 @@ curl -sS https://xteink-read-later.<account>.workers.dev/clip \
 ```
 
 ログは stage / durationMs / errorKind のみ。token や記事全文は出さない。
+
+## iPhone 共有シート（MAR-37）
+
+ネイティブアプリは作らない。Safari の共有シートから iOS ショートカットで `POST /clip` する。ショートカット本体（`.shortcut`）はリポジトリに置かない。
+
+本番 URL を `WORKER` とする（例: `https://xteink-read-later.<account>.workers.dev`）。`CLIP_TOKEN` は Shortcuts の「テキスト」に直書きせず、可能なら「パスワード」辞書か自分だけが知る値にする。
+
+### ショートカットの再現手順
+
+1. ショートカット App で新規作成。名前は「Xteink Read Later」。
+2. 情報 > 共有シートに表示。受け取る入力は **URL** のみ。
+3. 「URL」アクションで `WORKER/clip` を作る。
+4. 「URL の内容を取得」:
+   - 方法: `POST`
+   - ヘッダ:
+     - `Authorization`: `Bearer CLIP_TOKEN`
+     - `Content-Type`: `application/json`
+   - リクエスト本文: JSON
+
+```json
+{ "url": "共有された URL" }
+```
+
+   Shortcuts では「共有シートの URL」を `url` に入れる。
+
+5. 「URL の内容を取得」のあとに「辞書を取得」（レスポンス JSON）。
+6. `error` キーがある、または HTTP ステータスが 200 以外なら「通知を表示」で `error.code` と `error.message` を出す。ここで終了。
+7. 成功時は「通知を表示」で `title` と `status`（`ready`）を出す。英語記事なら `translated: true` の日本語 EPUB が R2 に載る。
+
+共有シートから Safari の開いている記事を送り、通知で成功/失敗が分かれば入口は足りる。
+
+### その後 Xteink で読む
+
+CrossPoint JP に OPDS フィードを登録する。
+
+- カタログ: `WORKER/opds`
+- 認証: HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`。空パスワードは使わない）
+- 並び: 新しい記事が上
+- 取得: 各 entry の `application/epub+zip` acquisition リンク（`WORKER/opds/download/{id}.epub`）
+
+英語記事を共有したあとは、カタログ先頭の EPUB が日本語になっていることを端末で確認する。
