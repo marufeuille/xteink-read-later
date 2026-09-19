@@ -8,6 +8,11 @@
     "enabled": true,
     "head_sampling_rate": 1
   },
+  // Paid Workers CPU budget. Free plan 10ms is not enough for extract + EPUB.
+  "limits": {
+    "cpu_ms": 30000
+  },
+  "workers_dev": true,
   "r2_buckets": [
     {
       "binding": "ARTICLES",

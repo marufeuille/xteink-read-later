@@ -57,3 +57,26 @@ GitHub Actions が pull request と `main` への push で install / typecheck /
 ```bash
 E2E_LIVE=1 E2E_LIVE_URL='https://example.com/article' npm run test:e2e:live
 ```
+
+## Cloudflare Workers へデプロイ
+
+同じ `src/` を `wrangler deploy` する。Workers Paid を前提（`limits.cpu_ms = 30000`）。秘密情報はソースに置かず Workers Secret にする。
+
+```bash
+npx wrangler login
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put CLIP_TOKEN
+npx wrangler secret put OPDS_USERNAME
+npx wrangler secret put OPDS_PASSWORD
+npm run deploy
+```
+
+デプロイ後:
+
+```bash
+curl -sS https://xteink-read-later.<account>.workers.dev/clip \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.com/article"}'
+```
+
+ログは stage / durationMs / errorKind のみ。token や記事全文は出さない。
