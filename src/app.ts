@@ -2,12 +2,22 @@ import { Hono } from 'hono'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { isClipRequestBody } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
-import type { AppEnv, ArticleStore, ClipPipeline, ClipReadyBody } from './types'
+import { createR2Store } from './store/r2'
+import type { AppEnv, ArticleStore, ClipPipeline, ClipReadyBody, CreateArticleStore } from './types'
 import { articleEpubKey, isArticleId } from './types'
 
 export type AppDeps = {
   readonly clipPipeline: ClipPipeline
-  readonly store: ArticleStore
+  readonly store?: ArticleStore
+  readonly createStore?: CreateArticleStore
+}
+
+function storeFor(env: Cloudflare.Env, deps: AppDeps): ArticleStore {
+  if (deps.store !== undefined) {
+    return deps.store
+  }
+  const create = deps.createStore ?? createR2Store
+  return create(env)
 }
 
 export function createApp(deps: AppDeps): Hono<AppEnv> {
@@ -40,8 +50,9 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
       return toErrorResponse(result.error)
     }
 
+    const store = storeFor(c.env, deps)
     const { id, article, epub, timingsMs } = result.value
-    await deps.store.put({
+    await store.put({
       id,
       title: article.title,
       author: article.author,
@@ -74,7 +85,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (!isArticleId(id)) {
       return toErrorResponse({ kind: 'not_found' })
     }
-    const meta = await deps.store.getMeta(id)
+    const meta = await storeFor(c.env, deps).getMeta(id)
     if (meta === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
@@ -86,7 +97,7 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (!isArticleId(id)) {
       return toErrorResponse({ kind: 'not_found' })
     }
-    const epub = await deps.store.getEpub(id)
+    const epub = await storeFor(c.env, deps).getEpub(id)
     if (epub === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
@@ -97,6 +108,18 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
         'content-disposition': `attachment; filename="${id}.epub"`,
       },
     })
+  })
+
+  app.delete('/articles/:id', async (c) => {
+    const id = c.req.param('id')
+    if (!isArticleId(id)) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    const deleted = await storeFor(c.env, deps).delete(id)
+    if (!deleted) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    return c.json({ deleted: true }, 200)
   })
 
   return app

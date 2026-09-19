@@ -20,13 +20,19 @@ curl -sS http://localhost:8787/clip \
   -d '{"url":"https://example.com/article"}'
 ```
 
-1 リクエストで fetch → 抽出 → 言語判定 → 翻訳/整形 → EPUB 生成まで走る。成功時は `status: "ready"` と `epubPath`、`timingsMs` を返す。EPUB はメモリ上に置き、次で取得する。
+1 リクエストで fetch → 抽出 → 言語判定 → 翻訳/整形 → EPUB 生成まで走る。成功時は `status: "ready"` と `epubPath`、`timingsMs` を返す。EPUB とメタデータは R2（`wrangler dev` ではローカルシミュレーション）へ保存する。同一 canonical URL の再送は同じ `id` で上書きし、`createdAt` は初回のまま `updatedAt` だけ更新する。
 
 ```bash
+curl -sS -o clip.json http://localhost:8787/clip \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.com/article"}'
 curl -sS -o book.epub "http://localhost:8787$(jq -r .epubPath clip.json)"
+curl -sS -X DELETE "http://localhost:8787/articles/$(jq -r .id clip.json)"
 ```
 
-ログは stage 別の JSON（`fetch` / `extract` / `translate` / `epub`）で所要時間と失敗 `errorKind` を出す。
+手動削除は `DELETE /articles/:id`。存在しない id は 404。
+
+ログは stage 別の JSON（`fetch` / `extract` / `translate` / `epub` / `store`）で所要時間と失敗 `errorKind` を出す。
 
 英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。失敗時は `error.code` と `error.message` で原因を返す。翻訳失敗時（503）は `error.extracted` に抽出結果を残す。
 
@@ -60,10 +66,11 @@ E2E_LIVE=1 E2E_LIVE_URL='https://example.com/article' npm run test:e2e:live
 
 ## Cloudflare Workers へデプロイ
 
-同じ `src/` を `wrangler deploy` する。Workers Paid を前提（`limits.cpu_ms = 30000`）。秘密情報はソースに置かず Workers Secret にする。
+同じ `src/` を `wrangler deploy` する。Workers Paid を前提（`limits.cpu_ms = 30000`）。秘密情報はソースに置かず Workers Secret にする。R2 バケット `xteink-read-later-articles` がアカウントに必要。
 
 ```bash
 npx wrangler login
+npx wrangler r2 bucket create xteink-read-later-articles
 npx wrangler secret put OPENAI_API_KEY
 npx wrangler secret put CLIP_TOKEN
 npx wrangler secret put OPDS_USERNAME
