@@ -1,13 +1,7 @@
-import type {
-  ErrorBody,
-  ExtractError,
-  PipelineError,
-  TranslateFailedBody,
-  TranslateFailedError,
-} from '../types'
+import type { ErrorBody, ExtractError, NotFoundError, PipelineError, TranslateFailedBody, TranslateFailedError } from '../types'
 import { httpStatusByErrorKind } from '../types'
 
-export function errorMessage(error: PipelineError): string {
+export function errorMessage(error: PipelineError | NotFoundError): string {
   switch (error.kind) {
     case 'invalid_url':
       return error.url.length > 0
@@ -21,10 +15,12 @@ export function errorMessage(error: PipelineError): string {
       return `Could not extract an article from ${error.url}: ${error.reason}`
     case 'translate_failed':
       return `Translation failed: ${error.reason}`
+    case 'not_found':
+      return 'Article not found'
   }
 }
 
-export function toErrorBody(error: ExtractError): ErrorBody {
+export function toErrorBody(error: ExtractError | NotFoundError): ErrorBody {
   const message = errorMessage(error)
   switch (error.kind) {
     case 'invalid_url':
@@ -35,6 +31,8 @@ export function toErrorBody(error: ExtractError): ErrorBody {
       return { error: { status: 502, code: 'fetch_failed', message } }
     case 'extract_failed':
       return { error: { status: 422, code: 'extract_failed', message } }
+    case 'not_found':
+      return { error: { status: 404, code: 'not_found', message } }
   }
 }
 
@@ -49,7 +47,7 @@ export function toTranslateFailedBody(error: TranslateFailedError): TranslateFai
   }
 }
 
-export function toErrorResponse(error: PipelineError): Response {
+export function toErrorResponse(error: PipelineError | NotFoundError): Response {
   if (error.kind === 'translate_failed') {
     return Response.json(toTranslateFailedBody(error), { status: 503 })
   }
