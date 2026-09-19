@@ -150,4 +150,48 @@ describe('OPDS HTTP', () => {
     )
     expect(missing.status).toBe(404)
   })
+
+  it('serves an empty catalog, rejects unauthorized downloads, and 404s unknown paths', async () => {
+    const store = createMemoryStore()
+    const app = createApp({
+      clipPipeline: createClipPipeline({
+        extractPipeline: createExtractPipeline({
+          fetchPage: async (requested) =>
+            ok({ requestedUrl: requested, finalUrl: requested, contentType: 'text/html', html: '' }),
+        }),
+      }),
+      store,
+    })
+
+    const empty = await app.request(
+      'https://read.example.com/opds',
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
+    expect(empty.status).toBe(200)
+    const emptyXml = await empty.text()
+    expect(emptyXml).toContain('<title>Xteink Read Later</title>')
+    expect(emptyXml).not.toContain('<entry>')
+
+    const noAuthDownload = await app.request(
+      'https://read.example.com/opds/download/art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.epub',
+      {},
+      BINDINGS,
+    )
+    expect(noAuthDownload.status).toBe(401)
+
+    const unknownPath = await app.request(
+      'https://read.example.com/opds/catalog',
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
+    expect(unknownPath.status).toBe(404)
+
+    const badFile = await app.request(
+      'https://read.example.com/opds/download/not-an-id.epub',
+      { headers: { authorization: basicAuthorization() } },
+      BINDINGS,
+    )
+    expect(badFile.status).toBe(404)
+  })
 })

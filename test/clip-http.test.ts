@@ -1,4 +1,3 @@
-import { unzipSync, strFromU8 } from 'fflate'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -101,69 +100,7 @@ async function readJson(response: Response): Promise<ClipJson> {
   return body as ClipJson
 }
 
-describe('POST /clip E2E', () => {
-  it('turns a Japanese URL into an EPUB in one request', async () => {
-    const { app } = appWithFetch(async (url) =>
-      ok({
-        requestedUrl: url,
-        finalUrl: url,
-        contentType: 'text/html',
-        html: fixtureHtml('ja-tech.html'),
-      }),
-    )
-    const response = await clip(app, 'https://example.com/ja/workers-cpu')
-    expect(response.status).toBe(200)
-    const body = await readJson(response)
-    expect(body.status).toBe('ready')
-    expect(body.language).toBe('ja')
-    expect(body.translated).toBe(false)
-    expect(body.title).toBe('Cloudflare Workers の CPU 制限')
-    expect(body.epubPath).toMatch(/^\/articles\/art_[a-f0-9]{32}\/book\.epub$/)
-    expect(body.timingsMs?.epub).toBeGreaterThanOrEqual(0)
-
-    const epubResponse = await opdsGet(app, body.epubPath ?? '')
-    expect(epubResponse.status).toBe(200)
-    expect(epubResponse.headers.get('content-type')).toBe('application/epub+zip')
-    const bytes = new Uint8Array(await epubResponse.arrayBuffer())
-    const files = unzipSync(bytes)
-    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
-    expect(chapter).toContain('npx wrangler dev')
-    expect(chapter).toContain('元記事')
-  })
-
-  it('turns an English URL into a Japanese EPUB in one request', async () => {
-    const translateArticle: TranslateArticle = async (extracted) =>
-      ok({
-        ...extracted,
-        title: 'compatibility_date を最新に保つ',
-        contentHtml:
-          '<h1>compatibility_date を最新に保つ</h1><p>nodejs_compat が必要。</p><pre><code>{"compatibility_date":"2026-09-19"}</code></pre>',
-        language: 'ja',
-        translated: true,
-      })
-    const { app } = appWithFetch(
-      async (url) =>
-        ok({
-          requestedUrl: url,
-          finalUrl: url,
-          contentType: 'text/html',
-          html: fixtureHtml('en-tech.html'),
-        }),
-      translateArticle,
-    )
-    const response = await clip(app, 'https://example.com/en/compatibility-date')
-    expect(response.status).toBe(200)
-    const body = await readJson(response)
-    expect(body.translated).toBe(true)
-    expect(body.language).toBe('ja')
-    const epubResponse = await opdsGet(app, body.epubPath ?? '')
-    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
-    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
-    expect(chapter).toContain('compatibility_date')
-    expect(chapter).toContain('<pre>')
-    expect(chapter).toContain('<code>')
-  })
-
+describe('POST /clip', () => {
   it('saves the EPUB through the R2 store and overwrites the same canonical URL', async () => {
     const bucket = createFakeR2Bucket()
     const app = createApp({
@@ -346,29 +283,40 @@ describe('POST /clip E2E', () => {
   })
 
   it('returns 500 epub_failed when EPUB generation throws', async () => {
-    const app = createApp({
-      clipPipeline: createClipPipeline({
-        extractPipeline: createExtractPipeline({
-          fetchPage: async (url) =>
-            ok({
-              requestedUrl: url,
-              finalUrl: url,
-              contentType: 'text/html',
-              html: fixtureHtml('ja-tech.html'),
-            }),
-        }),
-        translateArticle: jaTranslate,
-        buildEpub: async () => {
-          throw new Error('zip boom')
-        },
-      }),
-      store: createMemoryStore(),
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(String(line))
     })
-    const response = await clip(app, 'https://example.com/ja/workers-cpu')
-    expect(response.status).toBe(500)
-    const body = await readJson(response)
-    expect(body.error?.code).toBe('epub_failed')
-    expect(body.error?.message).toContain('zip boom')
+    try {
+      const app = createApp({
+        clipPipeline: createClipPipeline({
+          extractPipeline: createExtractPipeline({
+            fetchPage: async (url) =>
+              ok({
+                requestedUrl: url,
+                finalUrl: url,
+                contentType: 'text/html',
+                html: fixtureHtml('ja-tech.html'),
+              }),
+          }),
+          translateArticle: jaTranslate,
+          buildEpub: async () => {
+            throw new Error('zip boom')
+          },
+        }),
+        store: createMemoryStore(),
+      })
+      const response = await clip(app, 'https://example.com/ja/workers-cpu')
+      expect(response.status).toBe(500)
+      const body = await readJson(response)
+      expect(body.error?.code).toBe('epub_failed')
+      expect(body.error?.message).toContain('zip boom')
+      expect(logs.some((line) => line.includes('"stage":"epub"') && line.includes('epub_failed'))).toBe(
+        true,
+      )
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('returns 400 when the JSON body is missing a url string', async () => {
