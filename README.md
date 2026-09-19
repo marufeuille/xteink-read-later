@@ -32,6 +32,13 @@ curl -sS -X DELETE "http://localhost:8787/articles/$(jq -r .id clip.json)"
 
 手動削除は `DELETE /articles/:id`。存在しない id は 404。
 
+OPDS 1.2 相当の Atom カタログは `GET /opds`。新しい記事が上で、各 entry の `http://opds-spec.org/acquisition` リンクから EPUB を取る。CrossPoint JP にはこの URL を登録する（HTTP Basic は MAR-38）。
+
+```bash
+curl -sS http://localhost:8787/opds
+curl -sS -o book.epub "http://localhost:8787/opds/download/$(jq -r .id clip.json).epub"
+```
+
 ログは stage 別の JSON（`fetch` / `extract` / `translate` / `epub` / `store`）で所要時間と失敗 `errorKind` を出す。
 
 英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。失敗時は `error.code` と `error.message` で原因を返す。翻訳失敗時（503）は `error.extracted` に抽出結果を残す。

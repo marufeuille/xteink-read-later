@@ -2,9 +2,20 @@ import { Hono } from 'hono'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { isClipRequestBody } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
+import { buildOpdsCatalog, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
 import { createR2Store } from './store/r2'
-import type { AppEnv, ArticleStore, ClipPipeline, ClipReadyBody, CreateArticleStore } from './types'
-import { articleEpubKey, isArticleId } from './types'
+import type { AppEnv, ArticleId, ArticleStore, ClipPipeline, ClipReadyBody, CreateArticleStore, EpubBytes } from './types'
+import { articleEpubKey, isArticleId, parseHttpUrl } from './types'
+
+function epubFileResponse(id: ArticleId, epub: EpubBytes): Response {
+  return new Response(epub, {
+    status: 200,
+    headers: {
+      'content-type': 'application/epub+zip',
+      'content-disposition': `attachment; filename="${id}.epub"`,
+    },
+  })
+}
 
 export type AppDeps = {
   readonly clipPipeline: ClipPipeline
@@ -101,13 +112,34 @@ export function createApp(deps: AppDeps): Hono<AppEnv> {
     if (epub === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
-    return new Response(epub, {
+    return epubFileResponse(id, epub)
+  })
+
+  app.get('/opds', async (c) => {
+    const origin = parseHttpUrl(new URL(c.req.url).origin)
+    if (origin === null) {
+      return toErrorResponse({ kind: 'invalid_url', url: new URL(c.req.url).origin })
+    }
+    const articles = await storeFor(c.env, deps).listMeta()
+    const catalog = buildOpdsCatalog(articles, origin)
+    return new Response(catalog.xml, {
       status: 200,
       headers: {
-        'content-type': 'application/epub+zip',
-        'content-disposition': `attachment; filename="${id}.epub"`,
+        'content-type': `${OPDS_CATALOG_TYPE};charset=utf-8`,
       },
     })
+  })
+
+  app.get('/opds/download/:file', async (c) => {
+    const id = parseOpdsDownloadFile(c.req.param('file'))
+    if (id === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    const epub = await storeFor(c.env, deps).getEpub(id)
+    if (epub === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    return epubFileResponse(id, epub)
   })
 
   app.delete('/articles/:id', async (c) => {
