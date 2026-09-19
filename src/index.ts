@@ -1,8 +1,8 @@
 import { createApp } from './app'
 import { clipPipeline } from './pipeline/clip'
-import { createMemoryStore } from './store/memory'
+import { createR2Store } from './store/r2'
 
 export default createApp({
   clipPipeline,
-  store: createMemoryStore(),
+  createStore: createR2Store,
 })

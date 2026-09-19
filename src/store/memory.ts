@@ -35,12 +35,15 @@ export function createMemoryStore(): ArticleStore {
       return meta
     },
     async delete(id) {
-      const existed = metas.delete(id)
+      const existed = metas.has(id) || epubs.has(id)
+      metas.delete(id)
       epubs.delete(id)
       return existed
     },
     async listMeta() {
-      return [...metas.values()].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1))
+      return [...metas.values()].sort((a, b) =>
+        a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
+      )
     },
   }
 }

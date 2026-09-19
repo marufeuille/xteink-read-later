@@ -9,6 +9,7 @@ import { fetchPage } from '../src/extract/fetch-page'
 import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
 import { createMemoryStore } from '../src/store/memory'
+import { createR2Store } from '../src/store/r2'
 import { translateArticle as openAiTranslate } from '../src/translate/openai'
 import {
   err,
@@ -18,6 +19,7 @@ import {
   type HttpUrl,
   type TranslateArticle,
 } from '../src/types'
+import { createFakeR2Bucket } from './fake-r2'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
 const BINDINGS = { OPENAI_API_KEY: 'sk-test' } as Cloudflare.Env
@@ -146,6 +148,66 @@ describe('POST /clip E2E', () => {
     expect(chapter).toContain('compatibility_date')
     expect(chapter).toContain('<pre>')
     expect(chapter).toContain('<code>')
+  })
+
+  it('saves the EPUB through the R2 store and overwrites the same canonical URL', async () => {
+    const bucket = createFakeR2Bucket()
+    const app = createApp({
+      clipPipeline: createClipPipeline({
+        extractPipeline: createExtractPipeline({
+          fetchPage: async (url) =>
+            ok({
+              requestedUrl: url,
+              finalUrl: url,
+              contentType: 'text/html',
+              html: fixtureHtml('ja-tech.html'),
+            }),
+        }),
+        translateArticle: jaTranslate,
+      }),
+      createStore: createR2Store,
+    })
+    const env = { OPENAI_API_KEY: 'sk-test', ARTICLES: bucket } as Cloudflare.Env
+    const first = await app.request(
+      '/clip',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
+      },
+      env,
+    )
+    expect(first.status).toBe(200)
+    const firstBody = await readJson(first)
+    const metaRes = await app.request(`/articles/${firstBody.id}`, {}, env)
+    expect(metaRes.status).toBe(200)
+    const firstMeta = (await metaRes.json()) as { createdAt: string; updatedAt: string; title: string }
+
+    const second = await app.request(
+      '/clip',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
+      },
+      env,
+    )
+    const secondBody = await readJson(second)
+    expect(secondBody.id).toBe(firstBody.id)
+    const secondMetaRes = await app.request(`/articles/${secondBody.id}`, {}, env)
+    const secondMeta = (await secondMetaRes.json()) as { createdAt: string; updatedAt: string }
+    expect(secondMeta.createdAt).toBe(firstMeta.createdAt)
+
+    const epubRes = await app.request(firstBody.epubPath ?? '', {}, env)
+    expect(epubRes.status).toBe(200)
+    expect(epubRes.headers.get('content-type')).toBe('application/epub+zip')
+
+    const deleted = await app.request(`/articles/${firstBody.id}`, { method: 'DELETE' }, env)
+    expect(deleted.status).toBe(200)
+    expect(await app.request(firstBody.epubPath ?? '', {}, env)).toMatchObject({ status: 404 })
+    expect(await app.request(`/articles/${firstBody.id}`, { method: 'DELETE' }, env)).toMatchObject({
+      status: 404,
+    })
   })
 
   it('returns 400 for an invalid URL', async () => {
