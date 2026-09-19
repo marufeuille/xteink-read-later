@@ -102,6 +102,7 @@ describe('translateArticle', () => {
   })
 
   it('times out hanging OpenAI fetch and body reads', async () => {
+    expect(TRANSLATE_TIMEOUT_MS).toBe(60_000)
     vi.useFakeTimers()
     vi.stubGlobal(
       'fetch',
