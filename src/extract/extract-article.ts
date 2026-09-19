@@ -152,19 +152,30 @@ function noiseClass(el: HTMLElement): boolean {
   )
 }
 
+function inProtectedCode(el: HTMLElement): boolean {
+  return el.closest('pre') !== null || el.closest('code') !== null
+}
+
 function stripNoise(root: HTMLElement): void {
   for (const el of root.querySelectorAll(NOISE_SELECTOR)) {
+    if (inProtectedCode(el)) {
+      continue
+    }
     if (el.closest('article') !== null && el.rawTagName.toLowerCase() === 'header') {
       continue
     }
     el.remove()
   }
   for (const el of [...root.querySelectorAll('header')]) {
-    if (el.closest('article') === null) {
-      el.remove()
+    if (inProtectedCode(el) || el.closest('article') !== null) {
+      continue
     }
+    el.remove()
   }
   for (const el of [...root.querySelectorAll('*')]) {
+    if (inProtectedCode(el)) {
+      continue
+    }
     if (noiseClass(el) && el.closest('article') === null) {
       el.remove()
     }
@@ -290,6 +301,9 @@ export const extractArticle: ExtractArticle = async (
   }
 
   for (const el of [...contentNode.querySelectorAll('*')]) {
+    if (inProtectedCode(el)) {
+      continue
+    }
     if (noiseClass(el)) {
       el.remove()
     }

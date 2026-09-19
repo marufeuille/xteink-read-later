@@ -9,6 +9,7 @@ import { fetchPage } from '../src/extract/fetch-page'
 import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
 import { createMemoryStore } from '../src/store/memory'
+import { translateArticle as openAiTranslate } from '../src/translate/openai'
 import {
   err,
   ok,
@@ -174,13 +175,15 @@ describe('POST /clip E2E', () => {
   })
 
   it('returns 503 with extracted article when OPENAI_API_KEY is unset', async () => {
-    const app = appWithFetch(async (url) =>
-      ok({
-        requestedUrl: url,
-        finalUrl: url,
-        contentType: 'text/html',
-        html: fixtureHtml('en-tech.html'),
-      }),
+    const { app } = appWithFetch(
+      async (url) =>
+        ok({
+          requestedUrl: url,
+          finalUrl: url,
+          contentType: 'text/html',
+          html: fixtureHtml('en-tech.html'),
+        }),
+      openAiTranslate,
     )
     const response = await app.request(
       '/clip',
