@@ -238,7 +238,7 @@ npx wrangler secret put OPDS_PASSWORD
 | --- | --- |
 | `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers** に加え、Account 権限 **Workers R2 Storage: Edit**（バケット作成と bind）と **Workers Queues: Edit**（キュー作成と bind）。対象アカウントだけに scope する |
 | `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの [Account ID](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/) |
-| `OPENROUTER_API_KEY` | PR リスク分類の試行専用。未設定でも `pr-risk-trial` は記録し、推奨ルートは追加レビュー。アプリの記事分類は Cloudflare 側の同じ名前の secret を使う |
+| `OPENROUTER_API_KEY` | PR リスク分類の試行専用。未設定でも `pr-risk-trial` は記録し、推奨ルートは追加レビュー。設定済みなら Jev の choice / noul / 信頼度もコメントに残る。アプリの記事分類は Cloudflare 側の同じ名前の secret を使う |
 
 アプリ用の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` は GitHub Secrets に入れない（Cloudflare の `wrangler secret put` 側）。`OPENROUTER_API_KEY` は Worker 用と Actions 試行用で別々に置く。
 
