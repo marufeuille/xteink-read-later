@@ -39,8 +39,8 @@ export function createMemoryStore(): ArticleStore {
         createdAt,
         updatedAt: nowIso(),
       }
-      metas.set(article.id, meta)
       epubs.set(article.id, article.epub)
+      metas.set(article.id, meta)
       return meta
     },
     async delete(id) {
@@ -50,9 +50,9 @@ export function createMemoryStore(): ArticleStore {
       return existed
     },
     async listMeta() {
-      return [...metas.values()].sort((a, b) =>
-        a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0,
-      )
+      return [...metas.values()]
+        .filter((meta) => epubs.has(meta.id))
+        .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
     },
     async getJob(id) {
       return jobs.get(id) ?? null

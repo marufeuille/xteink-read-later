@@ -11,10 +11,13 @@ type Pending = {
 export type FakeQueue = Queue<ClipQueueMessage> & {
   readonly size: number
   peek(): readonly ClipQueueMessage[]
+  push(body: ClipQueueMessage, attempts?: number): void
   drain(env: Cloudflare.Env, deps?: ClipQueueHandlerDeps): Promise<void>
 }
 
-export function createFakeQueue(): FakeQueue {
+export function createFakeQueue(
+  options: { onSend?: (message: ClipQueueMessage) => void | Promise<void> } = {},
+): FakeQueue {
   const pending: Pending[] = []
   const sendResponse = {
     metadata: { metrics: { ...EMPTY_METRICS } },
@@ -27,10 +30,14 @@ export function createFakeQueue(): FakeQueue {
     peek() {
       return pending.map((item) => item.body)
     },
+    push(body, attempts = 1) {
+      pending.push({ body, attempts })
+    },
     async metrics() {
       return { backlogCount: pending.length, backlogBytes: 0 }
     },
     async send(message) {
+      await options.onSend?.(message)
       pending.push({ body: message, attempts: 1 })
       return sendResponse
     },

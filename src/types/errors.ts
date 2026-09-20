@@ -48,6 +48,16 @@ export type InvalidEpubError = {
   readonly reason: string
 }
 
+export type QueueFailedError = {
+  readonly kind: 'queue_failed'
+  readonly reason: string
+}
+
+export type InternalError = {
+  readonly kind: 'internal_error'
+  readonly reason: string
+}
+
 export type FetchError = PayloadTooLargeError | FetchFailedError
 
 export type ExtractError = InvalidUrlError | FetchError | ExtractFailedError
@@ -64,13 +74,17 @@ export const httpStatusByErrorKind = {
   payload_too_large: 413,
   extract_failed: 422,
   epub_failed: 500,
+  internal_error: 500,
   fetch_failed: 502,
   translate_failed: 503,
+  queue_failed: 503,
 } as const satisfies Record<
   | PipelineError['kind']
   | UnauthorizedError['kind']
   | NotFoundError['kind']
-  | InvalidEpubError['kind'],
+  | InvalidEpubError['kind']
+  | QueueFailedError['kind']
+  | InternalError['kind'],
   HttpErrorStatus
 >
 

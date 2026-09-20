@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createR2Store } from '../src/store/r2'
-import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asEpubBytes, clipJobKey, parseHttpUrl } from '../src/types'
+import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asClipRunId, asEpubBytes, clipJobKey, parseHttpUrl } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
 
 function url(value: string) {
@@ -9,6 +9,20 @@ function url(value: string) {
     throw new Error(value)
   }
   return parsed
+}
+
+function jaArticle(id: string, title: string, slug: string, bytes: number[] = [1]) {
+  return {
+    id: asArticleId(id),
+    title,
+    author: null,
+    publishedAt: null,
+    sourceUrl: url(`https://example.com/${slug}`),
+    canonicalUrl: url(`https://example.com/${slug}`),
+    language: 'ja' as const,
+    translated: false,
+    epub: asEpubBytes(new Uint8Array(bytes)),
+  }
 }
 
 describe('createR2Store', () => {
@@ -48,6 +62,7 @@ describe('createR2Store', () => {
     const jobId = asClipJobId('job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
     await store.putJob({
       jobId,
+      runId: asClipRunId('run_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
       sourceUrl: url('https://example.com/queued'),
       status: 'queued',
       articleId: null,
@@ -125,5 +140,72 @@ describe('createR2Store', () => {
     await bucket.put('articles/not-an-id/meta.json', '{not json')
     const listed = await store.listMeta()
     expect(listed.map((item) => item.id)).toEqual([newer, older])
+  })
+
+  it('writes book.epub before meta.json so new articles are unpublished if EPUB fails', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const article = jaArticle('art_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee', '未完成', 'new-fail')
+    bucket.failNextPut(articleEpubKey(article.id))
+    await expect(store.put(article)).rejects.toThrow('R2 put failed')
+    expect(await bucket.head(articleEpubKey(article.id))).toBeNull()
+    expect(await bucket.head(articleMetaKey(article.id))).toBeNull()
+    expect(await store.listMeta()).toEqual([])
+  })
+
+  it('does not publish a new article when metadata write fails after EPUB', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const article = jaArticle('art_14141414141414141414141414141414', 'meta失敗', 'meta-fail')
+    bucket.failNextPut(articleMetaKey(article.id))
+    await expect(store.put(article)).rejects.toThrow('R2 put failed')
+    expect(await bucket.head(articleEpubKey(article.id))).not.toBeNull()
+    expect(await store.getMeta(article.id)).toBeNull()
+    expect(await store.listMeta()).toEqual([])
+  })
+
+  it('does not list meta.json without a matching EPUB', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const id = asArticleId('art_ffffffffffffffffffffffffffffffff')
+    await bucket.put(
+      articleMetaKey(id),
+      JSON.stringify({
+        id,
+        title: 'EPUBなし',
+        author: null,
+        publishedAt: null,
+        sourceUrl: 'https://example.com/meta-only',
+        canonicalUrl: 'https://example.com/meta-only',
+        language: 'ja',
+        translated: false,
+        createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:00:00.000Z',
+      }),
+    )
+    expect(await store.listMeta()).toEqual([])
+    expect(await store.getMeta(id)).not.toBeNull()
+  })
+
+  it('keeps the previous article when an update EPUB write fails', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const firstWrite = jaArticle('art_12121212121212121212121212121212', '初回', 'update-fail')
+    const first = await store.put(firstWrite)
+    bucket.failNextPut(articleEpubKey(firstWrite.id))
+    await expect(store.put({ ...firstWrite, title: '失敗する更新', epub: asEpubBytes(new Uint8Array([2])) })).rejects.toThrow(
+      'R2 put failed',
+    )
+    expect(await store.getMeta(firstWrite.id)).toEqual(first)
+    expect(await store.getEpub(firstWrite.id)).toEqual(new Uint8Array([1]))
+    expect(await store.listMeta()).toEqual([first])
+  })
+
+  it('writes EPUB before metadata', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const article = jaArticle('art_13131313131313131313131313131313', '順', 'order')
+    await store.put(article)
+    expect(bucket.putOrder()).toEqual([articleEpubKey(article.id), articleMetaKey(article.id)])
   })
 })

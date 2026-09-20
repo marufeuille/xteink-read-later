@@ -3,8 +3,9 @@ import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from '
 import { toClipJobBody, toClipQueuedBody } from './http/clip-job'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { parseClipShareText } from './http/clip-request'
-import { toErrorResponse } from './http/error-response'
+import { errorMessage, toErrorResponse } from './http/error-response'
 import { parsePurchasedBookForm } from './http/purchased-book'
+import { isActiveClipJob } from './job/clip'
 import { logPipeline } from './log'
 import { buildOpdsCatalog, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
 import { createR2Store } from './store/r2'
@@ -13,6 +14,7 @@ import type {
   ArticleId,
   ArticleStore,
   ClipQueueMessage,
+  ClipQueuedJob,
   CreateArticleStore,
   EpubBytes,
   PurchasedBookBody,
@@ -24,6 +26,7 @@ import {
   clipJobIdFromUrl,
   isArticleId,
   isClipJobId,
+  newClipRunId,
   parseHttpUrl,
   purchasedCanonicalUrl,
 } from './types'
@@ -87,24 +90,45 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     const jobId = await clipJobIdFromUrl(url)
     const store = storeFor(c.env, deps)
     const existing = await store.getJob(jobId)
-    if (existing !== null && (existing.status === 'queued' || existing.status === 'running')) {
+    if (isActiveClipJob(existing, Date.now())) {
       c.header('Location', `/clip/jobs/${jobId}`)
       return c.json(toClipQueuedBody(existing), 202)
     }
 
-    const queued = {
+    const queued: ClipQueuedJob = {
       jobId,
+      runId: newClipRunId(),
       sourceUrl: url,
-      status: 'queued' as const,
+      status: 'queued',
       articleId: null,
       error: null,
       attempt: 0,
-      createdAt: nowIso(),
+      createdAt: existing?.createdAt ?? nowIso(),
       updatedAt: nowIso(),
     }
     await store.putJob(queued)
     const started = Date.now()
-    await queueFor(c.env, deps).send({ jobId, url })
+    try {
+      await queueFor(c.env, deps).send({ jobId, runId: queued.runId, url })
+    } catch (cause) {
+      const error = {
+        kind: 'queue_failed' as const,
+        reason: cause instanceof Error ? cause.message : 'queue send failed',
+      }
+      await store.putJob({
+        ...queued,
+        status: 'failed',
+        error: { code: error.kind, message: errorMessage(error) },
+        updatedAt: nowIso(),
+      })
+      logPipeline({
+        jobId,
+        stage: 'queue',
+        durationMs: Date.now() - started,
+        errorKind: error.kind,
+      })
+      return toErrorResponse(error)
+    }
     logPipeline({
       jobId,
       stage: 'queue',

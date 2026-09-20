@@ -22,6 +22,8 @@ export type {
   PayloadTooLargeError,
   PipelineError,
   InvalidEpubError,
+  InternalError,
+  QueueFailedError,
   TranslateFailedError,
   UnauthorizedError,
 } from './errors'
@@ -55,6 +57,7 @@ export type {
   ArticleObjectKey,
   ClipJobId,
   ClipJobKey,
+  ClipRunId,
   EpubBytes,
   HttpUrl,
 } from './id'
@@ -65,11 +68,14 @@ export {
   articleMetaKey,
   asArticleId,
   asClipJobId,
+  asClipRunId,
   asEpubBytes,
   clipJobIdFromUrl,
   clipJobKey,
   isArticleId,
   isClipJobId,
+  isClipRunId,
+  newClipRunId,
   parseHttpUrl,
   purchasedCanonicalUrl,
 } from './id'

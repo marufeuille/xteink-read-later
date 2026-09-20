@@ -125,7 +125,7 @@ type _failedJobHasNoExtracted = Assert<
   'extracted' extends keyof ClipJobFailedBody['error'] ? false : true
 >
 
-type _queueMessageKeys = Assert<Equals<keyof ClipQueueMessage, 'jobId' | 'url'>>
+type _queueMessageKeys = Assert<Equals<keyof ClipQueueMessage, 'jobId' | 'runId' | 'url'>>
 
 type _opdsUsesBasic = Assert<
   ApiRoutes['opdsCatalog']['auth'] extends { readonly scheme: 'basic' }

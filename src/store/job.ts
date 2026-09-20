@@ -1,9 +1,8 @@
 import {
-  asArticleId,
-  asClipJobId,
   httpStatusByErrorKind,
   isArticleId,
   isClipJobId,
+  isClipRunId,
   parseHttpUrl,
   type ClipJobError,
   type ClipJobRecord,
@@ -40,6 +39,9 @@ export function parseClipJobRecord(value: unknown): ClipJobRecord | null {
   if (typeof value.jobId !== 'string' || !isClipJobId(value.jobId)) {
     return null
   }
+  if (typeof value.runId !== 'string' || !isClipRunId(value.runId)) {
+    return null
+  }
   const sourceUrl = typeof value.sourceUrl === 'string' ? parseHttpUrl(value.sourceUrl) : null
   if (sourceUrl === null || !isClipJobStatus(value.status)) {
     return null
@@ -50,20 +52,23 @@ export function parseClipJobRecord(value: unknown): ClipJobRecord | null {
   if (typeof value.createdAt !== 'string' || typeof value.updatedAt !== 'string') {
     return null
   }
-  const jobId = asClipJobId(value.jobId)
+  const base = {
+    jobId: value.jobId,
+    runId: value.runId,
+    sourceUrl,
+    attempt: value.attempt,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+  }
   if (value.status === 'ready') {
     if (typeof value.articleId !== 'string' || !isArticleId(value.articleId) || value.error !== null) {
       return null
     }
     return {
-      jobId,
-      sourceUrl,
+      ...base,
       status: 'ready',
-      articleId: asArticleId(value.articleId),
+      articleId: value.articleId,
       error: null,
-      attempt: value.attempt,
-      createdAt: value.createdAt,
-      updatedAt: value.updatedAt,
     }
   }
   if (value.articleId !== null) {
@@ -74,28 +79,10 @@ export function parseClipJobRecord(value: unknown): ClipJobRecord | null {
     if (error === null) {
       return null
     }
-    return {
-      jobId,
-      sourceUrl,
-      status: 'failed',
-      articleId: null,
-      error,
-      attempt: value.attempt,
-      createdAt: value.createdAt,
-      updatedAt: value.updatedAt,
-    }
+    return { ...base, status: 'failed', articleId: null, error }
   }
   if (value.error !== null) {
     return null
   }
-  return {
-    jobId,
-    sourceUrl,
-    status: value.status,
-    articleId: null,
-    error: null,
-    attempt: value.attempt,
-    createdAt: value.createdAt,
-    updatedAt: value.updatedAt,
-  }
+  return { ...base, status: value.status, articleId: null, error: null }
 }

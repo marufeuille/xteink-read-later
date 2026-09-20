@@ -127,9 +127,21 @@ npm run dev
 
 `wrangler dev` は既定で `http://localhost:8787` を開く。`.dev.vars` の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。
 
-`POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, url }` だけ載せて **202** `status: "queued"` を返す。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあとなら新しい実行を載せる。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。
+`POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
-`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id` は Bearer `CLIP_TOKEN`。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` は末尾スラッシュありなしを同じルートとして扱う。OPDS は **ready の記事だけ**出す。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id` は Bearer `CLIP_TOKEN`。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。
+
+### クリップが止まったとき
+
+同じ URL をもう一度 `POST /clip` する。
+
+- `failed`（`queue_failed` / `internal_error` / 取得や翻訳の失敗）ならすぐ再投入される
+- Queue 送信に失敗したときは HTTP **503** `queue_failed`。Shortcuts では失敗として出る。同じ URL を再送する
+- `queued` / `running` のまま 15 分以上 `updatedAt` が動かない（実行中断や Queue 再試行の打ち切り）ときは、同じ URL の再 POST で新しい実行になる
+- 15 分以内の `queued` / `running` は 202 のまま再投入しない
+- `GET /clip/jobs/:jobId` で `status` と `error.code` を見る
+
+DLQ は使わない。失敗は job レコードに残る。
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
@@ -151,9 +163,9 @@ curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
 | 404 | 記事または job が無い |
 | 413 | 購入 EPUB が上限超過 |
 | 422 | （HTTP では出ない。job `extract_failed`） |
-| 500 | （HTTP の clip では出ない。job `epub_failed`） |
+| 500 | （HTTP の clip では出ない。job `epub_failed` / `internal_error`） |
 | 502 | （HTTP では出ない。job `fetch_failed`） |
-| 503 | （HTTP では出ない。job `translate_failed`） |
+| 503 | Queue 送信失敗（`queue_failed`）。job の `translate_failed` も 503 相当だが HTTP の clip では出ない |
 
 `POST /books` は同期のまま 200 `ready`。
 

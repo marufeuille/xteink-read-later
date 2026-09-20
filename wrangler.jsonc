@@ -31,6 +31,7 @@
         "queue": "xteink-read-later-clip",
         "max_batch_size": 1,
         "max_batch_timeout": 1,
+        // No DLQ; recover stuck jobs with POST /clip.
         "max_retries": 3
       }
     ]
