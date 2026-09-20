@@ -4,22 +4,34 @@ name: PR risk trial
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, edited]
+  workflow_dispatch:
+    inputs:
+      prs:
+        description: Comma-separated PR numbers. Empty uses --limit on recently merged PRs.
+        required: false
+        default: '7,10,13,14,18,21,31,33,34,35,36,39,40'
+      limit:
+        description: Last N merged PRs when prs is empty
+        required: false
+        default: '20'
 
 concurrency:
-  group: pr-risk-${{ github.event.pull_request.number }}
+  group: pr-risk-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
   contents: read
   pull-requests: write
 
+env:
+  WRANGLER_SEND_METRICS: 'false'
+
 jobs:
   classify:
+    if: github.event_name == 'pull_request'
     name: pr-risk-trial
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      WRANGLER_SEND_METRICS: 'false'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,4 +56,43 @@ jobs:
         with:
           name: pr-risk-judgment
           path: pr-risk-judgment.json
+          if-no-files-found: ignore
+
+  replay:
+    if: github.event_name == 'workflow_dispatch'
+    name: pr-risk-replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Replay past PRs
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_RISK_REPLAY_PRS: ${{ inputs.prs }}
+          PR_RISK_REPLAY_LIMIT: ${{ inputs.limit }}
+        run: |
+          set -euo pipefail
+          if [ -n "${PR_RISK_REPLAY_PRS}" ]; then
+            case "${PR_RISK_REPLAY_PRS}" in
+              *[!0-9,]*) echo "prs must be comma-separated numbers" >&2; exit 1 ;;
+            esac
+            npm run pr-risk:replay -- --pr "${PR_RISK_REPLAY_PRS}" | tee pr-risk-replay.jsonl
+          else
+            case "${PR_RISK_REPLAY_LIMIT}" in
+              *[!0-9]*) echo "limit must be a positive integer" >&2; exit 1 ;;
+            esac
+            npm run pr-risk:replay -- --limit "${PR_RISK_REPLAY_LIMIT}" | tee pr-risk-replay.jsonl
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-risk-replay
+          path: pr-risk-replay.jsonl
           if-no-files-found: ignore
