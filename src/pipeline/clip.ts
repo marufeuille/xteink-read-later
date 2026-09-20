@@ -20,48 +20,38 @@ export function createClipPipeline(
   const translateArticle = deps.translateArticle ?? defaultTranslateArticle
   const build = deps.buildEpub ?? buildEpub
 
-  return async (url, translateDeps) => {
-    const extracted = await extractPipeline(url)
+  return async (url, translateDeps, log) => {
+    const extracted = await extractPipeline(url, log)
     if (!extracted.ok) {
       return extracted
     }
 
+    const articleId = extracted.value.id
     const translateStarted = Date.now()
     const translated = await translateArticle(extracted.value.article, translateDeps)
     const translateMs = Date.now() - translateStarted
     if (!translated.ok) {
-      logPipeline({
-        articleId: extracted.value.id,
-        stage: 'translate',
-        durationMs: translateMs,
-        errorKind: translated.error.kind,
-      })
+      logPipeline(
+        { articleId, stage: 'translate', durationMs: translateMs, errorKind: translated.error.kind },
+        log,
+      )
       return translated
     }
-    logPipeline({
-      articleId: extracted.value.id,
-      stage: 'translate',
-      durationMs: translateMs,
-    })
+    logPipeline({ articleId, stage: 'translate', durationMs: translateMs }, log)
 
     const epubStarted = Date.now()
     try {
       const epub = await build(translated.value)
       const epubMs = Date.now() - epubStarted
-      logPipeline({
-        articleId: extracted.value.id,
-        stage: 'epub',
-        durationMs: epubMs,
-      })
+      logPipeline({ articleId, stage: 'epub', durationMs: epubMs }, log)
       return {
         ok: true,
         value: {
-          id: extracted.value.id,
+          id: articleId,
           article: translated.value,
           epub,
           timingsMs: {
-            fetch: extracted.value.timingsMs.fetch,
-            extract: extracted.value.timingsMs.extract,
+            ...extracted.value.timingsMs,
             translate: translateMs,
             epub: epubMs,
           },
@@ -70,12 +60,7 @@ export function createClipPipeline(
     } catch (cause) {
       const epubMs = Date.now() - epubStarted
       const reason = cause instanceof Error ? cause.message : String(cause)
-      logPipeline({
-        articleId: extracted.value.id,
-        stage: 'epub',
-        durationMs: epubMs,
-        errorKind: 'epub_failed',
-      })
+      logPipeline({ articleId, stage: 'epub', durationMs: epubMs, errorKind: 'epub_failed' }, log)
       return {
         ok: false,
         error: {

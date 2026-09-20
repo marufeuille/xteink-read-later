@@ -17,8 +17,11 @@ import type {
   ClipJobFailedBody,
   ClipQueuedBody,
   ClipReadyBody,
+  ClipTimingsMs,
   ClipTranslatedBody,
   ErrorBody,
+  PIPELINE_STAGES,
+  PipelineLog,
   PurchasedBookBody,
   TranslateFailedBody,
 } from './http'
@@ -127,6 +130,20 @@ type _failedJobHasNoExtracted = Assert<
 
 type _queueMessageKeys = Assert<Equals<keyof ClipQueueMessage, 'jobId' | 'runId' | 'url'>>
 
+type _pipelineLogHasNoUrl = Assert<'url' extends keyof PipelineLog ? false : true>
+
+type _pipelineLogHasNoExtracted = Assert<'extracted' extends keyof PipelineLog ? false : true>
+
+type _pipelineLogHasNoJobId = Assert<'jobId' extends keyof PipelineLog ? false : true>
+
+type PipelineStage = (typeof PIPELINE_STAGES)[number]
+
+type _pipelineLogStageMatches = Assert<Equals<PipelineLog['stage'], PipelineStage>>
+
+type _timingStagesMatchLog = Assert<
+  Equals<keyof ClipTimingsMs, Exclude<PipelineStage, 'store' | 'queue'>>
+>
+
 type _opdsUsesBasic = Assert<
   ApiRoutes['opdsCatalog']['auth'] extends { readonly scheme: 'basic' }
     ? true
@@ -221,6 +238,11 @@ export type CompileChecks = {
   readonly queuedBodyHasNoExtracted: _queuedBodyHasNoExtracted
   readonly failedJobHasNoExtracted: _failedJobHasNoExtracted
   readonly queueMessageKeys: _queueMessageKeys
+  readonly pipelineLogHasNoUrl: _pipelineLogHasNoUrl
+  readonly pipelineLogHasNoExtracted: _pipelineLogHasNoExtracted
+  readonly pipelineLogHasNoJobId: _pipelineLogHasNoJobId
+  readonly pipelineLogStageMatches: _pipelineLogStageMatches
+  readonly timingStagesMatchLog: _timingStagesMatchLog
   readonly opdsUsesBasic: _opdsUsesBasic
   readonly opdsDownloadUsesBasic: _opdsDownloadUsesBasic
   readonly getArticleUsesBasic: _getArticleUsesBasic

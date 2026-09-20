@@ -142,10 +142,13 @@ export type ApiRoutes = {
   readonly postPurchasedBook: RouteSpec<'POST', '/books', BearerAuth, PurchasedBookBody>
 }
 
+export const PIPELINE_STAGES = ['queue', 'fetch', 'extract', 'translate', 'epub', 'store'] as const
+
+export type PipelineStage = (typeof PIPELINE_STAGES)[number]
+
 export type PipelineLog = {
-  readonly jobId?: ClipJobId
   readonly articleId?: ArticleId
-  readonly stage: keyof ClipTimingsMs | 'store' | 'queue'
+  readonly stage: PipelineStage
   readonly durationMs: number
   readonly errorKind?: ErrorKind
 }

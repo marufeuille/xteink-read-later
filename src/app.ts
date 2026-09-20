@@ -108,6 +108,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     }
     await store.putJob(queued)
     const started = Date.now()
+    const queueLog = { jobId, runId: queued.runId, attempt: 0 }
     try {
       await queueFor(c.env, deps).send({ jobId, runId: queued.runId, url })
     } catch (cause) {
@@ -121,19 +122,13 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
         error: { code: error.kind, message: errorMessage(error) },
         updatedAt: nowIso(),
       })
-      logPipeline({
-        jobId,
-        stage: 'queue',
-        durationMs: Date.now() - started,
-        errorKind: error.kind,
-      })
+      logPipeline(
+        { stage: 'queue', durationMs: Date.now() - started, errorKind: error.kind },
+        queueLog,
+      )
       return toErrorResponse(error)
     }
-    logPipeline({
-      jobId,
-      stage: 'queue',
-      durationMs: Date.now() - started,
-    })
+    logPipeline({ stage: 'queue', durationMs: Date.now() - started }, queueLog)
     c.header('Location', `/clip/jobs/${jobId}`)
     return c.json(toClipQueuedBody(queued), 202)
   }

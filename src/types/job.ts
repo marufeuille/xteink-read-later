@@ -48,3 +48,9 @@ export type ClipQueueMessage = {
   readonly runId: ClipRunId
   readonly url: HttpUrl
 }
+
+export type PipelineLogContext = {
+  readonly jobId: ClipJobId
+  readonly runId?: ClipRunId
+  readonly attempt?: number
+}

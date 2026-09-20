@@ -24,29 +24,21 @@ export function createExtractPipeline(
 ): ExtractPipeline {
   const fetchPage = deps.fetchPage ?? defaultFetchPage
 
-  return async (url) => {
+  return async (url, log) => {
     const fetchStarted = Date.now()
     const page = await fetchPage(url)
     const fetchMs = Date.now() - fetchStarted
     if (!page.ok) {
-      logPipeline({
-        stage: 'fetch',
-        durationMs: fetchMs,
-        errorKind: page.error.kind,
-      })
+      logPipeline({ stage: 'fetch', durationMs: fetchMs, errorKind: page.error.kind }, log)
       return page
     }
-    logPipeline({ stage: 'fetch', durationMs: fetchMs })
+    logPipeline({ stage: 'fetch', durationMs: fetchMs }, log)
 
     const extractStarted = Date.now()
     const extracted = await extractArticle(page.value)
     const extractMs = Date.now() - extractStarted
     if (!extracted.ok) {
-      logPipeline({
-        stage: 'extract',
-        durationMs: extractMs,
-        errorKind: extracted.error.kind,
-      })
+      logPipeline({ stage: 'extract', durationMs: extractMs, errorKind: extracted.error.kind }, log)
       return extracted
     }
 
@@ -56,11 +48,7 @@ export function createExtractPipeline(
     })
     const article = assignLanguage(extracted.value, language)
     const id = await articleIdFromCanonicalUrl(article.canonicalUrl)
-    logPipeline({
-      articleId: id,
-      stage: 'extract',
-      durationMs: extractMs,
-    })
+    logPipeline({ articleId: id, stage: 'extract', durationMs: extractMs }, log)
     return {
       ok: true,
       value: {

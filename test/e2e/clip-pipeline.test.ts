@@ -117,6 +117,34 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(((await meta.json()) as { title: string }).title).toBe('Cloudflare Workers の CPU 制限')
   })
 
+  it('includes the clip jobId on pipeline stage logs', async () => {
+    const pageUrl = 'https://example.com/ja/workers-cpu'
+    installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('ja-tech.html') } },
+    })
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(String(line))
+    })
+    try {
+      const ctx = app()
+      const response = await clipAndDrain(ctx, pageUrl)
+      const queued = await readJson(response)
+      const events = logs
+        .map((line) => JSON.parse(line) as { event?: string; stage?: string; jobId?: string })
+        .filter((entry) => entry.event === 'pipeline')
+      expect(events.some((entry) => entry.stage === 'fetch')).toBe(true)
+      expect(events.some((entry) => entry.stage === 'extract')).toBe(true)
+      expect(events.some((entry) => entry.stage === 'epub')).toBe(true)
+      for (const entry of events) {
+        expect(entry.jobId).toBe(queued.jobId)
+        expect(JSON.stringify(entry)).not.toContain('npx wrangler dev')
+      }
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   it('translates an English URL with a mocked OpenAI response', async () => {
     const pageUrl = 'https://example.com/en/compatibility-date'
     const { fetchedUrls } = installNetworkMock({

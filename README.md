@@ -10,7 +10,7 @@
 
 ### 1. 記事をクリップする（Android）
 
-Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xteink Read Later」を選ぶ。Worker は URL を受けて **202** `status: "queued"` を返し、本文の取得・翻訳・EPUB は Queue の consumer が別 invocation で行う。HTTP Shortcuts は **202 を成功**として扱う。完成は OPDS の更新、または任意で `GET /clip/jobs/:jobId`（同じ Bearer）で確認する。
+Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xteink Read Later」を選ぶ。Worker は URL を受けて **202** `status: "queued"` を返し、本文の取得・翻訳・EPUB は Queue の consumer が別 invocation で行う。HTTP Shortcuts は **202 を成功**として扱う。完成は OPDS の更新、または `npm run clip:status` / `GET /clip/jobs/:jobId`（同じ Bearer）で確認する。
 
 送り先は `POST {worker}/clip`。認証は **Bearer `CLIP_TOKEN`**（JSON 本文や URL クエリには載せない）。パス名は変えない。
 
@@ -140,8 +140,31 @@ npm run dev
 - `queued` / `running` のまま 15 分以上 `updatedAt` が動かない（実行中断や Queue 再試行の打ち切り）ときは、同じ URL の再 POST で新しい実行になる
 - 15 分以内の `queued` / `running` は 202 のまま再投入しない
 - `GET /clip/jobs/:jobId` で `status` と `error.code` を見る
+- 工程ごとの所要時間は下記の `clip:status`（ライブログ）で見る
 
 DLQ は使わない。失敗は job レコードに残る。
+
+### ジョブの進捗・失敗を見る
+
+専用の管理画面や履歴 DB、Workflows は使わない。構造化ログを整形し、最終状態だけ既存の job API で補う。
+
+```bash
+# 最終状態（工程内訳はライブ未接続なので不明）
+CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run clip:status -- job_…
+CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run clip:status -- 'https://example.com/article'
+
+# 1コマンド: job API + 本番ライブログ
+CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run clip:status -- --tail job_…
+
+# パイプでも可
+npx wrangler tail --format json | CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run clip:status -- --stdin job_…
+```
+
+- **認証:** `CLIP_TOKEN` は `GET /clip/jobs/:jobId` の Bearer。CLI 引数・URL クエリ・ログには載せない。`--tail` はそれに加えて `npx wrangler login`（Workers のライブログ）
+- **ライブログ:** `wrangler tail` の接続後に出た `event: pipeline` だけ見える。接続前の工程は **不明**（未実行や停止ではない）
+- **履歴:** 過去ログの検索・保存はしない。完了済み job に `--tail` しても工程は不明のまま
+- **状態:** job は `queued` / `running` / `ready` / `failed`。再試行待ちは `running` かつ直近ログに `errorKind` があるときだけ区別する。ログが無い `running` は **処理中（工程不明）**
+- ログに載せるのは stage / durationMs / errorKind / jobId / runId / attempt / articleId。token と記事全文は出さない
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
@@ -153,7 +176,7 @@ curl -sS -H "Authorization: Bearer $CLIP_TOKEN" \
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
 ```
 
-ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `queue`）。token と記事全文は出さない。英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。
+ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。token と記事全文は出さない。英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。
 
 | 状態 | 意味 |
 | --- | --- |
@@ -228,4 +251,4 @@ curl -sS https://xteink-read-later.<account>.workers.dev/clip \
   -d '{"url":"https://example.com/article"}'
 ```
 
-ログは stage / durationMs / errorKind / jobId のみ。token や記事全文は出さない。手動で送りたいときだけ `npm run deploy` できる。
+ログは stage / durationMs / errorKind / jobId / runId / attempt / articleId。token や記事全文は出さない。手動で送りたいときだけ `npm run deploy` できる。

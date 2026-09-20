@@ -125,11 +125,7 @@ async function processMessage(
 ): Promise<void> {
   const parsed = parseClipQueueMessage(message.body)
   if (parsed === null) {
-    logPipeline({
-      stage: 'queue',
-      durationMs: 0,
-      errorKind: 'invalid_url',
-    })
+    logPipeline({ stage: 'queue', durationMs: 0, errorKind: 'invalid_url' })
     message.ack()
     return
   }
@@ -139,12 +135,10 @@ async function processMessage(
   } catch {
     const store = storeFor(env, deps)
     const existing = await store.getJob(parsed.jobId)
-    logPipeline({
-      jobId: parsed.jobId,
-      stage: 'queue',
-      durationMs: 0,
-      errorKind: 'internal_error',
-    })
+    logPipeline(
+      { stage: 'queue', durationMs: 0, errorKind: 'internal_error' },
+      { jobId: parsed.jobId, runId: parsed.runId, attempt: message.attempts },
+    )
     if (shouldRetryClipAttempt(message.attempts)) {
       message.retry()
       return
@@ -179,6 +173,7 @@ async function runClipQueueMessage(
   }
 
   const fields = jobFields(parsed, existing, message.attempts)
+  const log = { jobId, runId, attempt: message.attempts }
   const started = Date.now()
   if (
     !(await putCurrentRunOrAck(store, message, {
@@ -192,24 +187,27 @@ async function runClipQueueMessage(
     return
   }
 
-  const result = await pipeline(url, { OPENAI_API_KEY: env.OPENAI_API_KEY })
+  const result = await pipeline(url, { OPENAI_API_KEY: env.OPENAI_API_KEY }, log)
   if (result.ok) {
     if ((await currentRunId(store, jobId)) !== runId) {
       message.ack()
       return
     }
     const { id, article, epub } = result.value
-    await store.put({
-      id,
-      title: article.title,
-      author: article.author,
-      publishedAt: article.publishedAt,
-      sourceUrl: article.sourceUrl,
-      canonicalUrl: article.canonicalUrl,
-      language: article.language,
-      translated: article.translated,
-      epub,
-    })
+    await store.put(
+      {
+        id,
+        title: article.title,
+        author: article.author,
+        publishedAt: article.publishedAt,
+        sourceUrl: article.sourceUrl,
+        canonicalUrl: article.canonicalUrl,
+        language: article.language,
+        translated: article.translated,
+        epub,
+      },
+      log,
+    )
     if (
       !(await putCurrentRunOrAck(store, message, {
         ...fields,
@@ -221,23 +219,18 @@ async function runClipQueueMessage(
     ) {
       return
     }
-    logPipeline({
-      jobId,
-      articleId: id,
-      stage: 'queue',
-      durationMs: Date.now() - started,
-    })
+    logPipeline({ articleId: id, stage: 'queue', durationMs: Date.now() - started }, log)
     message.ack()
     return
   }
 
+  const logQueueError = () =>
+    logPipeline(
+      { stage: 'queue', durationMs: Date.now() - started, errorKind: result.error.kind },
+      log,
+    )
   if (shouldRetryClipError(result.error.kind, message.attempts)) {
-    logPipeline({
-      jobId,
-      stage: 'queue',
-      durationMs: Date.now() - started,
-      errorKind: result.error.kind,
-    })
+    logQueueError()
     message.retry()
     return
   }
@@ -252,12 +245,7 @@ async function runClipQueueMessage(
     },
     updatedAt: nowIso(),
   })
-  logPipeline({
-    jobId,
-    stage: 'queue',
-    durationMs: Date.now() - started,
-    errorKind: result.error.kind,
-  })
+  logQueueError()
   message.ack()
 }
 
