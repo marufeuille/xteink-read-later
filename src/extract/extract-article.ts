@@ -13,6 +13,9 @@ import {
   isAdsLikeClass,
   isAriaHidden,
   isChartTickList,
+  isChromePhraseText,
+  isLinkChrome,
+  isSoloNavChrome,
   sanitizeContentHtml,
   visibleTextLength,
 } from './sanitize-html'
@@ -187,6 +190,14 @@ function stripNoise(root: HTMLElement): void {
       el.remove()
     }
   }
+  for (const el of [...root.querySelectorAll('div, section, header, nav, ul, ol, aside, p')]) {
+    if (inProtectedCode(el)) {
+      continue
+    }
+    if (isLinkChrome(el) || isSoloNavChrome(el) || isChromePhraseText(el.text.replace(/\s+/g, ' ').trim())) {
+      el.remove()
+    }
+  }
 }
 
 function paragraphScore(el: HTMLElement): number {
@@ -212,6 +223,9 @@ function paragraphScore(el: HTMLElement): number {
 function locationBonus(el: HTMLElement): number {
   if (el.getAttribute('itemprop') === 'articleBody' || el.closest('[itemprop="articleBody"]') !== null) {
     return 2.2
+  }
+  if (el.getAttribute('data-framer-name') === 'Content') {
+    return 2.0
   }
   const tag = el.rawTagName.toLowerCase()
   if (tag === 'main' || el.getAttribute('role') === 'main' || el.closest('main, [role="main"]') !== null) {
@@ -311,7 +325,15 @@ export const extractArticle: ExtractArticle = async (
     if (inProtectedCode(el)) {
       continue
     }
-    if (isAdsLikeClass(el) || isAriaHidden(el) || isChartTickList(el)) {
+    if (isAdsLikeClass(el) || isAriaHidden(el) || isChartTickList(el) || isLinkChrome(el) || isSoloNavChrome(el)) {
+      el.remove()
+    }
+  }
+  for (const el of [...contentNode.querySelectorAll('p, div, section, header')]) {
+    if (inProtectedCode(el)) {
+      continue
+    }
+    if (isChromePhraseText(el.text.replace(/\s+/g, ' ').trim())) {
       el.remove()
     }
   }

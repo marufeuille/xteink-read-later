@@ -43,6 +43,7 @@ export const NOISE_SELECTOR = [
 export const CONTENT_SELECTORS = [
   'article',
   '[itemprop="articleBody"]',
+  '[data-framer-name="Content"]',
   '.post-content',
   '.entry-content',
   '.article-body',

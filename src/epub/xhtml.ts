@@ -1,6 +1,6 @@
 import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
 import { PARSE_HTML_OPTIONS } from '../extract/constants'
-import { isAriaHidden, isChartTickList } from '../extract/sanitize-html'
+import { isAriaHidden, isChartTickList, isLinkChrome, isSoloNavChrome, isChromePhraseText } from '../extract/sanitize-html'
 import {
   imgAltText,
   isLoneChartTick,
@@ -27,7 +27,7 @@ function serialize(node: Node): string {
   if (node.nodeType !== NodeType.ELEMENT_NODE || !(node instanceof HTMLElement)) {
     return ''
   }
-  if (isAriaHidden(node) || isChartTickList(node)) {
+  if (isAriaHidden(node) || isChartTickList(node) || isLinkChrome(node) || isSoloNavChrome(node)) {
     return ''
   }
   const tag = node.rawTagName.toLowerCase()
@@ -36,6 +36,9 @@ function serialize(node: Node): string {
     return alt.length > 0 ? xmlEscape(alt) : ''
   }
   if ((tag === 'p' || tag === 'li') && isLoneChartTick(node.text)) {
+    return ''
+  }
+  if ((tag === 'p' || tag === 'div') && isChromePhraseText(node.text.replace(/\s+/g, ' ').trim())) {
     return ''
   }
   const attrs = Object.entries(node.attributes)

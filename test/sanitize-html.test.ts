@@ -257,6 +257,27 @@ describe('tables and nested lists', () => {
     expect(markdown).not.toMatch(/^1\. </m)
   })
 
+  it('drops Sign in / Join Waitlist menu chrome from HTML to Markdown', () => {
+    const markdown = htmlToMarkdown(
+      '<div class="toolbar">' +
+        '<a href="/manifesto">Manifesto</a>' +
+        '<a href="/team">Our Team</a>' +
+        '<a href="/docs">Docs</a>' +
+        '<a href="/signin">Sign in</a>' +
+        '<a href="/waitlist">Join Waitlist</a>' +
+        '</div>' +
+        '<div><a href="/blog">∵ Back</a></div>' +
+        '<article><h1>Dummy System One models</h1><p>Set compatibility_date and enable nodejs_compat.</p></article>',
+      BASE,
+    )
+    expect(markdown).toContain('Dummy System One models')
+    expect(markdown).toContain('nodejs_compat')
+    expect(markdown).not.toContain('Sign in')
+    expect(markdown).not.toContain('Join Waitlist')
+    expect(markdown).not.toContain('Manifesto')
+    expect(markdown).not.toContain('∵ Back')
+  })
+
   it('keeps nested list items through Markdown and back to HTML', () => {
     const html =
       '<ul><li>Parent item<ul><li>Nested child</li><li>Second child</li></ul></li><li>Sibling</li></ul>'

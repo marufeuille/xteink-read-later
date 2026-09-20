@@ -42,4 +42,21 @@ describe('htmlFragmentToXhtml', () => {
     expect(xhtml).not.toContain('WARN-BAR-BAND-WIDTH-TOO-NARROW')
     expect(xhtml).not.toContain('WARN-TABLE-COLUMNS-OVERFLOW')
   })
+
+  it('strips Sign in / Join Waitlist menu chrome from reading body', () => {
+    const xhtml = htmlFragmentToXhtml(
+      '<div class="toolbar">' +
+        '<a href="/manifesto">Manifesto</a>' +
+        '<a href="/team">Our Team</a>' +
+        '<a href="/docs">Docs</a>' +
+        '<a href="/signin">Sign in</a>' +
+        '<a href="/waitlist">Join Waitlist</a>' +
+        '</div>' +
+        '<p>Dummy System One body about nodejs_compat.</p>',
+    )
+    expect(xhtml).toContain('nodejs_compat')
+    expect(xhtml).not.toContain('Sign in')
+    expect(xhtml).not.toContain('Join Waitlist')
+    expect(xhtml).not.toContain('Manifesto')
+  })
 })
