@@ -2,6 +2,7 @@ node_modules/
 .dev.vars
 .wrangler/
 dist/
+tmp/
 *.tsbuildinfo
 .DS_Store
 pr-risk-judgment.json

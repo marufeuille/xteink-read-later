@@ -209,11 +209,15 @@ GitHub Actions が pull request と `main` への push で install / typecheck /
 E2E_LIVE=1 E2E_LIVE_URL='https://example.com/article' npm run test:e2e:live
 ```
 
-翻訳モデルの焼比べ（`gpt-4o-mini` / `gpt-4.1-mini` / `plamo-3.0-prime`。キーが無い候補は skip として出る）:
+翻訳モデルの焼比べ（`gpt-4o-mini` / `gpt-4.1-mini` / `gpt-5.6-luna` / `plamo-3.0-prime`。キーが無い候補は skip として出る）:
 
 ```bash
-OPENAI_API_KEY=… PLAMO_API_KEY=… npm run translate:bakeoff
+npm run translate:bakeoff
 ```
+
+`.dev.vars` の `OPENAI_API_KEY` / `PLAMO_API_KEY` を読む。シェルで上書きしてもよい。GitHub Secrets にも Worker secret にも置かない。`PLAMO_API_KEY` を `.dev.vars` に足したあと `wrangler types` が `worker-configuration.d.ts` を触ったら、その型差分はコミットしない。
+
+確認は stdout の3軸表（自然さの読み方・速度・コスト）と `tmp/translate-bakeoff/`（gitignore）。自然さは `hedging-prose/<model>.md` を先に読む。`ok: false` で `is not set` ならキー未到達、`HTTP 401` ならキー無効。
 
 メモは `docs/plan/mar-44-translate-models.md`。
 
