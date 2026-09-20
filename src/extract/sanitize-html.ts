@@ -1,7 +1,14 @@
 import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
 import { parseHttpUrl, type HttpUrl } from '../types'
 import { PARSE_HTML_OPTIONS } from './constants'
-import { imgAltText, stripPageCliWarnings, stripXmlIllegalChars } from './xml-text'
+import {
+  imgAltText,
+  isChartTickItemList,
+  isLoneChartTick,
+  stripChartTickMarkdown,
+  stripPageCliWarnings,
+  stripXmlIllegalChars,
+} from './xml-text'
 
 const ALLOWED_TAGS = new Set([
   'p',
@@ -133,6 +140,29 @@ export function isAdsLikeClass(el: HTMLElement): boolean {
   return ADS_CLASS_RE.test(haystack)
 }
 
+export function isAriaHidden(el: HTMLElement): boolean {
+  const value = (el.getAttribute('aria-hidden') ?? '').trim().toLowerCase()
+  return value === 'true' || value === '1'
+}
+
+function listItemTexts(el: HTMLElement): string[] {
+  const items: string[] = []
+  for (const child of el.childNodes) {
+    if (child instanceof HTMLElement && child.rawTagName.toLowerCase() === 'li') {
+      items.push(child.text.replace(/\s+/g, ' ').trim())
+    }
+  }
+  return items
+}
+
+export function isChartTickList(el: HTMLElement): boolean {
+  const tag = el.rawTagName.toLowerCase()
+  if (tag !== 'ol' && tag !== 'ul') {
+    return false
+  }
+  return isChartTickItemList(listItemTexts(el))
+}
+
 function inProtectedCode(el: HTMLElement): boolean {
   return el.closest('pre') !== null || el.closest('code') !== null
 }
@@ -144,13 +174,22 @@ function chromeRole(el: HTMLElement): boolean {
 
 function shouldDropElement(el: HTMLElement): boolean {
   const tag = el.rawTagName.toLowerCase()
-  if (DROP_TAGS.has(tag) || chromeRole(el)) {
+  if (DROP_TAGS.has(tag) || chromeRole(el) || isAriaHidden(el)) {
     return true
   }
   if (inProtectedCode(el)) {
     return false
   }
-  return isAdsLikeClass(el)
+  if (isAdsLikeClass(el)) {
+    return true
+  }
+  if (isChartTickList(el)) {
+    return true
+  }
+  if ((tag === 'p' || tag === 'li') && isLoneChartTick(el.text)) {
+    return true
+  }
+  return false
 }
 
 function languageClass(el: HTMLElement): string {
@@ -244,6 +283,12 @@ function htmlNode(node: Node, ctx: SerializeCtx): string {
   }
   if (VOID_TAGS.has(tag)) {
     return `<${tag}>`
+  }
+  if (
+    inner.replace(/<[^>]+>/g, '').trim().length === 0 &&
+    (tag === 'figure' || tag === 'figcaption' || tag === 'ul' || tag === 'ol' || tag === 'p')
+  ) {
+    return ''
   }
   return `<${tag}${attrs}>${inner}</${tag}>`
 }
@@ -552,7 +597,9 @@ function startsBlock(lines: readonly string[], index: number): boolean {
 }
 
 export function markdownToHtml(markdown: string, base: HttpUrl): string {
-  const lines = stripXmlIllegalChars(stripPageCliWarnings(markdown)).replaceAll('\r\n', '\n').split('\n')
+  const lines = stripXmlIllegalChars(stripChartTickMarkdown(stripPageCliWarnings(markdown)))
+    .replaceAll('\r\n', '\n')
+    .split('\n')
   const blocks: string[] = []
   let index = 0
 

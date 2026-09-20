@@ -1,6 +1,13 @@
 import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
 import { PARSE_HTML_OPTIONS } from '../extract/constants'
-import { imgAltText, stripPageCliWarnings, stripXmlIllegalChars } from '../extract/xml-text'
+import { isAriaHidden, isChartTickList } from '../extract/sanitize-html'
+import {
+  imgAltText,
+  isLoneChartTick,
+  stripChartTickMarkdown,
+  stripPageCliWarnings,
+  stripXmlIllegalChars,
+} from '../extract/xml-text'
 
 const VOID_TAGS = new Set(['br', 'hr', 'meta', 'link', 'input'])
 
@@ -15,15 +22,21 @@ export function xmlEscape(value: string): string {
 
 function serialize(node: Node): string {
   if (node.nodeType === NodeType.TEXT_NODE) {
-    return xmlEscape(node.text)
+    return isLoneChartTick(node.text) ? '' : xmlEscape(node.text)
   }
   if (node.nodeType !== NodeType.ELEMENT_NODE || !(node instanceof HTMLElement)) {
+    return ''
+  }
+  if (isAriaHidden(node) || isChartTickList(node)) {
     return ''
   }
   const tag = node.rawTagName.toLowerCase()
   if (tag === 'img') {
     const alt = imgAltText(node.getAttribute('alt') ?? '')
     return alt.length > 0 ? xmlEscape(alt) : ''
+  }
+  if ((tag === 'p' || tag === 'li') && isLoneChartTick(node.text)) {
+    return ''
   }
   const attrs = Object.entries(node.attributes)
     .map(([key, val]) => ` ${key}="${xmlEscape(val)}"`)
@@ -32,11 +45,17 @@ function serialize(node: Node): string {
     return `<${tag}${attrs}/>`
   }
   const inner = node.childNodes.map(serialize).join('')
+  if (
+    inner.replace(/<[^>]+>/g, '').trim().length === 0 &&
+    (tag === 'figure' || tag === 'figcaption' || tag === 'ul' || tag === 'ol' || tag === 'p')
+  ) {
+    return ''
+  }
   return `<${tag}${attrs}>${inner}</${tag}>`
 }
 
 export function htmlFragmentToXhtml(fragment: string): string {
-  const cleaned = stripXmlIllegalChars(stripPageCliWarnings(fragment))
+  const cleaned = stripXmlIllegalChars(stripChartTickMarkdown(stripPageCliWarnings(fragment)))
   const root = parse(`<div id="epub-root">${cleaned}</div>`, PARSE_HTML_OPTIONS)
   const wrapper = root.querySelector('#epub-root')
   if (wrapper === null) {

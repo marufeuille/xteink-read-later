@@ -9,7 +9,13 @@ import type {
 } from '../types'
 import { err, ok, parseHttpUrl } from '../types'
 import { CONTENT_SELECTORS, MIN_CONTENT_CHARS, NOISE_SELECTOR, PARSE_HTML_OPTIONS } from './constants'
-import { isAdsLikeClass, sanitizeContentHtml, visibleTextLength } from './sanitize-html'
+import {
+  isAdsLikeClass,
+  isAriaHidden,
+  isChartTickList,
+  sanitizeContentHtml,
+  visibleTextLength,
+} from './sanitize-html'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -173,6 +179,14 @@ function stripNoise(root: HTMLElement): void {
       el.remove()
     }
   }
+  for (const el of [...root.querySelectorAll('[aria-hidden], ol, ul')]) {
+    if (inProtectedCode(el)) {
+      continue
+    }
+    if (isAriaHidden(el) || isChartTickList(el)) {
+      el.remove()
+    }
+  }
 }
 
 function paragraphScore(el: HTMLElement): number {
@@ -297,7 +311,7 @@ export const extractArticle: ExtractArticle = async (
     if (inProtectedCode(el)) {
       continue
     }
-    if (isAdsLikeClass(el)) {
+    if (isAdsLikeClass(el) || isAriaHidden(el) || isChartTickList(el)) {
       el.remove()
     }
   }

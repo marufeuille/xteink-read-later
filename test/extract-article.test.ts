@@ -179,4 +179,18 @@ describe('extractArticle', () => {
     expect(result.value.contentHtml).toContain('https://example.com/amp/posts/reference/')
     expect(result.value.contentHtml).not.toContain('https://example.com/posts/reference/')
   })
+
+  it('drops aria-hidden chart ticks and leftover markup lists from the article body', async () => {
+    const result = await extractArticle(page('/charts/ticks', 'chart-ticks.html'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('compatibility_date')
+    expect(result.value.contentHtml).toContain('Enable nodejs_compat')
+    expect(result.value.contentHtml).not.toContain('01234567890123456')
+    expect(result.value.contentHtml).not.toContain('aria-hidden')
+    expect(result.value.contentHtml).not.toMatch(/<li>\s*&lt;\s*<\/li>/)
+    expect(result.value.contentHtml).not.toMatch(/<li>\s*12\s*<\/li>/)
+  })
 })
