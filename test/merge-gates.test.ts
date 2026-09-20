@@ -70,4 +70,8 @@ describe('GitHub merge gates', () => {
       execFileSync('bash', ['-n', join(root, '.github/scripts', script)])
     }
   })
+
+  it('intentionally fails to verify merge-gate', () => {
+    expect(false).toBe(true)
+  })
 })
