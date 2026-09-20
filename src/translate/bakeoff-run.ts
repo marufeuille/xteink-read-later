@@ -12,16 +12,52 @@ const PLAMO_CHAT_URL = 'https://api.platform.preferredai.jp/v1/chat/completions'
 
 const PLAMO_JSON_SCHEMA = {
   name: 'translated_article',
+  description:
+    '英語記事を自然な日本語に翻訳した結果。title と content は日本語。原文の英語をコピーしない。',
   schema: {
     type: 'object',
     properties: {
-      title: { type: 'string' },
-      content: { type: 'string' },
+      title: { type: 'string', description: '翻訳した日本語タイトル' },
+      content: {
+        type: 'string',
+        description: '翻訳した日本語 Markdown。コード・CLI・API名・固有名詞だけ原文の綴り。',
+      },
     },
     required: ['title', 'content'],
     additionalProperties: false,
   },
+  strict: true,
 } as const
+
+const PLAMO_SYSTEM_PROMPT = `あなたはウェブ記事を、あとで EPUB にする自然な日本語 Markdown に変換します。
+
+ユーザーメッセージの本文はコンパクトな Markdown です（見出し、段落、リスト、リンク、コードフェンス）。生 HTML でも EPUB でもありません。
+
+規則:
+- 原文が日本語でなければ、記事全体を自然な日本語 Markdown に翻訳する。
+- 原文がすでに日本語なら翻訳せず、意味を変えずに整えるだけにする。
+- 見出し階層、段落、リスト、引用、リンク、コードフェンスは維持する。
+- コード、CLI、API 名、固有名詞は原文の綴りのまま。
+- 専門用語は初出のみ英語を括弧で併記してよい。
+- 要約・省略・広告・CTA・ナビゲーションを足さない。
+- title と content だけの JSON を返す。
+- content は Markdown。HTML や EPUB/XHTML にしない。
+- JSON を markdown フェンスで囲まない。
+- 入力 JSON の title や content を英語のまま返さない。`
+
+/** ひらがな・カタカナ・漢字が文字種に占める割合。これ未満なら原文コピーとみなす。 */
+export const UNTRANSLATED_JA_RATIO = 0.08
+
+export function japaneseCharRatio(text: string): number {
+  const letters = [...text].filter((ch) => /\p{L}|\p{N}/u.test(ch))
+  if (letters.length === 0) {
+    return 0
+  }
+  const japanese = letters.filter((ch) =>
+    /\p{Script=Hiragana}|\p{Script=Katakana}|\p{Script=Han}/u.test(ch),
+  )
+  return japanese.length / letters.length
+}
 
 export type BakeoffModelId = 'gpt-4o-mini' | 'gpt-4.1-mini' | 'gpt-5.6-luna' | 'plamo-3.0-prime'
 
@@ -73,6 +109,8 @@ export type BakeoffScores = {
   readonly sourceCodeFenceCount: number
   readonly sourceLinkCount: number
   readonly underTimeout: boolean
+  readonly japaneseCharRatio: number
+  readonly looksUntranslated: boolean
 }
 
 export type BakeoffRunResult = {
@@ -168,6 +206,7 @@ function parseTitleContent(content: string): { title: string; content: string } 
 
 function scoreOutput(article: BakeoffArticle, source: string, content: string, durationMs: number): BakeoffScores {
   const missingKeepTokens = article.keepTokens.filter((token) => !content.includes(token))
+  const ratio = japaneseCharRatio(content)
   return {
     jsonOk: true,
     keepTokenHits: article.keepTokens.length - missingKeepTokens.length,
@@ -180,6 +219,8 @@ function scoreOutput(article: BakeoffArticle, source: string, content: string, d
     sourceCodeFenceCount: countCodeFences(source),
     sourceLinkCount: countLinks(source),
     underTimeout: durationMs < TRANSLATE_TIMEOUT_MS,
+    japaneseCharRatio: ratio,
+    looksUntranslated: ratio < UNTRANSLATED_JA_RATIO,
   }
 }
 
@@ -217,6 +258,18 @@ function userMessage(title: string, markdown: string): string {
   })
 }
 
+function plamoUserMessage(title: string, markdown: string): string {
+  return [
+    '次の英語の技術記事を、自然な日本語 Markdown に全文翻訳してください。',
+    '返す JSON の title は日本語の見出し、content は翻訳後の Markdown です。',
+    '入力の英語 title / content をコピーしてはいけません。',
+    '',
+    `元タイトル: ${title}`,
+    '',
+    markdown,
+  ].join('\n')
+}
+
 function openaiBody(model: BakeoffModelId, title: string, markdown: string): string {
   const messages = [
     { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
@@ -251,8 +304,8 @@ function plamoBody(title: string, markdown: string): string {
     reasoning_effort: 'none',
     response_format: { type: 'json_schema', json_schema: PLAMO_JSON_SCHEMA },
     messages: [
-      { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
-      { role: 'user', content: userMessage(title, markdown) },
+      { role: 'system', content: PLAMO_SYSTEM_PROMPT },
+      { role: 'user', content: plamoUserMessage(title, markdown) },
     ],
   })
 }

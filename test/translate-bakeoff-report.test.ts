@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { applyBakeoffDotEnv, loadBakeoffKeys, parseDotEnv } from '../src/translate/bakeoff-env'
 import { comparableUsd, formatBakeoffSummary, writeBakeoffArtifacts } from '../src/translate/bakeoff-report'
-import { BAKEOFF_MODELS, bakeoffChatBody, type BakeoffRunResult } from '../src/translate/bakeoff-run'
+import { BAKEOFF_MODELS, bakeoffChatBody, japaneseCharRatio, UNTRANSLATED_JA_RATIO, type BakeoffRunResult } from '../src/translate/bakeoff-run'
 
 describe('translate bakeoff env', () => {
   it('parses quoted .dev.vars lines and ignores comments', () => {
@@ -60,6 +60,8 @@ describe('translate bakeoff report', () => {
         sourceCodeFenceCount: 2,
         sourceLinkCount: 1,
         underTimeout: true,
+        japaneseCharRatio: 0.42,
+        looksUntranslated: false,
       },
       title: 'ほぼ正しい翻訳',
       contentExcerpt: '短い抜粋',
@@ -85,6 +87,8 @@ describe('translate bakeoff report', () => {
         sourceCodeFenceCount: 2,
         sourceLinkCount: 1,
         underTimeout: true,
+        japaneseCharRatio: 0.42,
+        looksUntranslated: false,
       },
       title: 'ほぼ正しい翻訳',
       contentExcerpt: '別の抜粋',
@@ -102,6 +106,7 @@ describe('translate bakeoff report', () => {
     expect(summary).toContain('$0.0012')
     expect(summary).toContain('¥0.22')
     expect(summary).toContain('gpt-4o-mini')
+    expect(summary).toContain('42%')
     expect(summary).not.toContain('sk-')
   })
 
@@ -141,5 +146,34 @@ describe('translate bakeoff request bodies', () => {
     expect(lunaBody.reasoning_effort).toBe('none')
     expect(lunaBody.max_completion_tokens).toBe(16_000)
     expect(miniBody.temperature).toBe(0.2)
+  })
+
+  it('asks PLaMo in Japanese and does not send echoable title/content JSON', () => {
+    const plamo = BAKEOFF_MODELS.find((model) => model.id === 'plamo-3.0-prime')
+    expect(plamo).toBeDefined()
+    if (plamo === undefined) {
+      return
+    }
+    const body = JSON.parse(bakeoffChatBody(plamo, 'Keep compatibility_date current', '# Hello\n\nWorld')) as {
+      messages: ReadonlyArray<{ role: string; content: string }>
+      response_format: { json_schema: { description?: string; schema: { properties: Record<string, { description?: string }> } } }
+    }
+    const system = body.messages.find((message) => message.role === 'system')?.content ?? ''
+    const user = body.messages.find((message) => message.role === 'user')?.content ?? ''
+    expect(system).toContain('自然な日本語')
+    expect(user).toContain('全文翻訳')
+    expect(user).toContain('# Hello')
+    expect(user).not.toContain('"mode":"translate"')
+    expect(user).not.toContain('"content":')
+    expect(body.response_format.json_schema.description).toContain('日本語')
+    expect(body.response_format.json_schema.schema.properties.content?.description).toContain('日本語')
+  })
+})
+
+describe('translate bakeoff japanese ratio', () => {
+  it('treats copied English markdown as untranslated', () => {
+    expect(japaneseCharRatio('Keep compatibility_date current. Use wrangler.jsonc.')).toBe(0)
+    expect(japaneseCharRatio('小さなモデルは技術的には正しくても、読んでいて気持ちが悪い日本語を出す。')).toBeGreaterThan(0.8)
+    expect(japaneseCharRatio('互換性日付を compatibility_date のまま保つ。')).toBeGreaterThan(UNTRANSLATED_JA_RATIO)
   })
 })
