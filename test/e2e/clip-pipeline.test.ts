@@ -178,6 +178,44 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).toContain('{&quot;compatibility_date&quot;:&quot;2026-09-19&quot;}')
   })
 
+  it('translates an English X article even when the page html lang is ja', async () => {
+    const pageUrl = 'https://x.com/0xCodila/status/2100984487802708306'
+    const { fetchedUrls } = installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('x-article-ja-ui.html') } },
+      openai: async () =>
+        openaiMessageResponse(
+          'Jev エンジニアリング',
+          '# Jev エンジニアリング\n\nジェボンズのパラドックスは、資源の利用効率が上がると消費全体が増えるという規則である。\n\n```\nGoal: Compare three AI-agent tools in a morning briefing.\n```',
+        ),
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(fetchedUrls).toEqual([pageUrl, OPENAI_CHAT_URL])
+
+    const meta = await ctx.hono.request(
+      `/articles/${job.id}`,
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(meta.status).toBe(200)
+    expect(((await meta.json()) as { translated: boolean }).translated).toBe(true)
+
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('ジェボンズのパラドックス')
+    expect(chapter).toContain('Goal: Compare three AI-agent tools')
+    expect(chapter).not.toContain('The Jevons Paradox is a rule')
+  })
+
   it('keeps the extract title when mock OpenAI titles change across two clips', async () => {
     const pageUrl = 'https://example.com/en/compatibility-date'
     const extractTitle = 'Keep compatibility_date current'

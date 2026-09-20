@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { detectLanguage, extractHtmlLang } from '../src/extract/detect-language'
 import { extractArticle } from '../src/extract/extract-article'
 import { parseHttpUrl } from '../src/types'
 
@@ -211,5 +212,25 @@ describe('extractArticle', () => {
     expect(result.value.contentHtml).not.toContain('∵ Back')
     expect(result.value.contentHtml).not.toContain('Privacy Policy')
     expect(result.value.contentHtml).not.toContain('Terms of Use')
+  })
+
+  it('extracts an English X article served with Japanese UI chrome as non-ja', async () => {
+    const fetched = page('/x-article', 'x-article-ja-ui.html')
+    const result = await extractArticle(fetched)
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('The Jevons Paradox is a rule')
+    expect(result.value.contentHtml).toContain('standalone task router')
+    expect(result.value.contentHtml).toContain('Goal: Compare three AI-agent tools')
+    expect(result.value.contentHtml).not.toContain('ホーム')
+    expect(result.value.contentHtml).not.toContain('話題を検索')
+    expect(
+      detectLanguage({
+        htmlLang: extractHtmlLang(fetched.html),
+        contentHtml: result.value.contentHtml,
+      }),
+    ).toBe('non-ja')
   })
 })
