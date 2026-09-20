@@ -11,6 +11,8 @@
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:live": "E2E_LIVE=1 vitest run --config vitest.e2e.config.ts",
     "clip:status": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli/clip-status.ts",
+    "pr-risk:github": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/pr-risk/cli.ts github",
+    "pr-risk:replay": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/pr-risk/cli.ts replay",
     "deploy": "wrangler deploy"
   },
   "dependencies": {

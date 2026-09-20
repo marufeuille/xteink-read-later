@@ -1,0 +1,47 @@
+# Trial: record only. Not a required check and not part of merge-gate.
+name: PR risk trial
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+concurrency:
+  group: pr-risk-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  classify:
+    name: pr-risk-trial
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch PR SHAs
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.sha }}"
+          git fetch --no-tags origin "${{ github.event.pull_request.head.sha }}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Classify PR risk
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run pr-risk:github
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr-risk-judgment
+          path: pr-risk-judgment.json
+          if-no-files-found: ignore

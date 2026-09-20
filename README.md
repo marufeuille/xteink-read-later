@@ -201,7 +201,7 @@ npm run typecheck
 
 `npm test` は単体と、fixture + OpenAI モックの E2E。実 `OPENAI_API_KEY` もライブの記事取得も不要。
 
-GitHub Actions が pull request と `main` への push で install / typecheck / 単体 / E2E を回す。**マージしてよい判断基準は CI が緑であること。** `main` ではそのジョブが通ったあとだけ Worker をデプロイする。
+GitHub Actions が pull request と `main` への push で install / typecheck / 単体 / E2E を回す。**マージしてよい判断基準は CI が緑であること。** `main` ではそのジョブが通ったあとだけ Worker をデプロイする。PR のリスク分類試行（記録のみ）は `docs/pr-risk.md`。
 
 任意のライブ E2E（実ネットワーク。英語記事は OpenAI が必要）はローカル限定:
 
@@ -232,14 +232,15 @@ npx wrangler secret put OPDS_PASSWORD
 
 ### GitHub Secrets（Actions が Cloudflare に認証するため）
 
-リポジトリの **Settings → Secrets and variables → Actions → New repository secret** に次の 2 つだけ足す。値は README に書かない。
+リポジトリの **Settings → Secrets and variables → Actions → New repository secret** に次を足す。値は README に書かない。
 
 | Name | 中身 |
 | --- | --- |
 | `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers** に加え、Account 権限 **Workers R2 Storage: Edit**（バケット作成と bind）と **Workers Queues: Edit**（キュー作成と bind）。対象アカウントだけに scope する |
 | `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの [Account ID](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/) |
+| `OPENROUTER_API_KEY` | PR リスク分類の試行専用。未設定でも `pr-risk-trial` は記録し、推奨ルートは追加レビュー。アプリの記事分類は Cloudflare 側の同じ名前の secret を使う |
 
-次は **GitHub Secrets に入れない**（Cloudflare の `wrangler secret put` 側）: `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD`。
+アプリ用の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` は GitHub Secrets に入れない（Cloudflare の `wrangler secret put` 側）。`OPENROUTER_API_KEY` は Worker 用と Actions 試行用で別々に置く。
 
 Secrets 未設定のまま `main` にマージすると、チェックは通ってもデプロイジョブが落ちる。
 

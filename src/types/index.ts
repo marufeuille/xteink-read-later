@@ -126,6 +126,23 @@ export type {
 } from './job'
 export type { BuildOpdsCatalog, OpdsAcquisition, OpdsCatalog } from './opds'
 export type {
+  ClassifyPrRisk,
+  HardRuleMatch,
+  HardRuleReason,
+  PrChangedFile,
+  PrChangedFileStatus,
+  PrRiskBlocker,
+  PrRiskChangeChoice,
+  PrRiskClassifyRequest,
+  PrRiskInputSummary,
+  PrRiskJevAnswers,
+  PrRiskJevResult,
+  PrRiskJudgment,
+  PrRiskRoute,
+  PrRiskRuleVersion,
+  PrRiskTrialAction,
+} from './pr-risk'
+export type {
   AssignLanguage,
   BuildEpub,
   ClipPipeline,

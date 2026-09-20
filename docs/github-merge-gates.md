@@ -53,6 +53,10 @@ gh pr merge --auto --merge
 
 復旧: ruleset `main-merge-gates` を GitHub の Settings → Rules → Rulesets から削除するか `enforcement: disabled` にする。classic protection を使った場合は `main` の protection を外す。公開範囲を戻すなら visibility を private にする（その時点で Free では保護できなくなる）。
 
+## PR リスク分類の試行
+
+`pr-risk-trial`（`.github/workflows/pr-risk.yml`）は判定を記録するだけ。必須チェックにしない。`merge-gate` の `needs` にも足さない。本運用の足し方は `docs/pr-risk.md` と次の節。
+
 ## 高リスク AI レビューを後から必須にする
 
 認証・秘密情報・削除・CI / デプロイ設定など、AGENTS.md の高リスク変更向け。
