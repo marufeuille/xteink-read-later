@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+  merge_group:
   push:
     branches:
       - main
@@ -36,6 +37,19 @@ jobs:
         run: npm run test:unit
       - name: E2E tests
         run: npm run test:e2e
+
+  merge-gate:
+    name: merge-gate
+    if: always()
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Require typecheck, unit, e2e success
+        run: |
+          result='${{ needs.check.result }}'
+          echo "check job result: ${result}"
+          test "$result" = success
 
   deploy:
     name: deploy worker
