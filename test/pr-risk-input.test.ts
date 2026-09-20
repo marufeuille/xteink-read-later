@@ -30,10 +30,10 @@ describe('pr-risk input', () => {
 
   it('redacts tokens and assigned secrets', () => {
     const redacted = redactSecrets(
-      'Authorization: Bearer test-token-value\nOPENAI_API_KEY=example-secret-value\n',
+      'Authorization: Bearer test-token-value\nPASSWORD=example-secret-value\n',
     )
     expect(redacted).toContain('Bearer [REDACTED]')
-    expect(redacted).toContain('OPENAI_API_KEY=[REDACTED]')
+    expect(redacted).toContain('PASSWORD=[REDACTED]')
     expect(redacted).not.toContain('test-token-value')
     expect(redacted).not.toContain('example-secret-value')
   })
