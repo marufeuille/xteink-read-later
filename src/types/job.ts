@@ -1,5 +1,5 @@
 import type { ErrorKind } from './errors'
-import type { ArticleId, ClipJobId, HttpUrl } from './id'
+import type { ArticleId, ClipJobId, ClipRunId, HttpUrl } from './id'
 
 export type ClipJobStatus = 'queued' | 'running' | 'ready' | 'failed'
 
@@ -10,6 +10,7 @@ export type ClipJobError = {
 
 type ClipJobBase = {
   readonly jobId: ClipJobId
+  readonly runId: ClipRunId
   readonly sourceUrl: HttpUrl
   readonly attempt: number
   readonly createdAt: string
@@ -44,5 +45,6 @@ export type ClipJobRecord = ClipQueuedJob | ClipRunningJob | ClipReadyJob | Clip
 
 export type ClipQueueMessage = {
   readonly jobId: ClipJobId
+  readonly runId: ClipRunId
   readonly url: HttpUrl
 }

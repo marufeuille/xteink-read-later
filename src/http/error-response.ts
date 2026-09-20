@@ -5,6 +5,7 @@ import type {
   InvalidEpubError,
   NotFoundError,
   PipelineError,
+  QueueFailedError,
   TranslateFailedBody,
   TranslateFailedError,
   UnauthorizedError,
@@ -12,7 +13,7 @@ import type {
 import { httpStatusByErrorKind } from '../types'
 
 export function errorMessage(
-  error: PipelineError | NotFoundError | UnauthorizedError | InvalidEpubError,
+  error: PipelineError | NotFoundError | UnauthorizedError | InvalidEpubError | QueueFailedError,
 ): string {
   switch (error.kind) {
     case 'invalid_url':
@@ -31,6 +32,8 @@ export function errorMessage(
       return `Could not build an EPUB: ${error.reason}`
     case 'translate_failed':
       return `Translation failed: ${error.reason}`
+    case 'queue_failed':
+      return `Failed to enqueue clip job: ${error.reason}`
     case 'not_found':
       return 'Article not found'
     case 'unauthorized':
@@ -39,7 +42,7 @@ export function errorMessage(
 }
 
 export function toErrorBody(
-  error: ExtractError | NotFoundError | EpubFailedError | InvalidEpubError,
+  error: ExtractError | NotFoundError | EpubFailedError | InvalidEpubError | QueueFailedError,
 ): ErrorBody {
   const message = errorMessage(error)
   switch (error.kind) {
@@ -55,6 +58,8 @@ export function toErrorBody(
       return { error: { status: 422, code: 'extract_failed', message } }
     case 'epub_failed':
       return { error: { status: 500, code: 'epub_failed', message } }
+    case 'queue_failed':
+      return { error: { status: 503, code: 'queue_failed', message } }
     case 'not_found':
       return { error: { status: 404, code: 'not_found', message } }
   }
@@ -72,7 +77,7 @@ export function toTranslateFailedBody(error: TranslateFailedError): TranslateFai
 }
 
 export function toErrorResponse(
-  error: PipelineError | NotFoundError | InvalidEpubError,
+  error: PipelineError | NotFoundError | InvalidEpubError | QueueFailedError,
 ): Response {
   if (error.kind === 'translate_failed') {
     return Response.json(toTranslateFailedBody(error), { status: 503 })

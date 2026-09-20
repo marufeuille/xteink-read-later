@@ -6,6 +6,7 @@ import {
   clipJobKey,
   isArticleId,
   parseHttpUrl,
+  type ArticleId,
   type ArticleMeta,
   type ArticleStore,
   type CreateArticleStore,
@@ -59,7 +60,7 @@ export function parseArticleMeta(value: unknown): ArticleMeta | null {
   }
 }
 
-async function listMetaKeys(bucket: R2Bucket): Promise<string[]> {
+async function listArticleKeys(bucket: R2Bucket): Promise<string[]> {
   const keys: string[] = []
   let cursor: string | undefined
   for (;;) {
@@ -68,9 +69,7 @@ async function listMetaKeys(bucket: R2Bucket): Promise<string[]> {
       ...(cursor !== undefined ? { cursor } : {}),
     })
     for (const object of page.objects) {
-      if (object.key.endsWith('/meta.json')) {
-        keys.push(object.key)
-      }
+      keys.push(object.key)
     }
     if (!page.truncated) {
       break
@@ -78,6 +77,41 @@ async function listMetaKeys(bucket: R2Bucket): Promise<string[]> {
     cursor = page.cursor
   }
   return keys
+}
+
+function articleIdFromObjectKey(key: string): { id: ArticleId; kind: 'meta' | 'epub' } | null {
+  const parts = key.split('/')
+  if (parts.length !== 3) {
+    return null
+  }
+  const [prefix, id, file] = parts
+  if (prefix !== 'articles' || id === undefined || file === undefined || !isArticleId(id)) {
+    return null
+  }
+  if (file === 'meta.json') {
+    return { id: asArticleId(id), kind: 'meta' }
+  }
+  if (file === 'book.epub') {
+    return { id: asArticleId(id), kind: 'epub' }
+  }
+  return null
+}
+
+function publishableMetaKeys(objectKeys: readonly string[]): string[] {
+  const metaIds = new Set<ArticleId>()
+  const epubIds = new Set<ArticleId>()
+  for (const key of objectKeys) {
+    const parsed = articleIdFromObjectKey(key)
+    if (parsed === null) {
+      continue
+    }
+    if (parsed.kind === 'meta') {
+      metaIds.add(parsed.id)
+    } else {
+      epubIds.add(parsed.id)
+    }
+  }
+  return [...metaIds].filter((id) => epubIds.has(id)).map(articleMetaKey)
 }
 
 export const createR2Store: CreateArticleStore = (deps) => {
@@ -117,11 +151,11 @@ export const createR2Store: CreateArticleStore = (deps) => {
         createdAt: existing?.createdAt ?? nowIso(),
         updatedAt: nowIso(),
       }
-      await bucket.put(articleMetaKey(article.id), JSON.stringify(meta), {
-        httpMetadata: { contentType: 'application/json; charset=utf-8' },
-      })
       await bucket.put(articleEpubKey(article.id), article.epub, {
         httpMetadata: { contentType: 'application/epub+zip' },
+      })
+      await bucket.put(articleMetaKey(article.id), JSON.stringify(meta), {
+        httpMetadata: { contentType: 'application/json; charset=utf-8' },
       })
       logPipeline({
         articleId: article.id,
@@ -138,7 +172,7 @@ export const createR2Store: CreateArticleStore = (deps) => {
       return meta !== null || epub !== null
     },
     async listMeta() {
-      const keys = await listMetaKeys(bucket)
+      const keys = publishableMetaKeys(await listArticleKeys(bucket))
       const metas: ArticleMeta[] = []
       for (const key of keys) {
         const object = await bucket.get(key)

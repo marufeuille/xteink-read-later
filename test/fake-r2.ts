@@ -4,8 +4,15 @@ const EMPTY_CHECKSUMS: R2Checksums = {
   },
 }
 
-export function createFakeR2Bucket(): R2Bucket {
+export type FakeR2Bucket = R2Bucket & {
+  failNextPut(key: string): void
+  putOrder(): readonly string[]
+}
+
+export function createFakeR2Bucket(): FakeR2Bucket {
   const objects = new Map<string, Uint8Array>()
+  const order: string[] = []
+  const failing = new Set<string>()
 
   function toBytes(value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob): Uint8Array {
     if (value === null) {
@@ -57,7 +64,7 @@ export function createFakeR2Bucket(): R2Bucket {
     } as unknown as R2ObjectBody
   }
 
-  const bucket: R2Bucket = {
+  const bucket: FakeR2Bucket = {
     async head(key) {
       const bytes = objects.get(key)
       return bytes === undefined ? null : objectHead(key, bytes)
@@ -67,8 +74,13 @@ export function createFakeR2Bucket(): R2Bucket {
       return bytes === undefined ? null : objectBody(key, bytes)
     },
     async put(key, value) {
+      if (failing.has(key)) {
+        failing.delete(key)
+        throw new Error(`R2 put failed: ${key}`)
+      }
       const bytes = toBytes(value)
       objects.set(key, bytes)
+      order.push(key)
       return objectHead(key, bytes)
     },
     async delete(keys) {
@@ -104,6 +116,12 @@ export function createFakeR2Bucket(): R2Bucket {
     },
     resumeMultipartUpload() {
       throw new Error('multipart not implemented')
+    },
+    failNextPut(key) {
+      failing.add(key)
+    },
+    putOrder() {
+      return order
     },
   }
 

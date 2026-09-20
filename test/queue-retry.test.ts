@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest'
 import {
   CLIP_QUEUE_MAX_RETRIES,
   parseClipQueueMessage,
+  shouldRetryClipAttempt,
   shouldRetryClipError,
 } from '../src/queue/clip'
-import { asClipJobId, parseHttpUrl } from '../src/types'
+import { asClipJobId, asClipRunId, parseHttpUrl } from '../src/types'
 
 function url() {
   const parsed = parseHttpUrl('https://example.com/a')
@@ -32,15 +33,24 @@ describe('clip queue retry', () => {
     expect(shouldRetryClipError('invalid_url', 1)).toBe(false)
   })
 
-  it('accepts {jobId,url} only and ignores extra keys', () => {
+  it('retries unexpected attempts until the last delivery', () => {
+    expect(shouldRetryClipAttempt(1)).toBe(true)
+    expect(shouldRetryClipAttempt(CLIP_QUEUE_MAX_RETRIES)).toBe(true)
+    expect(shouldRetryClipAttempt(CLIP_QUEUE_MAX_RETRIES + 1)).toBe(false)
+  })
+
+  it('accepts {jobId,runId,url} only and ignores extra keys', () => {
     const jobId = asClipJobId('job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+    const runId = asClipRunId('run_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
     const parsed = parseClipQueueMessage({
       jobId,
+      runId,
       url: url(),
       extra: 'must-not-be-required',
     })
-    expect(parsed).toEqual({ jobId, url: url() })
-    expect(parseClipQueueMessage({ jobId, url: 'ftp://example.com/x' })).toBeNull()
+    expect(parsed).toEqual({ jobId, runId, url: url() })
+    expect(parseClipQueueMessage({ jobId, url: url() })).toBeNull()
+    expect(parseClipQueueMessage({ jobId, runId, url: 'ftp://example.com/x' })).toBeNull()
     expect(parseClipQueueMessage({ url: url() })).toBeNull()
   })
 })

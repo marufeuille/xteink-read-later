@@ -66,6 +66,14 @@ const jaTranslate: TranslateArticle = async (article) =>
     title: article.language === 'ja' ? article.title : `${article.title}（日本語）`,
   })
 
+const jaTechPage: FetchPage = async (url) =>
+  ok({
+    requestedUrl: url,
+    finalUrl: url,
+    contentType: 'text/html',
+    html: fixtureHtml('ja-tech.html'),
+  })
+
 function appWithFetch(fetchPageImpl: FetchPage, translateArticle: TranslateArticle = jaTranslate) {
   const store = createMemoryStore()
   const queue = createFakeQueue()
@@ -434,20 +442,115 @@ describe('POST /clip', () => {
   })
 
   it('does not re-enqueue the same URL while queued', async () => {
-    const ctx = appWithFetch(async (url) =>
-      ok({
-        requestedUrl: url,
-        finalUrl: url,
-        contentType: 'text/html',
-        html: fixtureHtml('ja-tech.html'),
-      }),
-    )
+    const ctx = appWithFetch(jaTechPage)
     const first = await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
     const second = await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
     expect(first.status).toBe(202)
     expect(second.status).toBe(202)
     expect(ctx.queue.size).toBe(1)
     expect((await readJson(first)).jobId).toBe((await readJson(second)).jobId)
+  })
+
+  it('marks queue_failed and allows the same URL to be re-enqueued', async () => {
+    let failSend = true
+    const store = createMemoryStore()
+    const queue = createFakeQueue({
+      onSend: () => {
+        if (failSend) {
+          failSend = false
+          throw new Error('queue unavailable')
+        }
+      },
+    })
+    const clipPipeline = createClipPipeline({
+      extractPipeline: createExtractPipeline({ fetchPage: jaTechPage }),
+      translateArticle: jaTranslate,
+    })
+    const app = createApp({ store, queue })
+    const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+    const failed = await clip(app, 'https://example.com/ja/workers-cpu', env)
+    expect(failed.status).toBe(503)
+    expect((await readJson(failed)).error?.code).toBe('queue_failed')
+    const jobId = await clipJobIdFromUrl(mustUrl('https://example.com/ja/workers-cpu'))
+    const failedJob = await store.getJob(jobId)
+    expect(failedJob?.status).toBe('failed')
+    expect(failedJob?.error?.code).toBe('queue_failed')
+    expect(queue.size).toBe(0)
+
+    const retry = await clip(app, 'https://example.com/ja/workers-cpu', env)
+    expect(retry.status).toBe(202)
+    expect(queue.size).toBe(1)
+    await drain(queue, env, { clipPipeline, store })
+    expect((await store.getJob(jobId))?.status).toBe('ready')
+  })
+
+  it('re-enqueues a queued job that has not been updated for 15 minutes', async () => {
+    const ctx = appWithFetch(jaTechPage)
+    const jobId = await clipJobIdFromUrl(mustUrl('https://example.com/ja/workers-cpu'))
+    await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
+    const existing = await ctx.store.getJob(jobId)
+    if (existing === null) {
+      throw new Error('job')
+    }
+    await ctx.store.putJob({ ...existing, updatedAt: '2000-01-01T00:00:00.000Z' })
+    const second = await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
+    expect(second.status).toBe(202)
+    expect(ctx.queue.size).toBe(2)
+    expect(ctx.queue.peek()[0]?.runId).not.toBe(ctx.queue.peek()[1]?.runId)
+    await drain(ctx.queue, ctx.env, ctx)
+    expect((await readJson(await getJob(ctx.app, jobId, ctx.env))).status).toBe('ready')
+  })
+
+  it('does not move a ready job back to running on duplicate delivery', async () => {
+    const ctx = appWithFetch(jaTechPage)
+    await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
+    await drain(ctx.queue, ctx.env, ctx)
+    const jobId = await clipJobIdFromUrl(mustUrl('https://example.com/ja/workers-cpu'))
+    const ready = await ctx.store.getJob(jobId)
+    if (ready === null || ready.status !== 'ready') {
+      throw new Error('ready')
+    }
+    ctx.queue.push({ jobId: ready.jobId, runId: ready.runId, url: ready.sourceUrl })
+    await drain(ctx.queue, ctx.env, ctx)
+    expect((await ctx.store.getJob(jobId))?.status).toBe('ready')
+    expect((await readJson(await getJob(ctx.app, jobId, ctx.env))).status).toBe('ready')
+  })
+
+  it('ignores an old run after a newer enqueue', async () => {
+    const ctx = appWithFetch(jaTechPage)
+    await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
+    await drain(ctx.queue, ctx.env, ctx)
+    const jobId = await clipJobIdFromUrl(mustUrl('https://example.com/ja/workers-cpu'))
+    const first = await ctx.store.getJob(jobId)
+    if (first === null) {
+      throw new Error('first')
+    }
+    await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
+    ctx.queue.push({ jobId: first.jobId, runId: first.runId, url: first.sourceUrl })
+    await drain(ctx.queue, ctx.env, ctx)
+    const after = await ctx.store.getJob(jobId)
+    expect(after?.status).toBe('ready')
+    expect(after?.runId).not.toBe(first.runId)
+  })
+
+  it('records internal_error after unexpected exceptions exhaust retries', async () => {
+    const store = createMemoryStore()
+    const queue = createFakeQueue()
+    let calls = 0
+    const clipPipeline: ClipPipeline = async () => {
+      calls += 1
+      throw new Error('isolate killed')
+    }
+    const app = createApp({ store, queue })
+    const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+    const response = await clip(app, 'https://example.com/ja/workers-cpu', env)
+    expect(response.status).toBe(202)
+    await drain(queue, env, { clipPipeline, store })
+    expect(calls).toBe(4)
+    const jobId = await clipJobIdFromUrl(mustUrl('https://example.com/ja/workers-cpu'))
+    const job = await store.getJob(jobId)
+    expect(job?.status).toBe('failed')
+    expect(job?.error?.code).toBe('internal_error')
   })
 
   it('accepts Android share payloads as JSON, text/plain, or form body', async () => {

@@ -74,6 +74,8 @@ describe('error-response', () => {
     expect(toErrorBody({ kind: 'payload_too_large', bytes: 9 }).error.status).toBe(413)
     expect(toErrorBody({ kind: 'fetch_failed', url: url(), reason: 'HTTP 404' }).error.status).toBe(502)
     expect(toErrorBody({ kind: 'not_found' }).error.status).toBe(404)
+    expect(toErrorBody({ kind: 'queue_failed', reason: 'queue unavailable' }).error.status).toBe(503)
+    expect(errorMessage({ kind: 'queue_failed', reason: 'queue unavailable' })).toContain('queue unavailable')
     expect(errorMessage({ kind: 'unauthorized' })).toBe('Unauthorized')
   })
 })

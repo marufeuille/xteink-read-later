@@ -1,15 +1,19 @@
 import { errorMessage } from '../http/error-response'
+import { shouldProcessClipRun } from '../job/clip'
 import { logPipeline } from '../log'
 import { clipPipeline as defaultClipPipeline } from '../pipeline/clip'
 import { createR2Store } from '../store/r2'
 import type {
   ArticleStore,
+  ClipJobId,
+  ClipJobRecord,
   ClipPipeline,
   ClipQueueMessage,
+  ClipRunId,
   CreateArticleStore,
   PipelineError,
 } from '../types'
-import { isClipJobId, parseHttpUrl } from '../types'
+import { isClipJobId, isClipRunId, parseHttpUrl } from '../types'
 
 export const CLIP_QUEUE_MAX_RETRIES = 3
 
@@ -35,10 +39,13 @@ export function parseClipQueueMessage(body: unknown): ClipQueueMessage | null {
   if (typeof body !== 'object' || body === null) {
     return null
   }
-  if (!('jobId' in body) || !('url' in body)) {
+  if (!('jobId' in body) || !('runId' in body) || !('url' in body)) {
     return null
   }
   if (typeof body.jobId !== 'string' || !isClipJobId(body.jobId)) {
+    return null
+  }
+  if (typeof body.runId !== 'string' || !isClipRunId(body.runId)) {
     return null
   }
   if (typeof body.url !== 'string') {
@@ -48,11 +55,15 @@ export function parseClipQueueMessage(body: unknown): ClipQueueMessage | null {
   if (url === null) {
     return null
   }
-  return { jobId: body.jobId, url }
+  return { jobId: body.jobId, runId: body.runId, url }
+}
+
+export function shouldRetryClipAttempt(attempts: number): boolean {
+  return attempts <= CLIP_QUEUE_MAX_RETRIES
 }
 
 export function shouldRetryClipError(kind: PipelineError['kind'], attempts: number): boolean {
-  if (attempts > CLIP_QUEUE_MAX_RETRIES) {
+  if (!shouldRetryClipAttempt(attempts)) {
     return false
   }
   switch (kind) {
@@ -66,6 +77,45 @@ export function shouldRetryClipError(kind: PipelineError['kind'], attempts: numb
     case 'invalid_url':
       return false
   }
+}
+
+function jobFields(
+  message: ClipQueueMessage,
+  existing: ClipJobRecord | null,
+  attempts: number,
+): Pick<ClipJobRecord, 'jobId' | 'runId' | 'sourceUrl' | 'attempt' | 'createdAt'> {
+  return {
+    jobId: message.jobId,
+    runId: message.runId,
+    sourceUrl: existing?.sourceUrl ?? message.url,
+    attempt: attempts,
+    createdAt: existing?.createdAt ?? nowIso(),
+  }
+}
+
+async function currentRunId(store: ArticleStore, jobId: ClipJobId): Promise<ClipRunId | null> {
+  return (await store.getJob(jobId))?.runId ?? null
+}
+
+async function putJobIfCurrentRun(store: ArticleStore, job: ClipJobRecord): Promise<boolean> {
+  const current = await currentRunId(store, job.jobId)
+  if (current !== null && current !== job.runId) {
+    return false
+  }
+  await store.putJob(job)
+  return true
+}
+
+async function putCurrentRunOrAck(
+  store: ArticleStore,
+  message: Message<ClipQueueMessage>,
+  job: ClipJobRecord,
+): Promise<boolean> {
+  if (await putJobIfCurrentRun(store, job)) {
+    return true
+  }
+  message.ack()
+  return false
 }
 
 async function processMessage(
@@ -84,26 +134,70 @@ async function processMessage(
     return
   }
 
-  const { jobId, url } = parsed
+  try {
+    await runClipQueueMessage(message, parsed, env, deps)
+  } catch {
+    const store = storeFor(env, deps)
+    const existing = await store.getJob(parsed.jobId)
+    logPipeline({
+      jobId: parsed.jobId,
+      stage: 'queue',
+      durationMs: 0,
+      errorKind: 'internal_error',
+    })
+    if (shouldRetryClipAttempt(message.attempts)) {
+      message.retry()
+      return
+    }
+    await putJobIfCurrentRun(store, {
+      ...jobFields(parsed, existing, message.attempts),
+      status: 'failed',
+      articleId: null,
+      error: {
+        code: 'internal_error',
+        message: 'Clip job failed after an unexpected error',
+      },
+      updatedAt: nowIso(),
+    })
+    message.ack()
+  }
+}
+
+async function runClipQueueMessage(
+  message: Message<ClipQueueMessage>,
+  parsed: ClipQueueMessage,
+  env: Cloudflare.Env,
+  deps: ClipQueueHandlerDeps,
+): Promise<void> {
+  const { jobId, runId, url } = parsed
   const store = storeFor(env, deps)
   const pipeline = deps.clipPipeline ?? defaultClipPipeline
   const existing = await store.getJob(jobId)
-  const createdAt = existing?.createdAt ?? nowIso()
-  const started = Date.now()
+  if (!shouldProcessClipRun(existing, runId)) {
+    message.ack()
+    return
+  }
 
-  await store.putJob({
-    jobId,
-    sourceUrl: existing?.sourceUrl ?? url,
-    status: 'running',
-    articleId: null,
-    error: null,
-    attempt: message.attempts,
-    createdAt,
-    updatedAt: nowIso(),
-  })
+  const fields = jobFields(parsed, existing, message.attempts)
+  const started = Date.now()
+  if (
+    !(await putCurrentRunOrAck(store, message, {
+      ...fields,
+      status: 'running',
+      articleId: null,
+      error: null,
+      updatedAt: nowIso(),
+    }))
+  ) {
+    return
+  }
 
   const result = await pipeline(url, { OPENAI_API_KEY: env.OPENAI_API_KEY })
   if (result.ok) {
+    if ((await currentRunId(store, jobId)) !== runId) {
+      message.ack()
+      return
+    }
     const { id, article, epub } = result.value
     await store.put({
       id,
@@ -116,16 +210,17 @@ async function processMessage(
       translated: article.translated,
       epub,
     })
-    await store.putJob({
-      jobId,
-      sourceUrl: existing?.sourceUrl ?? url,
-      status: 'ready',
-      articleId: id,
-      error: null,
-      attempt: message.attempts,
-      createdAt,
-      updatedAt: nowIso(),
-    })
+    if (
+      !(await putCurrentRunOrAck(store, message, {
+        ...fields,
+        status: 'ready',
+        articleId: id,
+        error: null,
+        updatedAt: nowIso(),
+      }))
+    ) {
+      return
+    }
     logPipeline({
       jobId,
       articleId: id,
@@ -147,17 +242,14 @@ async function processMessage(
     return
   }
 
-  await store.putJob({
-    jobId,
-    sourceUrl: existing?.sourceUrl ?? url,
+  await putJobIfCurrentRun(store, {
+    ...fields,
     status: 'failed',
     articleId: null,
     error: {
       code: result.error.kind,
       message: errorMessage(result.error),
     },
-    attempt: message.attempts,
-    createdAt,
     updatedAt: nowIso(),
   })
   logPipeline({
