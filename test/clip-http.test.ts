@@ -401,6 +401,29 @@ describe('POST /clip', () => {
     expect(classifiedMeta.classification).toMatchObject({ status: 'classified', topic: 'tech' })
   })
 
+  it('translates an English X article even when html lang is ja', async () => {
+    const pageUrl = 'https://x.com/0xCodila/status/2100984487802708306'
+    const ctx = appWithFetch(async (url) =>
+      ok({
+        requestedUrl: url,
+        finalUrl: url,
+        contentType: 'text/html',
+        html: fixtureHtml('x-article-ja-ui.html'),
+      }),
+    )
+    const response = await clip(ctx.app, pageUrl, ctx.env)
+    expect(response.status).toBe(202)
+    await drain(ctx.queue, ctx.env, ctx)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx.app, queued.jobId ?? '', ctx.env))
+    expect(job.status).toBe('ready')
+    const metaRes = await opdsGet(ctx.app, `/articles/${job.id}`, ctx.env)
+    expect(metaRes.status).toBe(200)
+    const meta = (await metaRes.json()) as { translated: boolean; title: string }
+    expect(meta.translated).toBe(true)
+    expect(meta.title.endsWith('（日本語）')).toBe(true)
+  })
+
   it('returns 400 for an invalid URL', async () => {
     const { app, env } = appWithFetch(async (url) => err({ kind: 'fetch_failed', url, reason: 'unused' }))
     const response = await clip(app, 'ftp://example.com/x', env)

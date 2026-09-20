@@ -2,19 +2,28 @@ import { describe, expect, it } from 'vitest'
 import { detectLanguage, extractHtmlLang } from '../src/extract/detect-language'
 
 describe('detectLanguage', () => {
-  it('trusts html lang=ja', () => {
+  it('does not treat html lang=ja as Japanese when the body is English', () => {
     expect(
       detectLanguage({
         htmlLang: 'ja-JP',
         contentHtml: '<p>Hello world this is english filler text for ratio.</p>',
       }),
-    ).toBe('ja')
+    ).toBe('non-ja')
   })
 
   it('detects Japanese from kana and kanji density', () => {
     expect(
       detectLanguage({
         htmlLang: null,
+        contentHtml: '<p>本文抽出とEPUB生成を同時に行うならPaidプランを前提にする。</p>',
+      }),
+    ).toBe('ja')
+  })
+
+  it('keeps a Japanese body as ja even when html lang is en', () => {
+    expect(
+      detectLanguage({
+        htmlLang: 'en',
         contentHtml: '<p>本文抽出とEPUB生成を同時に行うならPaidプランを前提にする。</p>',
       }),
     ).toBe('ja')

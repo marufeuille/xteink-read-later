@@ -9,12 +9,8 @@ export function extractHtmlLang(html: string): string | null {
   return lang && lang.length > 0 ? lang : null
 }
 
-export const detectLanguage: DetectLanguage = ({ htmlLang, contentHtml }): Language => {
-  const lang = htmlLang?.trim().toLowerCase() ?? ''
-  if (lang === 'ja' || lang.startsWith('ja-')) {
-    return 'ja'
-  }
-
+export const detectLanguage: DetectLanguage = ({ contentHtml }): Language => {
+  // Body density only. htmlLang is page chrome locale (X UI), not the article.
   const text = contentHtml.replace(/<[^>]+>/g, '')
   const jaChars = text.match(JA_CHAR)?.length ?? 0
   const letters = text.replace(/\s+/g, '').length
