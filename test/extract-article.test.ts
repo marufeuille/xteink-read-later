@@ -193,4 +193,23 @@ describe('extractArticle', () => {
     expect(result.value.contentHtml).not.toMatch(/<li>\s*&lt;\s*<\/li>/)
     expect(result.value.contentHtml).not.toMatch(/<li>\s*12\s*<\/li>/)
   })
+
+  it('drops site menu chrome such as Sign in and Join Waitlist', async () => {
+    const result = await extractArticle(page('/blog/system-one', 'nav-chrome.html'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.title).toBe('Dummy System One models')
+    expect(result.value.contentHtml).toContain('nodejs_compat')
+    expect(result.value.contentHtml).toContain('cpu_ms')
+    expect(result.value.contentHtml).not.toContain('Sign in')
+    expect(result.value.contentHtml).not.toContain('Join Waitlist')
+    expect(result.value.contentHtml).not.toContain('Join waitlist')
+    expect(result.value.contentHtml).not.toContain('Manifesto')
+    expect(result.value.contentHtml).not.toContain('Our Team')
+    expect(result.value.contentHtml).not.toContain('∵ Back')
+    expect(result.value.contentHtml).not.toContain('Privacy Policy')
+    expect(result.value.contentHtml).not.toContain('Terms of Use')
+  })
 })

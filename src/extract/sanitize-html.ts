@@ -78,6 +78,22 @@ const CHROME_ROLES = new Set([
 const ADS_CLASS_RE =
   /(?:^|[\s_-])(?:ad|ads|advert|advertisement|sidebar|share|social|related|comment|comments|cookie|newsletter|popup|modal|nav|menu|breadcrumb|promo|cta|subscribe|recommended|popular)(?:$|[\s_-])/
 
+const LINK_CHROME_TAGS = new Set(['div', 'section', 'header', 'nav', 'ul', 'ol', 'aside'])
+const SOLO_NAV_CHROME = /^(back|home|menu)$/i
+const CHROME_PHRASES = [
+  'sign in',
+  'log in',
+  'log out',
+  'sign out',
+  'sign up',
+  'join waitlist',
+  'join the waitlist',
+  'join wait list',
+  'privacy policy',
+  'terms of use',
+  'terms of service',
+] as const
+
 const WRAPPER_TAGS = new Set(['div', 'section', 'span', 'picture', 'article', 'main', 'header'])
 
 const VOID_TAGS = new Set(['br', 'hr'])
@@ -163,6 +179,70 @@ export function isChartTickList(el: HTMLElement): boolean {
   return isChartTickItemList(listItemTexts(el))
 }
 
+function collapsedText(el: HTMLElement): string {
+  return el.text.replace(/\s+/g, ' ').trim()
+}
+
+export function isChromePhraseText(value: string): boolean {
+  const normalized = value.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (normalized.length === 0 || normalized.length > 80) {
+    return false
+  }
+  const phrases = [...CHROME_PHRASES].sort((left, right) => right.length - left.length)
+  let rest = normalized
+  let matched = 0
+  while (rest.length > 0) {
+    const phrase = phrases.find((item) => rest === item || rest.startsWith(`${item} `))
+    if (phrase === undefined) {
+      return false
+    }
+    matched += 1
+    rest = rest.slice(phrase.length).trim()
+  }
+  return matched >= 1
+}
+
+export function isSoloNavChrome(el: HTMLElement): boolean {
+  const tag = el.rawTagName.toLowerCase()
+  if (!['div', 'section', 'p', 'header'].includes(tag)) {
+    return false
+  }
+  const text = collapsedText(el)
+  if (text.length === 0 || text.length > 32) {
+    return false
+  }
+  const normalized = text.replace(/^[∵←<\s]+/, '').trim()
+  return SOLO_NAV_CHROME.test(normalized)
+}
+
+export function isLinkChrome(el: HTMLElement): boolean {
+  const tag = el.rawTagName.toLowerCase()
+  if (!LINK_CHROME_TAGS.has(tag)) {
+    return false
+  }
+  const links = el.querySelectorAll('a')
+  if (links.length < 3) {
+    return false
+  }
+  let substantial = 0
+  for (const block of el.querySelectorAll('p, h1, h2, h3, h4, li, pre, blockquote')) {
+    const text = collapsedText(block)
+    if (text.length < 40) {
+      continue
+    }
+    substantial += 1
+    if (substantial >= 2) {
+      return false
+    }
+  }
+  const text = collapsedText(el)
+  if (text.length === 0 || text.length > 320) {
+    return false
+  }
+  const linkText = links.reduce((sum, link) => sum + collapsedText(link).length, 0)
+  return linkText / text.length >= 0.55
+}
+
 function inProtectedCode(el: HTMLElement): boolean {
   return el.closest('pre') !== null || el.closest('code') !== null
 }
@@ -180,13 +260,13 @@ function shouldDropElement(el: HTMLElement): boolean {
   if (inProtectedCode(el)) {
     return false
   }
-  if (isAdsLikeClass(el)) {
-    return true
-  }
-  if (isChartTickList(el)) {
+  if (isAdsLikeClass(el) || isChartTickList(el) || isLinkChrome(el) || isSoloNavChrome(el)) {
     return true
   }
   if ((tag === 'p' || tag === 'li') && isLoneChartTick(el.text)) {
+    return true
+  }
+  if ((tag === 'p' || tag === 'div') && isChromePhraseText(collapsedText(el))) {
     return true
   }
   return false

@@ -238,4 +238,16 @@ describe('buildEpub', () => {
     expect(chapter).not.toContain('01234567890123456')
     expect(chapter).not.toMatch(/<li>\s*&lt;\s*<\/li>/)
   })
+
+  it('strips Sign in / Join Waitlist menu chrome from chapter XHTML', async () => {
+    const article = await articleFromFixture('nav-chrome.html', '/blog/system-one')
+    const files = unzipSync(await buildEpub(article))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('nodejs_compat')
+    expect(chapter).not.toContain('Sign in')
+    expect(chapter).not.toContain('Join Waitlist')
+    expect(chapter).not.toContain('Manifesto')
+    expect(chapter).not.toContain('∵ Back')
+    expect(chapter).not.toContain('Privacy Policy')
+  })
 })
