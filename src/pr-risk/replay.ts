@@ -1,4 +1,4 @@
-import type { PrRiskJudgment } from '../types'
+import type { PrRiskJudgment } from '../types/index.ts'
 
 export function trialSummary(judgments: readonly PrRiskJudgment[]): {
   readonly total: number

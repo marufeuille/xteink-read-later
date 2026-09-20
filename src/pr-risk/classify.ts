@@ -1,4 +1,4 @@
-import { evaluateSystemOne as defaultEvaluateSystemOne, openRouterApiKey } from '../jev/client'
+import { evaluateSystemOne as defaultEvaluateSystemOne, openRouterApiKey } from '../jev/client.ts'
 import type {
   ChoiceAnswer,
   ClassifyPrRisk,
@@ -9,11 +9,11 @@ import type {
   PrRiskJudgment,
   SystemOneAnswer,
   SystemOneResult,
-} from '../types'
-import { PR_RISK_CONFIDENCE_MIN, PR_RISK_NOUL_HIGH_MIN, PR_RISK_RULE_VERSION } from './constants'
-import { matchHardRules } from './hard-rules'
-import { buildUntrustedState, summarizeInput } from './input'
-import { PR_RISK_QUESTIONS } from './questions'
+} from '../types/index.ts'
+import { PR_RISK_CONFIDENCE_MIN, PR_RISK_NOUL_HIGH_MIN, PR_RISK_RULE_VERSION } from './constants.ts'
+import { matchHardRules } from './hard-rules.ts'
+import { buildUntrustedState, summarizeInput } from './input.ts'
+import { PR_RISK_QUESTIONS } from './questions.ts'
 
 function choiceAnswer(
   answers: Readonly<Record<string, SystemOneAnswer>>,

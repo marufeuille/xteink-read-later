@@ -1,4 +1,4 @@
-import type { PrChangedFile, PrChangedFileStatus } from '../types'
+import type { PrChangedFile, PrChangedFileStatus } from '../types/index.ts'
 
 const STATUS_BY_CODE: Readonly<Record<string, PrChangedFileStatus>> = {
   A: 'added',

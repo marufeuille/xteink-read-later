@@ -1,5 +1,5 @@
-import type { PrChangedFile, PrChangedFileStatus, PrRiskJudgment } from '../types'
-import { formatPrRiskComment, isPrRiskComment } from './comment'
+import type { PrChangedFile, PrChangedFileStatus, PrRiskJudgment } from '../types/index.ts'
+import { formatPrRiskComment, isPrRiskComment } from './comment.ts'
 
 export type GitHubComment = {
   readonly id: number

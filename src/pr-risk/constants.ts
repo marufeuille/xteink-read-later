@@ -1,4 +1,4 @@
-import type { PrRiskRuleVersion } from '../types'
+import type { PrRiskRuleVersion } from '../types/index.ts'
 
 export const PR_RISK_RULE_VERSION: PrRiskRuleVersion = 'pr-risk-v1'
 export const PR_RISK_CONFIDENCE_MIN = 0.85

@@ -3,11 +3,11 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
-import type { EvaluateSystemOne, JevDeps, PrChangedFile, PrRiskClassifyRequest, PrRiskJudgment } from '../types'
-import { classifyPrRisk } from './classify'
-import { judgmentJson } from './comment'
-import { PR_RISK_JUDGMENT_FILENAME } from './constants'
-import { collectGitChangedFiles } from './git'
+import type { EvaluateSystemOne, JevDeps, PrChangedFile, PrRiskClassifyRequest, PrRiskJudgment } from '../types/index.ts'
+import { classifyPrRisk } from './classify.ts'
+import { judgmentJson } from './comment.ts'
+import { PR_RISK_JUDGMENT_FILENAME } from './constants.ts'
+import { collectGitChangedFiles } from './git.ts'
 import {
   createGitHubIssueCommentApi,
   fetchPullSnapshot,
@@ -15,9 +15,9 @@ import {
   parseRepository,
   pullRequestFromEvent,
   upsertPrRiskComment,
-} from './github'
-import { classifyRequestFromPull } from './input'
-import { trialSummary } from './replay'
+} from './github.ts'
+import { classifyRequestFromPull } from './input.ts'
+import { trialSummary } from './replay.ts'
 
 const execFileAsync = promisify(execFile)
 

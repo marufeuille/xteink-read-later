@@ -1,11 +1,11 @@
-import type { PrChangedFile, PrRiskClassifyRequest, PrRiskInputSummary } from '../types'
+import type { PrChangedFile, PrRiskClassifyRequest, PrRiskInputSummary } from '../types/index.ts'
 import {
   PR_RISK_MAX_BODY_CHARS,
   PR_RISK_MAX_DIFF_CHARS,
   PR_RISK_MAX_FILES,
   PR_RISK_MAX_LINEAR_CHARS,
-} from './constants'
-import { isTestFile } from './hard-rules'
+} from './constants.ts'
+import { isTestFile } from './hard-rules.ts'
 
 type PullRequestFields = {
   readonly number: number

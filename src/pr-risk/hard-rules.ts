@@ -1,4 +1,4 @@
-import type { HardRuleMatch, HardRuleReason, PrChangedFile } from '../types'
+import type { HardRuleMatch, HardRuleReason, PrChangedFile } from '../types/index.ts'
 
 function normalizePath(path: string): string {
   return path.replaceAll('\\', '/').replace(/^\.\//, '')

@@ -1,5 +1,5 @@
-import type { PrRiskJudgment, PrRiskRoute } from '../types'
-import { PR_RISK_COMMENT_MARKER, PR_RISK_RULE_VERSION } from './constants'
+import type { PrRiskJudgment, PrRiskRoute } from '../types/index.ts'
+import { PR_RISK_COMMENT_MARKER, PR_RISK_RULE_VERSION } from './constants.ts'
 
 const ROUTE_LABEL: Readonly<Record<PrRiskRoute, string>> = {
   additional_review: '追加レビュー',
