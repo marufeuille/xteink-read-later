@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { classifiedClassification, lowConfidenceClassification } from '../src/classify/taxonomy'
 import { createR2Store } from '../src/store/r2'
 import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asClipRunId, asEpubBytes, clipJobKey, parseHttpUrl } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
@@ -185,6 +186,79 @@ describe('createR2Store', () => {
     )
     expect(await store.listMeta()).toEqual([])
     expect(await store.getMeta(id)).not.toBeNull()
+  })
+
+  it('reads pre-classification meta.json as skipped uncategorized', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const id = asArticleId('art_15151515151515151515151515151515')
+    await bucket.put(
+      articleMetaKey(id),
+      JSON.stringify({
+        id,
+        title: '旧メタ',
+        author: null,
+        publishedAt: null,
+        sourceUrl: 'https://example.com/legacy',
+        canonicalUrl: 'https://example.com/legacy',
+        language: 'ja',
+        translated: false,
+        createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:00:00.000Z',
+      }),
+    )
+    await bucket.put(articleEpubKey(id), new Uint8Array([1]))
+    const meta = await store.getMeta(id)
+    expect(meta?.title).toBe('旧メタ')
+    expect(meta?.classification).toMatchObject({
+      status: 'skipped',
+      topic: 'uncategorized',
+      kind: 'uncategorized',
+    })
+    expect((await store.listMeta())[0]?.classification.status).toBe('skipped')
+  })
+
+  it('round-trips classified meta.json and updates classification without rewriting EPUB', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const article = jaArticle('art_16161616161616161616161616161616', '分類', 'classified')
+    const first = await store.put({
+      ...article,
+      classification: classifiedClassification({
+        model: 'jev-1.13.0',
+        durationMs: 90,
+        inputTokens: 410,
+        topic: 'tech',
+        kind: 'explainer',
+        topicConfidence: 0.94,
+        kindConfidence: 0.91,
+      }),
+    })
+    expect(await store.getMeta(article.id)).toEqual(first)
+    expect((await store.listMeta())[0]?.classification).toMatchObject({
+      status: 'classified',
+      topic: 'tech',
+      kind: 'explainer',
+    })
+    const writesBeforeUpdate = bucket.putOrder().length
+    const updated = await store.putClassification(
+      article.id,
+      lowConfidenceClassification({
+        model: 'jev-1.13.0',
+        durationMs: 90,
+        inputTokens: 410,
+        topic: 'uncategorized',
+        kind: 'explainer',
+        decidedTopic: 'tech',
+        decidedKind: 'explainer',
+        topicConfidence: 0.4,
+        kindConfidence: 0.91,
+      }),
+    )
+    expect(updated?.classification.status).toBe('low_confidence')
+    expect(await store.getEpub(article.id)).toEqual(article.epub)
+    expect(bucket.putOrder().slice(writesBeforeUpdate)).toEqual([articleMetaKey(article.id)])
+    expect(await store.putClassification(asArticleId('art_17171717171717171717171717171717'), first.classification)).toBeNull()
   })
 
   it('keeps the previous article when an update EPUB write fails', async () => {

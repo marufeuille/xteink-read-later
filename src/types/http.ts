@@ -1,4 +1,5 @@
 import type { ArticleFields, ArticleMeta, ExtractedArticle, TranslatedArticle } from './article'
+import type { ClassifyErrorCode } from './classify'
 import type { ErrorKind, HttpStatusOf, TranslateFailedError } from './errors'
 import type { ArticleEpubKey, ArticleId, ClipJobId, EpubBytes, HttpUrl } from './id'
 import type { OpdsCatalog } from './opds'
@@ -142,7 +143,7 @@ export type ApiRoutes = {
   readonly postPurchasedBook: RouteSpec<'POST', '/books', BearerAuth, PurchasedBookBody>
 }
 
-export const PIPELINE_STAGES = ['queue', 'fetch', 'extract', 'translate', 'epub', 'store'] as const
+export const PIPELINE_STAGES = ['queue', 'fetch', 'extract', 'translate', 'epub', 'store', 'classify'] as const
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number]
 
@@ -150,5 +151,5 @@ export type PipelineLog = {
   readonly articleId?: ArticleId
   readonly stage: PipelineStage
   readonly durationMs: number
-  readonly errorKind?: ErrorKind
+  readonly errorKind?: ErrorKind | ClassifyErrorCode
 }

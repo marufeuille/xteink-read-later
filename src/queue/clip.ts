@@ -1,17 +1,26 @@
+import { classifyArticle as defaultClassifyArticle } from '../classify/article'
+import { unavailableClassification } from '../classify/taxonomy'
 import { errorMessage } from '../http/error-response'
 import { shouldProcessClipRun } from '../job/clip'
 import { logPipeline } from '../log'
 import { clipPipeline as defaultClipPipeline } from '../pipeline/clip'
 import { createR2Store } from '../store/r2'
 import type {
+  ArticleClassification,
+  ArticleId,
   ArticleStore,
+  ArticleWrite,
+  ClassifyArticle,
   ClipJobId,
   ClipJobRecord,
   ClipPipeline,
   ClipQueueMessage,
   ClipRunId,
   CreateArticleStore,
+  EpubBytes,
   PipelineError,
+  PipelineLogContext,
+  TranslatedArticle,
 } from '../types'
 import { isClipJobId, isClipRunId, parseHttpUrl } from '../types'
 
@@ -19,6 +28,7 @@ export const CLIP_QUEUE_MAX_RETRIES = 3
 
 export type ClipQueueHandlerDeps = {
   readonly clipPipeline?: ClipPipeline
+  readonly classifyArticle?: ClassifyArticle
   readonly store?: ArticleStore
   readonly createStore?: CreateArticleStore
 }
@@ -97,6 +107,61 @@ async function currentRunId(store: ArticleStore, jobId: ClipJobId): Promise<Clip
   return (await store.getJob(jobId))?.runId ?? null
 }
 
+async function classifyQueuedArticle(
+  article: TranslatedArticle,
+  env: Cloudflare.Env,
+  classify: ClassifyArticle,
+  articleId: ArticleId,
+  log: PipelineLogContext,
+): Promise<ArticleClassification> {
+  const started = Date.now()
+  let classification: ArticleClassification
+  try {
+    classification = await classify(article, { OPENROUTER_API_KEY: env.OPENROUTER_API_KEY })
+  } catch {
+    classification = unavailableClassification('failed', Date.now() - started, 'classify_internal')
+  }
+  const errorKind = classification.status === 'failed' ? classification.errorCode : undefined
+  logPipeline(
+    {
+      articleId,
+      stage: 'classify',
+      durationMs: Date.now() - started,
+      ...(errorKind === undefined ? {} : { errorKind }),
+    },
+    log,
+  )
+  return classification
+}
+
+function clipArticleWrite(id: ArticleId, article: TranslatedArticle, epub: EpubBytes): ArticleWrite {
+  return {
+    id,
+    title: article.title,
+    author: article.author,
+    publishedAt: article.publishedAt,
+    sourceUrl: article.sourceUrl,
+    canonicalUrl: article.canonicalUrl,
+    language: article.language,
+    translated: article.translated,
+    classification: unavailableClassification('skipped'),
+    epub,
+  }
+}
+
+async function continueCurrentRunOrAck(
+  store: ArticleStore,
+  message: Message<ClipQueueMessage>,
+  jobId: ClipJobId,
+  runId: ClipRunId,
+): Promise<boolean> {
+  if ((await currentRunId(store, jobId)) === runId) {
+    return true
+  }
+  message.ack()
+  return false
+}
+
 async function putJobIfCurrentRun(store: ArticleStore, job: ClipJobRecord): Promise<boolean> {
   const current = await currentRunId(store, job.jobId)
   if (current !== null && current !== job.runId) {
@@ -166,6 +231,7 @@ async function runClipQueueMessage(
   const { jobId, runId, url } = parsed
   const store = storeFor(env, deps)
   const pipeline = deps.clipPipeline ?? defaultClipPipeline
+  const classify = deps.classifyArticle ?? defaultClassifyArticle
   const existing = await store.getJob(jobId)
   if (!shouldProcessClipRun(existing, runId)) {
     message.ack()
@@ -189,25 +255,21 @@ async function runClipQueueMessage(
 
   const result = await pipeline(url, { OPENAI_API_KEY: env.OPENAI_API_KEY }, log)
   if (result.ok) {
-    if ((await currentRunId(store, jobId)) !== runId) {
-      message.ack()
+    const { id, article, epub } = result.value
+    if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
       return
     }
-    const { id, article, epub } = result.value
-    await store.put(
-      {
-        id,
-        title: article.title,
-        author: article.author,
-        publishedAt: article.publishedAt,
-        sourceUrl: article.sourceUrl,
-        canonicalUrl: article.canonicalUrl,
-        language: article.language,
-        translated: article.translated,
-        epub,
-      },
-      log,
-    )
+    await store.put(clipArticleWrite(id, article, epub), log)
+    if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
+      return
+    }
+    const classification = await classifyQueuedArticle(article, env, classify, id, log)
+    if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
+      return
+    }
+    if (classification.status !== 'skipped') {
+      await store.putClassification(id, classification)
+    }
     if (
       !(await putCurrentRunOrAck(store, message, {
         ...fields,

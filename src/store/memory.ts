@@ -1,3 +1,4 @@
+import { articleMetaFromWrite, articleMetaWithClassification } from '../classify/parse'
 import type {
   ArticleId,
   ArticleMeta,
@@ -25,22 +26,18 @@ export function createMemoryStore(): ArticleStore {
       return epubs.get(id) ?? null
     },
     async put(article: ArticleWrite) {
-      const existing = metas.get(article.id)
-      const createdAt = existing?.createdAt ?? nowIso()
-      const meta: ArticleMeta = {
-        id: article.id,
-        title: article.title,
-        author: article.author,
-        publishedAt: article.publishedAt,
-        sourceUrl: article.sourceUrl,
-        canonicalUrl: article.canonicalUrl,
-        language: article.language,
-        translated: article.translated,
-        createdAt,
-        updatedAt: nowIso(),
-      }
+      const meta = articleMetaFromWrite(article, metas.get(article.id) ?? null, nowIso())
       epubs.set(article.id, article.epub)
       metas.set(article.id, meta)
+      return meta
+    },
+    async putClassification(id, classification) {
+      const existing = metas.get(id) ?? null
+      if (existing === null) {
+        return null
+      }
+      const meta = articleMetaWithClassification(existing, classification, nowIso())
+      metas.set(id, meta)
       return meta
     },
     async delete(id) {
