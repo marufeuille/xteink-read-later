@@ -8,8 +8,8 @@
 
 1. **読書向け整形は残す。** DeepL 単体は採用しない。
 2. **本番モデルは `gpt-4o-mini` から `gpt-4.1-mini` に上げる。** プロンプト、Chat Completions URL、`OPENAI_API_KEY` はそのまま。
-3. **PLaMo 3.0 Prime は次点。** OpenAI 互換だが Secret・`json_schema`・`max_tokens` が要る。この環境では `PLAMO_API_KEY` が無くライブ比較できていない。キーを置いたら `npm run translate:bakeoff` で再計測する。
-4. **DeepL、DeepL+LLM 二段、`plamo-2-translate` 自前ホスト、gpt-4o は採用しない。**
+3. **PLaMo 3.0 Prime は次点。** OpenAI 互換だが Secret・`json_schema`・`max_tokens` が要る。ライブ比較は `.dev.vars` に `PLAMO_API_KEY` を置いて `npm run translate:bakeoff`。
+4. **DeepL、DeepL+LLM 二段、`plamo-2-translate` 自前ホスト、gpt-4o は採用しない。** `gpt-5.6-luna` は日本語品質で勝てば差し替えてよい（同じ `OPENAI_API_KEY`。`temperature` は送らない）。
 
 ## 現行が gpt-4o ではなかった
 
@@ -28,7 +28,7 @@
 | `hedging-prose` | 直訳しやすいイディオムとですます混在 | （なし。文体用） |
 | `jp-llm-wave` | PLaMo 3.0 Prime / Sakana Namazu | モデル名そのもの |
 
-ライブ実行は `OPENAI_API_KEY` / `PLAMO_API_KEY` を付けて `npm run translate:bakeoff`。通常の `npm test` では呼ばない。
+ライブ実行は `.dev.vars` またはシェルの `OPENAI_API_KEY` / `PLAMO_API_KEY` を付けて `npm run translate:bakeoff`。通常の `npm test` では呼ばない。結果の見方は末尾の「再計測」。
 
 ## ライブ結果（2026-09-20、この Cloud Agent 環境）
 
@@ -44,7 +44,8 @@
 | 候補 | 統合 | カットオフ / 鮮度 | 60s との相性 | 記事あたり費用目安 | 整形契約 |
 | --- | --- | --- | --- | --- | --- |
 | gpt-4o-mini（現行） | そのまま | 2023-10 | 良い | 入力 $0.15 / 出力 $0.60 per 1M | 今のプロンプト |
-| **gpt-4.1-mini（採用）** | `model` 差し替え | 2024-06 | 良い（reasoning なし） | 入力 $0.40 / 出力 $1.60 per 1M | 今のプロンプト |
+| gpt-4.1-mini（採用） | `model` 差し替え | 2024-06 | 良い（reasoning なし） | 入力 $0.40 / 出力 $1.60 per 1M | 今のプロンプト |
+| gpt-5.6-luna | 同じ `OPENAI_API_KEY`。`temperature` 禁止、`reasoning_effort=none` | 2026-02 | nano 寄り。reasoning を none にしないと 60s を食いやすい | 入力 $0.20 / 出力 $1.20 per 1M | JSON は流用可 |
 | plamo-3.0-prime | 新 Secret、`json_schema`、`max_tokens` 明示 | 2026-06 正式 | reasoning は必ず `none`。既定 `max_tokens` 4096 は長文で切れる | 入力 60 円 / 出力 250 円 per 1M | プロンプトは流用可 |
 | sakana-namazu | 任意。thinking 既定オン | 日本語特化 | thinking オフ必須 | 従量 | OpenAI 互換 |
 | DeepL | HTML `tag_handling`。Markdown 非ネイティブ | MT なのでカットオフ概念が違う | 速い | 2026 新規は Growth 月額フロア | 初出併記・整形なし |
@@ -65,7 +66,15 @@ PLaMo を今採用しない理由: ライブ品質が未計測なのに Secret �
 ## 再計測
 
 ```bash
-OPENAI_API_KEY=… PLAMO_API_KEY=… npm run translate:bakeoff
+npm run translate:bakeoff
 ```
 
-PLaMo が keep token と自然さで明確に勝ち、かつ 60 秒以内なら、その時点でアダプタ PR を切る。二段翻訳はしない。
+`.dev.vars` の `OPENAI_API_KEY` / `PLAMO_API_KEY` で足りる。確認は次の3軸。
+
+1. **速度:** stdout 表の平均・最大 `durationMs`。60 秒超は落す。
+2. **コスト:** 建値（USD または円）と 150 円/$ の換算列。記事 4 本合計。
+3. **自然さ:** 自動採点しない。`tmp/translate-bakeoff/hedging-prose/<model>.md` を先に読み、イディオムの直訳・ですます混在を見る。keep token 欠落は構造の減点であり自然さの代用ではない。
+
+`contentExcerpt` は先頭 400 文字だけなので、自然さの判定には使わない。
+
+PLaMo か Luna が自然さで明確に勝ち、かつ 60 秒以内なら、その時点で差し替え PR を切る。二段翻訳はしない。

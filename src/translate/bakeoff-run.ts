@@ -3,8 +3,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { htmlToMarkdown } from '../extract/sanitize-html'
 import { parseHttpUrl, type HttpUrl } from '../types'
-import { OPENAI_CHAT_URL, TRANSLATE_SYSTEM_PROMPT, TRANSLATE_TIMEOUT_MS } from './constants'
+import { loadBakeoffKeys } from './bakeoff-env'
 import { BAKEOFF_ARTICLES, type BakeoffArticle } from './bakeoff-corpus'
+import { OPENAI_CHAT_URL, TRANSLATE_SYSTEM_PROMPT, TRANSLATE_TIMEOUT_MS } from './constants'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..')
 const PLAMO_CHAT_URL = 'https://api.platform.preferredai.jp/v1/chat/completions'
@@ -22,7 +23,7 @@ const PLAMO_JSON_SCHEMA = {
   },
 } as const
 
-export type BakeoffModelId = 'gpt-4o-mini' | 'gpt-4.1-mini' | 'plamo-3.0-prime'
+export type BakeoffModelId = 'gpt-4o-mini' | 'gpt-4.1-mini' | 'gpt-5.6-luna' | 'plamo-3.0-prime'
 
 export type BakeoffModel = {
   readonly id: BakeoffModelId
@@ -45,6 +46,12 @@ export const BAKEOFF_MODELS: readonly BakeoffModel[] = [
     provider: 'openai',
     inputUsdPerMillion: 0.4,
     outputUsdPerMillion: 1.6,
+  },
+  {
+    id: 'gpt-5.6-luna',
+    provider: 'openai',
+    inputUsdPerMillion: 0.2,
+    outputUsdPerMillion: 1.2,
   },
   {
     id: 'plamo-3.0-prime',
@@ -82,6 +89,7 @@ export type BakeoffRunResult = {
   readonly scores?: BakeoffScores
   readonly title?: string
   readonly contentExcerpt?: string
+  readonly content?: string
 }
 
 type ChatPayload = {
@@ -92,15 +100,6 @@ type ChatPayload = {
     readonly prompt_tokens?: number
     readonly completion_tokens?: number
   }
-}
-
-function envTrim(name: string): string | null {
-  const value = process.env[name]
-  if (typeof value !== 'string') {
-    return null
-  }
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : null
 }
 
 function fixtureBase(article: BakeoffArticle): HttpUrl {
@@ -219,15 +218,29 @@ function userMessage(title: string, markdown: string): string {
 }
 
 function openaiBody(model: BakeoffModelId, title: string, markdown: string): string {
+  const messages = [
+    { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
+    { role: 'user', content: userMessage(title, markdown) },
+  ]
+  if (model === 'gpt-5.6-luna') {
+    return JSON.stringify({
+      model,
+      reasoning_effort: 'none',
+      max_completion_tokens: 16_000,
+      response_format: { type: 'json_object' },
+      messages,
+    })
+  }
   return JSON.stringify({
     model,
     temperature: 0.2,
     response_format: { type: 'json_object' },
-    messages: [
-      { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
-      { role: 'user', content: userMessage(title, markdown) },
-    ],
+    messages,
   })
+}
+
+export function bakeoffChatBody(model: BakeoffModel, title: string, markdown: string): string {
+  return model.provider === 'openai' ? openaiBody(model.id, title, markdown) : plamoBody(title, markdown)
 }
 
 function plamoBody(title: string, markdown: string): string {
@@ -361,6 +374,7 @@ export async function runBakeoffModel(
       scores: scoreOutput(article, markdown, parsed.content, durationMs),
       title: parsed.title,
       contentExcerpt: parsed.content.slice(0, 400),
+      content: parsed.content,
     }
   } catch (cause) {
     const durationMs =
@@ -377,8 +391,10 @@ export async function runBakeoffModel(
   }
 }
 
+export const BAKEOFF_RUN_COUNT = BAKEOFF_ARTICLES.length * BAKEOFF_MODELS.length
+
 export async function runTranslateBakeoff(): Promise<readonly BakeoffRunResult[]> {
-  const keys = { openai: envTrim('OPENAI_API_KEY'), plamo: envTrim('PLAMO_API_KEY') }
+  const keys = loadBakeoffKeys(REPO_ROOT)
   const results: BakeoffRunResult[] = []
   for (const article of BAKEOFF_ARTICLES) {
     for (const model of BAKEOFF_MODELS) {

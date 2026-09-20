@@ -40,8 +40,8 @@ describe('translate bakeoff corpus', () => {
 
   it('records a skipped run when bakeoff API keys are missing', async () => {
     const article = BAKEOFF_ARTICLES[0]
-    const openai = BAKEOFF_MODELS[0]
-    const plamo = BAKEOFF_MODELS[2]
+    const openai = BAKEOFF_MODELS.find((model) => model.id === 'gpt-4o-mini')
+    const plamo = BAKEOFF_MODELS.find((model) => model.id === 'plamo-3.0-prime')
     expect(article).toBeDefined()
     expect(openai).toBeDefined()
     expect(plamo).toBeDefined()

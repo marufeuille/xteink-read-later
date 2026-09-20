@@ -3,3 +3,5 @@ OPENROUTER_API_KEY=
 CLIP_TOKEN=
 OPDS_USERNAME=
 OPDS_PASSWORD=
+# Optional. Used only by `npm run translate:bakeoff`. Not a Worker secret.
+# PLAMO_API_KEY=
