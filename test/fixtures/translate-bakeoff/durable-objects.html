@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Durable Objects SQLite is the default storage now</title>
+  </head>
+  <body>
+    <article>
+      <h1>Durable Objects SQLite is the default storage now</h1>
+      <p>
+        In 2025 Cloudflare made SQLite-backed Durable Objects the recommended storage path. KV is
+        still fine for write-rarely configuration, but coordinated clip jobs should keep their
+        cursor in a Durable Object rather than hoping R2 listings are strongly consistent.
+      </p>
+      <h2>Why this matters for a read-later pipeline</h2>
+      <p>
+        A Queue consumer can retry. If translate already succeeded, re-running the whole pipeline
+        burns gpt-4.1-mini tokens. The job record in R2 is the source of truth for OPDS, but the
+        in-flight cursor belongs in SQLite so two retries do not clip the same URL twice.
+      </p>
+      <ol>
+        <li>Accept <code>POST /clip</code> and enqueue <code>{ jobId, runId, url }</code>.</li>
+        <li>Persist the run in Durable Object SQLite before the first fetch.</li>
+        <li>Write EPUB to R2 only after translate returns Japanese Markdown.</li>
+      </ol>
+      <h2>Workers AI is not a drop-in translator</h2>
+      <p>
+        Workers AI can host small models next to the Worker, which looks tempting next to GPT-5.6
+        Terra pricing. For English-to-Japanese long-form with fenced code, a dedicated chat
+        completion still wins. Keep code fences untouched:
+      </p>
+      <pre><code>export class ClipCursor {
+  constructor(state: DurableObjectState) {
+    this.sql = state.storage.sql
+  }
+}</code></pre>
+      <blockquote>
+        <p>
+          Do not summarize the article. The Xteink user is reading later, not skimming a chatbot
+          digest.
+        </p>
+      </blockquote>
+      <p>
+        See the
+        <a href="https://developers.cloudflare.com/durable-objects/best-practices/access-durable-objects-storage/"
+          >Durable Objects storage</a>
+        guide. Names such as Hyperdrive, Vectorize, and Workflows stay in English on first use,
+        with a short Japanese gloss only if the sentence would otherwise be opaque.
+      </p>
+    </article>
+  </body>
+</html>

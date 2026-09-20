@@ -1,4 +1,4 @@
-export const OPENAI_MODEL = 'gpt-4o-mini'
+export const OPENAI_MODEL = 'gpt-4.1-mini'
 export const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 export const OPENAI_MAX_INPUT_CHARS = 80_000
 export const TRANSLATE_TIMEOUT_MS = 60_000

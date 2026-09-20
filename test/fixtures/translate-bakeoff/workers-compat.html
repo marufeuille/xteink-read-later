@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Keep compatibility_date current</title>
+  </head>
+  <body>
+    <article>
+      <h1>Keep compatibility_date current</h1>
+      <p>
+        Set <code>compatibility_date</code> to a recent date so the Worker can use current runtime
+        APIs. This article explains how <code>wrangler.jsonc</code> should declare it, and why a
+        stale date silently disables newer bindings.
+      </p>
+      <h2>Example</h2>
+      <p>
+        Put the date next to the compatibility flags. Node.js built-ins still need
+        <code>nodejs_compat</code>. Paid plans should raise <code>cpu_ms</code> instead of hoping
+        the default 10 ms Free budget will extract an article.
+      </p>
+      <pre><code>{
+  "compatibility_date": "2026-09-19",
+  "compatibility_flags": ["nodejs_compat"],
+  "limits": { "cpu_ms": 30000 }
+}</code></pre>
+      <h2>Checklist</h2>
+      <ul>
+        <li>Bump <code>compatibility_date</code> when you adopt a 2026 runtime API.</li>
+        <li>Keep <code>nodejs_compat</code> if the Worker imports node:buffer.</li>
+        <li>
+          Read the
+          <a href="https://developers.cloudflare.com/workers/configuration/compatibility-dates/"
+            >compatibility dates</a>
+          notes before shipping.
+        </li>
+      </ul>
+      <p>
+        The devil is in the details: a Worker that still pins 2024-01-01 will reject Durable Object
+        SQLite calls even when the account is on Workers Paid.
+      </p>
+    </article>
+  </body>
+</html>
