@@ -421,6 +421,64 @@ describe('POST /clip', () => {
       expect(logs.some((line) => line.includes('"stage":"epub"') && line.includes('epub_failed'))).toBe(
         true,
       )
+      expect(
+        logs.some(
+          (line) =>
+            line.includes('"stage":"epub"') &&
+            line.includes(`"jobId":"${queued.jobId}"`) &&
+            line.includes('"attempt":1'),
+        ),
+      ).toBe(true)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('writes the same jobId on every pipeline stage log', async () => {
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(String(line))
+    })
+    try {
+      const bucket = createFakeR2Bucket()
+      const queue = createFakeQueue()
+      const clipPipeline = createClipPipeline({
+        extractPipeline: createExtractPipeline({
+          fetchPage: async (pageUrl) =>
+            ok({
+              requestedUrl: pageUrl,
+              finalUrl: pageUrl,
+              contentType: 'text/html',
+              html: fixtureHtml('ja-tech.html'),
+            }),
+        }),
+        translateArticle: jaTranslate,
+      })
+      const app = createApp({ createStore: createR2Store, queue })
+      const env = { ...TEST_BINDINGS, ARTICLES: bucket, CLIP_QUEUE: queue } as Cloudflare.Env
+      const response = await clip(app, 'https://example.com/ja/workers-cpu', env)
+      expect(response.status).toBe(202)
+      await queue.drain(env, { clipPipeline, createStore: createR2Store })
+      const queued = await readJson(response)
+      const events = logs
+        .map((line) => JSON.parse(line) as { event?: string; stage?: string; jobId?: string; runId?: string })
+        .filter((entry) => entry.event === 'pipeline')
+      expect(events.map((entry) => entry.stage)).toEqual([
+        'queue',
+        'fetch',
+        'extract',
+        'translate',
+        'epub',
+        'store',
+        'queue',
+      ])
+      for (const entry of events) {
+        expect(entry.jobId).toBe(queued.jobId)
+        expect(entry.runId).toMatch(/^run_[a-f0-9]{32}$/)
+        expect(JSON.stringify(entry)).not.toContain(TEST_CLIP_TOKEN)
+        expect(JSON.stringify(entry)).not.toContain('<html')
+        expect(entry).not.toHaveProperty('url')
+      }
     } finally {
       spy.mockRestore()
     }

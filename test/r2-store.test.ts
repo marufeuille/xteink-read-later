@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createR2Store } from '../src/store/r2'
 import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asClipRunId, asEpubBytes, clipJobKey, parseHttpUrl } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
@@ -207,5 +207,34 @@ describe('createR2Store', () => {
     const article = jaArticle('art_13131313131313131313131313131313', '順', 'order')
     await store.put(article)
     expect(bucket.putOrder()).toEqual([articleEpubKey(article.id), articleMetaKey(article.id)])
+  })
+
+  it('includes jobId on store logs when a log context is passed', async () => {
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(String(line))
+    })
+    try {
+      const bucket = createFakeR2Bucket()
+      const store = createR2Store({ ARTICLES: bucket })
+      const article = jaArticle('art_15151515151515151515151515151515', 'ログ', 'store-log')
+      await store.put(article, {
+        jobId: asClipJobId('job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+        runId: asClipRunId('run_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+        attempt: 1,
+      })
+      const storeLog = logs
+        .map((line) => JSON.parse(line) as { event?: string; stage?: string; jobId?: string })
+        .find((entry) => entry.event === 'pipeline' && entry.stage === 'store')
+      expect(storeLog).toMatchObject({
+        event: 'pipeline',
+        stage: 'store',
+        jobId: 'job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        articleId: article.id,
+      })
+      expect(JSON.stringify(storeLog)).not.toContain('本文')
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

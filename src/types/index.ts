@@ -28,6 +28,7 @@ export type {
   UnauthorizedError,
 } from './errors'
 export { httpStatusByErrorKind } from './errors'
+export { PIPELINE_STAGES } from './http'
 export type {
   ApiRoutes,
   BasicAuth,
@@ -47,6 +48,7 @@ export type {
   ClipTranslateTimingsMs,
   ErrorBody,
   PipelineLog,
+  PipelineStage,
   PurchasedBookBody,
   TranslateFailedBody,
 } from './http'
@@ -88,6 +90,7 @@ export type {
   ClipQueuedJob,
   ClipReadyJob,
   ClipRunningJob,
+  PipelineLogContext,
 } from './job'
 export type { BuildOpdsCatalog, OpdsAcquisition, OpdsCatalog } from './opds'
 export type {

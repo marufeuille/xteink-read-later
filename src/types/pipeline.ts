@@ -15,6 +15,7 @@ import type {
 } from './errors'
 import type { ClipExtractTimingsMs, ClipRequestBody, ClipTimingsMs } from './http'
 import type { ArticleId, EpubBytes, HttpUrl } from './id'
+import type { PipelineLogContext } from './job'
 import type { Result } from './result'
 
 export type TranslateDeps = Pick<Cloudflare.Env, 'OPENAI_API_KEY'>
@@ -63,9 +64,11 @@ export type ParseClipUrl = (
 
 export type ExtractPipeline = (
   url: HttpUrl,
+  log?: PipelineLogContext,
 ) => Promise<Result<ExtractResult, ExtractError>>
 
 export type ClipPipeline = (
   url: HttpUrl,
   deps: TranslateDeps,
+  log?: PipelineLogContext,
 ) => Promise<Result<ClipResult, PipelineError>>

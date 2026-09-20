@@ -136,7 +136,7 @@ export const createR2Store: CreateArticleStore = (deps) => {
       }
       return asEpubBytes(new Uint8Array(await object.arrayBuffer()))
     },
-    async put(article) {
+    async put(article, log) {
       const started = Date.now()
       const existing = await store.getMeta(article.id)
       const meta: ArticleMeta = {
@@ -157,11 +157,7 @@ export const createR2Store: CreateArticleStore = (deps) => {
       await bucket.put(articleMetaKey(article.id), JSON.stringify(meta), {
         httpMetadata: { contentType: 'application/json; charset=utf-8' },
       })
-      logPipeline({
-        articleId: article.id,
-        stage: 'store',
-        durationMs: Date.now() - started,
-      })
+      logPipeline({ articleId: article.id, stage: 'store', durationMs: Date.now() - started }, log)
       return meta
     },
     async delete(id) {
