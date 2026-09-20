@@ -11,6 +11,11 @@ import {
   type ArticleStore,
   type CreateArticleStore,
 } from '../types'
+import {
+  articleMetaFromWrite,
+  articleMetaWithClassification,
+  parseArticleClassification,
+} from '../classify/parse'
 import { logPipeline } from '../log'
 import { parseClipJobRecord } from './job'
 
@@ -20,6 +25,12 @@ function nowIso(): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+const JSON_HTTP_METADATA = { httpMetadata: { contentType: 'application/json; charset=utf-8' } }
+
+async function writeArticleMeta(bucket: R2Bucket, meta: ArticleMeta): Promise<void> {
+  await bucket.put(articleMetaKey(meta.id), JSON.stringify(meta), JSON_HTTP_METADATA)
 }
 
 export function parseArticleMeta(value: unknown): ArticleMeta | null {
@@ -55,6 +66,7 @@ export function parseArticleMeta(value: unknown): ArticleMeta | null {
     canonicalUrl,
     language: 'ja',
     translated: value.translated,
+    classification: parseArticleClassification(value.classification),
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
   }
@@ -138,26 +150,21 @@ export const createR2Store: CreateArticleStore = (deps) => {
     },
     async put(article, log) {
       const started = Date.now()
-      const existing = await store.getMeta(article.id)
-      const meta: ArticleMeta = {
-        id: article.id,
-        title: article.title,
-        author: article.author,
-        publishedAt: article.publishedAt,
-        sourceUrl: article.sourceUrl,
-        canonicalUrl: article.canonicalUrl,
-        language: article.language,
-        translated: article.translated,
-        createdAt: existing?.createdAt ?? nowIso(),
-        updatedAt: nowIso(),
-      }
+      const meta = articleMetaFromWrite(article, await store.getMeta(article.id), nowIso())
       await bucket.put(articleEpubKey(article.id), article.epub, {
         httpMetadata: { contentType: 'application/epub+zip' },
       })
-      await bucket.put(articleMetaKey(article.id), JSON.stringify(meta), {
-        httpMetadata: { contentType: 'application/json; charset=utf-8' },
-      })
+      await writeArticleMeta(bucket, meta)
       logPipeline({ articleId: article.id, stage: 'store', durationMs: Date.now() - started }, log)
+      return meta
+    },
+    async putClassification(id, classification) {
+      const existing = await store.getMeta(id)
+      if (existing === null) {
+        return null
+      }
+      const meta = articleMetaWithClassification(existing, classification, nowIso())
+      await writeArticleMeta(bucket, meta)
       return meta
     },
     async delete(id) {
@@ -198,9 +205,7 @@ export const createR2Store: CreateArticleStore = (deps) => {
       }
     },
     async putJob(job) {
-      await bucket.put(clipJobKey(job.jobId), JSON.stringify(job), {
-        httpMetadata: { contentType: 'application/json; charset=utf-8' },
-      })
+      await bucket.put(clipJobKey(job.jobId), JSON.stringify(job), JSON_HTTP_METADATA)
     },
   }
   return store

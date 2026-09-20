@@ -125,7 +125,7 @@ cp .dev.vars.example .dev.vars
 npm run dev
 ```
 
-`wrangler dev` は既定で `http://localhost:8787` を開く。`.dev.vars` の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。
+`wrangler dev` は既定で `http://localhost:8787` を開く。`.dev.vars` の `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。`OPENROUTER_API_KEY` が無いときは記事分類をスキップし、未分類のまま載せる。
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
@@ -176,7 +176,7 @@ curl -sS -H "Authorization: Bearer $CLIP_TOKEN" \
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
 ```
 
-ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。token と記事全文は出さない。英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。
+ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。token と記事全文は出さない。英語記事は OpenAI で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。
 
 | 状態 | 意味 |
 | --- | --- |
@@ -222,6 +222,7 @@ CI の `typecheck, unit, e2e` が失敗した run ではデプロイジョブは
 ```bash
 npx wrangler login
 npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put OPENROUTER_API_KEY
 npx wrangler secret put CLIP_TOKEN
 npx wrangler secret put OPDS_USERNAME
 npx wrangler secret put OPDS_PASSWORD
@@ -238,7 +239,7 @@ npx wrangler secret put OPDS_PASSWORD
 | `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers** に加え、Account 権限 **Workers R2 Storage: Edit**（バケット作成と bind）と **Workers Queues: Edit**（キュー作成と bind）。対象アカウントだけに scope する |
 | `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの [Account ID](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/) |
 
-次は **GitHub Secrets に入れない**（Cloudflare の `wrangler secret put` 側）: `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD`。
+次は **GitHub Secrets に入れない**（Cloudflare の `wrangler secret put` 側）: `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD`。
 
 Secrets 未設定のまま `main` にマージすると、チェックは通ってもデプロイジョブが落ちる。
 

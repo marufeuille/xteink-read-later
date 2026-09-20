@@ -1,3 +1,4 @@
+import type { ArticleClassification } from './classify'
 import type { ArticleId, HttpUrl } from './id'
 
 export type Language = 'ja' | 'non-ja'
@@ -27,6 +28,7 @@ export type ArticleMeta = ArticleFields & {
   readonly id: ArticleId
   readonly language: 'ja'
   readonly translated: boolean
+  readonly classification: ArticleClassification
   readonly createdAt: string
   readonly updatedAt: string
 }

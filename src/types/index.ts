@@ -9,6 +9,21 @@ export type {
   TranslatedArticle,
 } from './article'
 export type {
+  ArticleClassification,
+  ArticleKind,
+  ArticleTopic,
+  ClassificationStatus,
+  ClassificationVersion,
+  ClassifiedClassification,
+  ClassifyArticle,
+  ClassifyErrorCode,
+  DecidedArticleKind,
+  DecidedArticleTopic,
+  FailedClassification,
+  LowConfidenceClassification,
+  SkippedClassification,
+} from './classify'
+export type {
   ErrorKind,
   ExtractError,
   EpubFailedError,
@@ -81,6 +96,23 @@ export {
   parseHttpUrl,
   purchasedCanonicalUrl,
 } from './id'
+export type {
+  ChoiceAnswer,
+  ChoiceQuestion,
+  EvaluateSystemOne,
+  JevDeps,
+  JevErrorCode,
+  JevFailedError,
+  NoulAnswer,
+  NoulQuestion,
+  ScoreAnswer,
+  ScoreQuestion,
+  SystemOneAnswer,
+  SystemOneQuestion,
+  SystemOneRequest,
+  SystemOneResult,
+  SystemOneUsage,
+} from './jev'
 export type {
   ClipFailedJob,
   ClipJobError,

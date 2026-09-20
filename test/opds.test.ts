@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
 import { buildOpdsCatalog, OPDS_ACQUISITION_REL, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from '../src/opds/catalog'
+import { unavailableClassification } from '../src/classify/taxonomy'
 import { createMemoryStore } from '../src/store/memory'
 import {
   asArticleId,
   asEpubBytes,
   parseHttpUrl,
+  type ArticleMeta,
   type ArticleWrite,
   type HttpUrl,
 } from '../src/types'
@@ -29,8 +31,28 @@ function article(partial: Pick<ArticleWrite, 'id' | 'title'> & Partial<ArticleWr
     canonicalUrl: url(`https://example.com/${partial.id}`),
     language: 'ja',
     translated: false,
+    classification: unavailableClassification('skipped'),
     epub: asEpubBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 7, 8, 9])),
     ...partial,
+  }
+}
+
+function meta(
+  partial: Pick<ArticleWrite, 'id' | 'title'> & Partial<ArticleWrite> & Pick<ArticleMeta, 'createdAt' | 'updatedAt'>,
+): ArticleMeta {
+  const written = article(partial)
+  return {
+    id: written.id,
+    title: written.title,
+    author: written.author,
+    publishedAt: written.publishedAt,
+    sourceUrl: written.sourceUrl,
+    canonicalUrl: written.canonicalUrl,
+    language: written.language,
+    translated: written.translated,
+    classification: written.classification ?? unavailableClassification('skipped'),
+    createdAt: partial.createdAt,
+    updatedAt: partial.updatedAt,
   }
 }
 
@@ -50,21 +72,20 @@ describe('buildOpdsCatalog', () => {
     const newer = asArticleId('art_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
     const { xml } = buildOpdsCatalog(
       [
-        {
-          ...article({ id: newer, title: '新しい & <上>' }),
+        meta({
+          id: newer,
+          title: '新しい & <上>',
           createdAt: '2026-09-19T10:00:00.000Z',
           updatedAt: '2026-09-19T12:00:00.000Z',
-        },
-        {
-          ...article({
-            id: older,
-            title: '古い',
-            author: '石井',
-            publishedAt: '2026-03-01T00:00:00.000Z',
-          }),
+        }),
+        meta({
+          id: older,
+          title: '古い',
+          author: '石井',
+          publishedAt: '2026-03-01T00:00:00.000Z',
           createdAt: '2026-09-18T10:00:00.000Z',
           updatedAt: '2026-09-18T10:00:00.000Z',
-        },
+        }),
       ],
       url('https://opds.example.com/'),
     )

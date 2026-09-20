@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono'
+import { unavailableClassification } from './classify/taxonomy'
 import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
 import { toClipJobBody, toClipQueuedBody } from './http/clip-job'
 import { parseClipUrl } from './extract/parse-clip-url'
@@ -178,6 +179,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
       canonicalUrl,
       language: 'ja',
       translated: false,
+      classification: unavailableClassification('skipped'),
       epub: asEpubBytes(parsed.value.epub),
     })
 

@@ -114,7 +114,9 @@ describe('clip pipeline E2E (fixture network)', () => {
       ctx.env,
     )
     expect(meta.status).toBe(200)
-    expect(((await meta.json()) as { title: string }).title).toBe('Cloudflare Workers の CPU 制限')
+    const stored = (await meta.json()) as { title: string; classification: { status: string } }
+    expect(stored.title).toBe('Cloudflare Workers の CPU 制限')
+    expect(stored.classification.status).toBe('skipped')
   })
 
   it('includes the clip jobId on pipeline stage logs', async () => {

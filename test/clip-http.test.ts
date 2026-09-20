@@ -10,11 +10,13 @@ import { createClipPipeline } from '../src/pipeline/clip'
 import { createMemoryStore } from '../src/store/memory'
 import { createR2Store } from '../src/store/r2'
 import { translateArticle as openAiTranslate } from '../src/translate/openai'
+import { OPENROUTER_DECISIONS_URL } from '../src/jev/constants'
 import {
   clipJobIdFromUrl,
   err,
   ok,
   parseHttpUrl,
+  type ArticleClassification,
   type ClipPipeline,
   type FetchPage,
   type HttpUrl,
@@ -184,7 +186,26 @@ describe('POST /clip', () => {
 
     const metaRes = await opdsGet(app, `/articles/${ready.id}`, env)
     expect(metaRes.status).toBe(200)
-    const firstMeta = (await metaRes.json()) as { createdAt: string; updatedAt: string; title: string }
+    const firstMeta = (await metaRes.json()) as {
+      createdAt: string
+      updatedAt: string
+      title: string
+      classification: { status: string; topic: string; kind: string }
+    }
+    expect(firstMeta.classification).toEqual({
+      version: 'topic-kind-v1',
+      status: 'skipped',
+      model: null,
+      durationMs: 0,
+      inputTokens: null,
+      topic: 'uncategorized',
+      kind: 'uncategorized',
+      decidedTopic: null,
+      decidedKind: null,
+      topicConfidence: null,
+      kindConfidence: null,
+      errorCode: null,
+    })
 
     const second = await app.request(
       '/clip',
@@ -225,6 +246,159 @@ describe('POST /clip', () => {
     ).toMatchObject({
       status: 404,
     })
+  })
+
+  it('stores Jev classification on meta and still publishes when classification throws', async () => {
+    const classified = appWithFetch(jaTechPage)
+    const first = await clip(classified.app, 'https://example.com/ja/workers-cpu', classified.env)
+    expect(first.status).toBe(202)
+    await classified.queue.drain(classified.env, {
+      clipPipeline: classified.clipPipeline,
+      store: classified.store,
+      classifyArticle: async () => ({
+        version: 'topic-kind-v1',
+        status: 'classified',
+        model: 'jev-1.13.0',
+        durationMs: 80,
+        inputTokens: 360,
+        topic: 'tech',
+        kind: 'explainer',
+        decidedTopic: 'tech',
+        decidedKind: 'explainer',
+        topicConfidence: 0.93,
+        kindConfidence: 0.9,
+        errorCode: null,
+      }),
+    })
+    const ready = await readJson(await getJob(classified.app, (await readJson(first)).jobId ?? '', classified.env))
+    expect(ready.status).toBe('ready')
+    const classifiedMeta = (await (
+      await opdsGet(classified.app, `/articles/${ready.id}`, classified.env)
+    ).json()) as { classification: { status: string; topic: string; kind: string } }
+    expect(classifiedMeta.classification).toMatchObject({
+      status: 'classified',
+      topic: 'tech',
+      kind: 'explainer',
+    })
+
+    const failing = appWithFetch(jaTechPage)
+    const second = await clip(failing.app, 'https://example.com/ja/workers-cpu', failing.env)
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(String(line))
+    })
+    try {
+      await failing.queue.drain(failing.env, {
+        clipPipeline: failing.clipPipeline,
+        store: failing.store,
+        classifyArticle: async () => {
+          throw new Error('Jev exploded')
+        },
+      })
+    } finally {
+      spy.mockRestore()
+    }
+    const failedReady = await readJson(await getJob(failing.app, (await readJson(second)).jobId ?? '', failing.env))
+    expect(failedReady.status).toBe('ready')
+    const failedMeta = (await (
+      await opdsGet(failing.app, `/articles/${failedReady.id}`, failing.env)
+    ).json()) as { classification: { status: string; topic: string } }
+    expect(failedMeta.classification).toMatchObject({
+      status: 'failed',
+      topic: 'uncategorized',
+      errorCode: 'classify_internal',
+    })
+    const classifyLog = logs
+      .map((line) => JSON.parse(line) as { event?: string; stage?: string; errorKind?: string })
+      .find((entry) => entry.event === 'pipeline' && entry.stage === 'classify')
+    expect(classifyLog).toMatchObject({ stage: 'classify', errorKind: 'classify_internal' })
+  })
+
+  it('classifies through Jev when OPENROUTER_API_KEY is set', async () => {
+    const ctx = appWithFetch(jaTechPage)
+    const env = { ...ctx.env, OPENROUTER_API_KEY: 'or-test' }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        expect(String(input)).toBe(OPENROUTER_DECISIONS_URL)
+        return Response.json({
+          model: 'jev-1.13.0',
+          answers: {
+            topic: {
+              type: 'choice',
+              choice: 'tech',
+              confidence: 0.91,
+              probabilities: { tech: 0.91 },
+            },
+            kind: {
+              type: 'choice',
+              choice: 'explainer',
+              confidence: 0.88,
+              probabilities: { explainer: 0.88 },
+            },
+          },
+          usage: { input_tokens: 220, output_tokens: 8 },
+        })
+      }),
+    )
+    try {
+      const first = await clip(ctx.app, 'https://example.com/ja/workers-cpu', env)
+      await ctx.queue.drain(env, { clipPipeline: ctx.clipPipeline, store: ctx.store })
+      const ready = await readJson(await getJob(ctx.app, (await readJson(first)).jobId ?? '', env))
+      expect(ready.status).toBe('ready')
+      const meta = (await (await opdsGet(ctx.app, `/articles/${ready.id}`, env)).json()) as {
+        classification: { status: string; topic: string; kind: string; errorCode: string | null }
+      }
+      expect(meta.classification).toMatchObject({
+        status: 'classified',
+        topic: 'tech',
+        kind: 'explainer',
+        errorCode: null,
+      })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('publishes the EPUB before classification finishes', async () => {
+    const ctx = appWithFetch(jaTechPage)
+    const queued = await clip(ctx.app, 'https://example.com/ja/workers-cpu', ctx.env)
+    expect(queued.status).toBe(202)
+    let released!: (value: ArticleClassification) => void
+    const pending = new Promise<ArticleClassification>((resolve) => {
+      released = resolve
+    })
+    let sawPublish = false
+    const drained = ctx.queue.drain(ctx.env, {
+      clipPipeline: ctx.clipPipeline,
+      store: ctx.store,
+      classifyArticle: async () => {
+        sawPublish = (await ctx.store.listMeta()).length === 1
+        return pending
+      },
+    })
+    released({
+      version: 'topic-kind-v1',
+      status: 'classified',
+      model: 'jev-1.13.0',
+      durationMs: 12,
+      inputTokens: 40,
+      topic: 'tech',
+      kind: 'explainer',
+      decidedTopic: 'tech',
+      decidedKind: 'explainer',
+      topicConfidence: 0.91,
+      kindConfidence: 0.9,
+      errorCode: null,
+    })
+    await drained
+    expect(sawPublish).toBe(true)
+    const ready = await readJson(await getJob(ctx.app, (await readJson(queued)).jobId ?? '', ctx.env))
+    expect(ready.status).toBe('ready')
+    const classifiedMeta = (await (
+      await opdsGet(ctx.app, `/articles/${ready.id}`, ctx.env)
+    ).json()) as { classification: { status: string; topic: string } }
+    expect(classifiedMeta.classification).toMatchObject({ status: 'classified', topic: 'tech' })
   })
 
   it('returns 400 for an invalid URL', async () => {
@@ -470,6 +644,7 @@ describe('POST /clip', () => {
         'translate',
         'epub',
         'store',
+        'classify',
         'queue',
       ])
       for (const entry of events) {

@@ -33,6 +33,7 @@ describe.skipIf(!live)('live clip E2E', () => {
       const env = {
         ...TEST_BINDINGS,
         OPENAI_API_KEY: process.env.OPENAI_API_KEY ?? '',
+        OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY ?? '',
         CLIP_TOKEN: clipToken,
         CLIP_QUEUE: queue,
       } as Cloudflare.Env

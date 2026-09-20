@@ -198,9 +198,34 @@ describe('clip-status CLI', () => {
     expect(text).toMatch(/translate\s+失敗/)
     expect(text).toContain('epub      不明')
     expect(text).toContain('store     不明')
+    expect(text).toContain('classify  不明')
     expect(text).toContain('ライブログに無い工程は「不明」です')
     expect(text).not.toContain(SECRET)
     expect(text).not.toContain('<p>')
+  })
+
+  it('marks classify_http as a classify-stage failure while the job is ready', () => {
+    const text = formatClipStatus({
+      jobId: JOB_ID,
+      job: {
+        kind: 'job',
+        body: {
+          jobId: JOB_ID,
+          status: 'ready',
+          sourceUrl: 'https://example.com/article',
+          id: 'art_cccccccccccccccccccccccccccccccc',
+          epubPath: '/articles/art_cccccccccccccccccccccccccccccccc/book.epub',
+        },
+      },
+      events: [
+        event({ stage: 'store', durationMs: 5, attempt: 1 }),
+        event({ stage: 'classify', durationMs: 40, attempt: 1, errorKind: 'classify_http' }),
+      ],
+    })
+    expect(text).toContain('状態     完了')
+    expect(text).toContain('store     完了')
+    expect(text).toMatch(/classify\s+失敗/)
+    expect(text).toContain('classify_http')
   })
 
   it('uses WORKER as the base URL alias and fetches the job with Bearer', async () => {

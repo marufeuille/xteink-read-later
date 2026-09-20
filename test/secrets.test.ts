@@ -33,7 +33,7 @@ describe('secret handling', () => {
         err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 401' }),
     })
     const app = createApp({ store, queue })
-    const env = { ...TEST_BINDINGS, OPENAI_API_KEY: SECRET, CLIP_QUEUE: queue } as Cloudflare.Env
+    const env = { ...TEST_BINDINGS, OPENAI_API_KEY: SECRET, OPENROUTER_API_KEY: 'or-secret-must-not-leak-456', CLIP_QUEUE: queue } as Cloudflare.Env
     const response = await app.request(
       '/clip',
       {
@@ -46,6 +46,7 @@ describe('secret handling', () => {
     expect(response.status).toBe(202)
     const postText = await response.text()
     expect(postText).not.toContain(SECRET)
+    expect(postText).not.toContain('or-secret-must-not-leak-456')
     expect(postText).not.toContain(TEST_CLIP_TOKEN)
     await queue.drain(env, { clipPipeline, store })
     const queued = JSON.parse(postText) as { jobId: string }
@@ -58,6 +59,7 @@ describe('secret handling', () => {
     expect(job.status).toBe(200)
     expect(jobText).toContain('translate_failed')
     expect(jobText).not.toContain(SECRET)
+    expect(jobText).not.toContain('or-secret-must-not-leak-456')
     expect(jobText).not.toContain(TEST_CLIP_TOKEN)
     expect(jobText).not.toContain('extracted')
     expect(jobText).not.toContain(jaHtml.slice(0, 40))

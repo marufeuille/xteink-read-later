@@ -101,6 +101,16 @@ describe('POST /books', () => {
       expect(xml).toContain('Dummy purchased title')
       expect(xml).toContain(`opds/download/${body.id}.epub`)
 
+      const metaRes = await app.request(
+        `https://read.example.com/articles/${body.id}`,
+        { headers: { authorization: basicAuthorization() } },
+        BINDINGS,
+      )
+      expect(metaRes.status).toBe(200)
+      expect(
+        ((await metaRes.json()) as { classification: { status: string; topic: string } }).classification,
+      ).toMatchObject({ status: 'skipped', topic: 'uncategorized' })
+
       const download = await app.request(
         `https://read.example.com/opds/download/${body.id}.epub`,
         { headers: { authorization: basicAuthorization() } },
