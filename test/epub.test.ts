@@ -223,4 +223,19 @@ describe('buildEpub', () => {
     expect(chapter).not.toContain('WARN-BAR-BAND-WIDTH-TOO-NARROW')
     expect(chapter).not.toContain('WARN-TABLE-COLUMNS-OVERFLOW')
   })
+
+  it('strips chart axis tick lists from chapter XHTML and keeps real steps', async () => {
+    const article = translated({
+      contentHtml:
+        '<p>Dummy charts body about nodejs_compat.</p>' +
+        '<ol aria-hidden="true"><li>&lt;</li><li>2</li><li>0</li><li>12</li><li>01234567890123456</li></ol>' +
+        '<ol><li>Enable nodejs_compat</li><li>Keep compatibility_date current</li></ol>',
+    })
+    const files = unzipSync(await buildEpub(article))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('Dummy charts body about nodejs_compat.')
+    expect(chapter).toContain('Enable nodejs_compat')
+    expect(chapter).not.toContain('01234567890123456')
+    expect(chapter).not.toMatch(/<li>\s*&lt;\s*<\/li>/)
+  })
 })

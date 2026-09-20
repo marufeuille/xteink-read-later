@@ -24,6 +24,16 @@ describe('htmlFragmentToXhtml', () => {
     expect(xhtml).not.toContain('example.com/chart.svg')
   })
 
+  it('strips chart axis tick lists from reading body and keeps real steps', () => {
+    const xhtml = htmlFragmentToXhtml(
+      '<p>Dummy charts body.</p><ol aria-hidden="true"><li>&lt;</li><li>2</li><li>0</li><li>12</li><li>01234567890123456</li></ol><ol><li>Enable nodejs_compat</li></ol>',
+    )
+    expect(xhtml).toContain('Dummy charts body.')
+    expect(xhtml).toContain('Enable nodejs_compat')
+    expect(xhtml).not.toContain('01234567890123456')
+    expect(xhtml).not.toContain('&lt;')
+  })
+
   it('strips page CLI warn tokens from reading body and keeps dct render', () => {
     const xhtml = htmlFragmentToXhtml(
       '<p>Dummy charts body.</p><pre><code>dct render\nWARN-BAR-BAND-WIDTH-TOO-NARROW\nWARN-TABLE-COLUMNS-OVERFLOW\n</code></pre>',

@@ -221,6 +221,42 @@ describe('tables and nested lists', () => {
     expect(html).not.toContain('WARN-TABLE-COLUMNS-OVERFLOW')
   })
 
+  it('strips chart axis tick lists and leftover markup from Markdown HTML', () => {
+    const html = markdownToHtml(
+      [
+        'Dummy charts body about nodejs_compat.',
+        '',
+        '1. <',
+        '2. 2',
+        '3. 0',
+        '4. 12',
+        '5. 01234567890123456',
+        '',
+        '1. Enable nodejs_compat',
+        '2. Keep compatibility_date current',
+      ].join('\n'),
+      BASE,
+    )
+    expect(html).toContain('Dummy charts body about nodejs_compat.')
+    expect(html).toContain('<li>Enable nodejs_compat</li>')
+    expect(html).not.toContain('01234567890123456')
+    expect(html).not.toContain('<li>&lt;</li>')
+    expect(html).not.toMatch(/<li>\s*12\s*<\/li>/)
+  })
+
+  it('drops aria-hidden and tick lists when converting HTML to Markdown', () => {
+    const markdown = htmlToMarkdown(
+      '<p>Dummy charts body about nodejs_compat.</p>' +
+        '<ol aria-hidden="true"><li>&lt;</li><li>2</li><li>0</li><li>12</li><li>01234567890123456</li></ol>' +
+        '<ol><li>Enable nodejs_compat</li><li>Keep compatibility_date current</li><li>Set cpu_ms on Paid</li></ol>',
+      BASE,
+    )
+    expect(markdown).toContain('Dummy charts body about nodejs_compat.')
+    expect(markdown).toContain('Enable nodejs_compat')
+    expect(markdown).not.toContain('01234567890123456')
+    expect(markdown).not.toMatch(/^1\. </m)
+  })
+
   it('keeps nested list items through Markdown and back to HTML', () => {
     const html =
       '<ul><li>Parent item<ul><li>Nested child</li><li>Second child</li></ul></li><li>Sibling</li></ul>'
