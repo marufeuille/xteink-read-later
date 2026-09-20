@@ -108,11 +108,19 @@ GitHub Action `pr-risk-trial` が PR の open / synchronize / 本文編集で走
 
 見逃し = 人間が高リスクなのに `low_risk`。固定ルール対象で `low_risk` になった件数は `hard_rule_misses`。これは **0 でなければ本運用しない**。
 
-過去 PR の再判定:
+過去 PR の再判定は記録のみ。マージ条件は変えない。
+
+手元:
 
 ```bash
 GITHUB_TOKEN=$(gh auth token) OPENROUTER_API_KEY=… npm run pr-risk:replay -- --limit 20
 GITHUB_TOKEN=$(gh auth token) OPENROUTER_API_KEY=… npm run pr-risk:replay -- --pr 7,10,13,31,34,35
+```
+
+Actions（リポジトリ secret の `OPENROUTER_API_KEY`。成果物は artifact `pr-risk-replay` 内の `pr-risk-replay.jsonl`）:
+
+```bash
+gh workflow run "PR risk trial" -f prs=7,10,13,14,18,21,31,33,34,35,36,39,40
 ```
 
 キーが無いときはすべて `jev_skipped` で追加レビューになる（低リスクにはしない）。
