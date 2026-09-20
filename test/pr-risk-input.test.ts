@@ -30,11 +30,12 @@ describe('pr-risk input', () => {
 
   it('redacts tokens and assigned secrets', () => {
     const redacted = redactSecrets(
-      'Authorization: Bearer ghp_abcdefghijklmnopqrstuv\nOPENAI_API_KEY=sk-abcdefghijklmnopqrstuv\n',
+      'Authorization: Bearer test-token-value\nOPENAI_API_KEY=example-secret-value\n',
     )
-    expect(redacted).not.toContain('ghp_')
-    expect(redacted).not.toContain('sk-abcdefghijklmnopqrstuv')
-    expect(redacted).toContain('[REDACTED]')
+    expect(redacted).toContain('Bearer [REDACTED]')
+    expect(redacted).toContain('OPENAI_API_KEY=[REDACTED]')
+    expect(redacted).not.toContain('test-token-value')
+    expect(redacted).not.toContain('example-secret-value')
   })
 
   it('puts PR text under untrusted_input and keeps the trusted task outside it', () => {
