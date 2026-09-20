@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import { translateArticle } from '../src/translate/openai'
-import { OPENAI_CHAT_URL, OPENAI_MAX_INPUT_CHARS, TRANSLATE_TIMEOUT_MS } from '../src/translate/constants'
+import {
+  OPENAI_CHAT_URL,
+  OPENAI_MAX_INPUT_CHARS,
+  OPENAI_MODEL,
+  TRANSLATE_TIMEOUT_MS,
+} from '../src/translate/constants'
 import { parseHttpUrl, type ExtractedArticle, type HttpUrl, type TranslateDeps } from '../src/types'
 
 function url(value: string): HttpUrl {
@@ -26,6 +31,10 @@ function article(overrides: Partial<ExtractedArticle> = {}): ExtractedArticle {
 }
 
 describe('translateArticle', () => {
+  it('uses gpt-4.1-mini rather than gpt-4o-mini', () => {
+    expect(OPENAI_MODEL).toBe('gpt-4.1-mini')
+  })
+
   it('does not call OpenAI for Japanese articles', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
@@ -285,8 +294,10 @@ describe('translateArticle', () => {
     const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
       const raw = typeof init?.body === 'string' ? init.body : ''
       const body = JSON.parse(raw) as {
+        model?: string
         messages: Array<{ role: string; content: string }>
       }
+      expect(body.model).toBe(OPENAI_MODEL)
       const user = JSON.parse(body.messages[1]?.content ?? '{}') as {
         content?: string
         contentHtml?: string

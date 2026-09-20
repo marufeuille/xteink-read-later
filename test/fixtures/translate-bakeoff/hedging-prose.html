@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>When a translation sounds almost right</title>
+  </head>
+  <body>
+    <article>
+      <h1>When a translation sounds almost right</h1>
+      <p>
+        Small models often produce Japanese that is technically correct and still unpleasant to
+        read. They mix ですます with である, over-explain conjunctions, and translate idioms that
+        engineers never say out loud.
+      </p>
+      <h2>Patterns that give the game away</h2>
+      <ul>
+        <li>Batteries included becomes a lecture about batteries.</li>
+        <li>Move the needle is rendered as a physical needle.</li>
+        <li>We should probably just ship it becomes a timid stack of conditionals.</li>
+      </ul>
+      <p>
+        A reader on an
+        <a href="https://www.xteink.com/">Xteink</a>
+        e-ink device notices this immediately. There is no tab to switch back to
+        English. If the prose fights them, they stop clipping.
+      </p>
+      <h2>What to preserve anyway</h2>
+      <p>
+        Command lines and package names stay in the original spelling even when the surrounding
+        sentence is Japanese. That includes <code>npx wrangler deploy</code>,
+        <code>gpt-4o-mini</code>, and GitHub merge-gate.
+      </p>
+      <pre><code>npx wrangler deploy
+npm run test:e2e</code></pre>
+      <p>
+        Good translation is not a knowledge-cutoff problem alone. A 2023 snapshot can still name
+        <code>compatibility_date</code>. The failure mode is cadence: too many そして, しかし, and
+        することができます in a row, until a short English post reads like a ministry circular.
+      </p>
+      <p>
+        Prefer a model that follows the reading-format contract without padding. If two candidates
+        keep the code fences, pick the one that sounds like a Japanese engineer wrote the notes
+        the same afternoon.
+      </p>
+    </article>
+  </body>
+</html>

@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Japanese LLMs in 2026: PLaMo 3.0 Prime and Sakana Namazu</title>
+  </head>
+  <body>
+    <article>
+      <h1>Japanese LLMs in 2026: PLaMo 3.0 Prime and Sakana Namazu</h1>
+      <p>
+        Preferred Networks shipped PLaMo 3.0 Prime in June 2026 with a 256K context window. Sakana
+        AI followed with Sakana Namazu, an OpenAI-compatible API tuned on Japanese business text
+        on top of Kimi K2.6. Neither is a drop-in DeepL replacement, but both claim more natural
+        EN-JA than gpt-4o-mini.
+      </p>
+      <h2>APIs you can actually call from a Worker</h2>
+      <p>
+        PLaMo Prime speaks chat completions at
+        <a href="https://api.platform.preferredai.jp/v1/chat/completions"
+          >api.platform.preferredai.jp</a>. Sakana Namazu uses
+        <a href="https://api.sakana.ai/v1">api.sakana.ai/v1</a>. The consumer web apps
+        (translate.preferredai.jp and Sakana Translate) do not expose the same contract.
+      </p>
+      <ul>
+        <li>plamo-3.0-prime: set <code>reasoning_effort</code> to none, raise <code>max_tokens</code>.</li>
+        <li>sakana-namazu: turn thinking off; do not enable web_search for clipping.</li>
+        <li>
+          DeepL API Growth is a monthly floor around the same size as Workers Paid. Fine for
+          CAT tools, noisy for a personal queue.
+        </li>
+      </ul>
+      <h2>A request shape that survived 2026-09-20</h2>
+      <pre><code>{
+  "model": "plamo-3.0-prime",
+  "reasoning_effort": "none",
+  "max_tokens": 16000,
+  "response_format": { "type": "json_schema" }
+}</code></pre>
+      <p>
+        Hugging Face still hosts pfnet/plamo-2-translate for self-hosting. That model is the
+        specialized translator, but it is not what the public PLaMo API serves. A Cloudflare
+        Worker should not grow a GPU sidecar to prove a point about knowledge cutoff.
+      </p>
+      <p>
+        If a 2026 product name is translated into a paraphrase, the model is guessing. Keep
+        PLaMo 3.0 Prime, Sakana Namazu, DeepL, and gpt-4.1-mini in the original Latin spelling
+        on first mention, then write Japanese around them.
+      </p>
+    </article>
+  </body>
+</html>
