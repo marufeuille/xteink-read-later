@@ -49,6 +49,7 @@ import type { ClipPipeline, ClipResult, ExtractPipeline, ExtractResult } from '.
 import type { Result } from './result'
 import type { ArticleStore, ArticleWrite } from './store'
 import type { JevFailedError } from './jev'
+import type { PrRiskBlocker, PrRiskJudgment, PrRiskRoute, PrRiskTrialAction } from './pr-risk'
 import { CLASSIFICATION_STATUSES, CLASSIFY_ERROR_CODES } from '../classify/taxonomy'
 
 type Equals<A, B> =
@@ -291,6 +292,23 @@ type _envHasSecretsAndBucket = Assert<
     : false
 >
 
+type _prRiskTrialIsRecordOnly = Assert<Equals<PrRiskJudgment['trialAction'], PrRiskTrialAction>>
+type _prRiskTrialActionLiteral = Assert<Equals<PrRiskTrialAction, 'record_only'>>
+type _prRiskRouteHasNoMerge = Assert<Equals<PrRiskRoute, 'additional_review' | 'low_risk'>>
+type _prRiskBlockers = Assert<
+  Equals<
+    PrRiskBlocker,
+    | 'incomplete_input'
+    | 'hard_rule'
+    | 'jev_skipped'
+    | 'jev_failed'
+    | 'low_confidence'
+    | 'jev_high'
+    | 'noul_high'
+  >
+>
+type _prRiskRuleVersionPinned = Assert<Equals<PrRiskJudgment['ruleVersion'], 'pr-risk-v1'>>
+
 export type CompileChecks = {
   readonly languageIsBinary: _languageIsBinary
   readonly storedLanguageIsJa: _storedLanguageIsJa
@@ -340,4 +358,9 @@ export type CompileChecks = {
   readonly keysAreObjectKeys: _keysAreObjectKeys
   readonly jobKeyPrefix: _jobKeyPrefix
   readonly envHasSecretsAndBucket: _envHasSecretsAndBucket
+  readonly prRiskTrialIsRecordOnly: _prRiskTrialIsRecordOnly
+  readonly prRiskTrialActionLiteral: _prRiskTrialActionLiteral
+  readonly prRiskRouteHasNoMerge: _prRiskRouteHasNoMerge
+  readonly prRiskBlockers: _prRiskBlockers
+  readonly prRiskRuleVersionPinned: _prRiskRuleVersionPinned
 }

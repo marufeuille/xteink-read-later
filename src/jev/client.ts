@@ -9,14 +9,14 @@ import type {
   SystemOneResult,
   SystemOneUsage,
 } from '../types'
-import { err, ok } from '../types'
+import { err, ok } from '../types/result.ts'
 import {
   JEV_APP_TITLE,
   JEV_HTTP_REFERER,
   JEV_MODEL,
   JEV_TIMEOUT_MS,
   OPENROUTER_DECISIONS_URL,
-} from './constants'
+} from './constants.ts'
 
 function fail(code: JevErrorCode, reason: string): Result<SystemOneResult, JevFailedError> {
   return err({ kind: 'jev_failed', code, reason })
