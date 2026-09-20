@@ -57,11 +57,20 @@ function mean(values: readonly number[]): number | null {
   return values.reduce((sum, value) => sum + value, 0) / values.length
 }
 
+function japaneseCell(result: BakeoffRunResult): string {
+  const scores = result.scores
+  if (!result.ok || scores === undefined) {
+    return '—'
+  }
+  const pct = `${(scores.japaneseCharRatio * 100).toFixed(0)}%`
+  return scores.looksUntranslated ? `未翻訳 ${pct}` : pct
+}
+
 export function formatBakeoffSummary(results: readonly BakeoffRunResult[]): string {
   const lines: string[] = [
     '# 翻訳焼比べ（自然さ・速度・コスト）',
     '',
-    '確認順: まず `ok`。`OPENAI_API_KEY is not set` / `PLAMO_API_KEY is not set` はキーがプロセスに届いていない。`.dev.vars` は焼比べランナーが読む。`HTTP 401` はキー無効。',
+    '確認順: まず `ok`。`OPENAI_API_KEY is not set` / `PLAMO_API_KEY is not set` はキーがプロセスに届いていない。`.dev.vars` は焼比べランナーが読む。`HTTP 401` はキー無効。keep token が全部当たっていても、日本語比率が極端に低い行は原文コピー（未翻訳）である。',
     '',
     '## 速度',
     '',
@@ -109,26 +118,26 @@ export function formatBakeoffSummary(results: readonly BakeoffRunResult[]): stri
     '',
     '自動では採点しない。`hedging-prose`（イディオム・ですます）を先に読み、次にコード保持の `workers-compat` を見る。本文は `tmp/translate-bakeoff/<articleId>/<modelId>.md`。',
     '',
-    '| model | article | keep欠落 | 見出し | コードフェンス |',
-    '| --- | --- | --- | --- | --- |',
+    '| model | article | 日本語 | keep欠落 | 見出し | コードフェンス |',
+    '| --- | --- | --- | --- | --- | --- |',
   )
 
   for (const result of results) {
     if (!result.ok || result.scores === undefined) {
       const reason = result.reason ?? 'failed'
-      lines.push(`| ${result.modelId} | ${result.articleId} | ${reason} | — | — |`)
+      lines.push(`| ${result.modelId} | ${result.articleId} | — | ${reason} | — | — |`)
       continue
     }
     const missing =
       result.scores.missingKeepTokens.length === 0 ? 'なし' : result.scores.missingKeepTokens.join(', ')
     lines.push(
-      `| ${result.modelId} | ${result.articleId} | ${missing} | ${result.scores.headingCount}/${result.scores.sourceHeadingCount} | ${result.scores.codeFenceCount}/${result.scores.sourceCodeFenceCount} |`,
+      `| ${result.modelId} | ${result.articleId} | ${japaneseCell(result)} | ${missing} | ${result.scores.headingCount}/${result.scores.sourceHeadingCount} | ${result.scores.codeFenceCount}/${result.scores.sourceCodeFenceCount} |`,
     )
   }
 
   lines.push(
     '',
-    '判断: 自然さで明確に勝ち、60 秒以内、コストが許容ならそのモデル。keep token 欠落が多い候補は落す。',
+    '判断: 自然さで明確に勝ち、60 秒以内、コストが許容ならそのモデル。未翻訳や keep token 欠落が多い候補は落す。',
     '',
   )
   return lines.join('\n')

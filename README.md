@@ -217,7 +217,7 @@ npm run translate:bakeoff
 
 `.dev.vars` の `OPENAI_API_KEY` / `PLAMO_API_KEY` を読む。シェルで上書きしてもよい。GitHub Secrets にも Worker secret にも置かない。`PLAMO_API_KEY` を `.dev.vars` に足したあと `wrangler types` が `worker-configuration.d.ts` を触ったら、その型差分はコミットしない。
 
-確認は stdout の3軸表（自然さの読み方・速度・コスト）と `tmp/translate-bakeoff/`（gitignore）。自然さは `hedging-prose/<model>.md` を先に読む。`ok: false` で `is not set` ならキー未到達、`HTTP 401` ならキー無効。
+確認は stdout の3軸表（自然さの読み方・速度・コスト）と `tmp/translate-bakeoff/`（gitignore）。自然さは `hedging-prose/<model>.md` を先に読む。表の「未翻訳」は原文の英語コピー。`ok: false` で `is not set` ならキー未到達、`HTTP 401` ならキー無効。
 
 メモは `docs/plan/mar-44-translate-models.md`。
 

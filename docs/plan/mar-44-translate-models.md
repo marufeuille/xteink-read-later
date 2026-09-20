@@ -73,7 +73,7 @@ npm run translate:bakeoff
 
 1. **速度:** stdout 表の平均・最大 `durationMs`。60 秒超は落す。
 2. **コスト:** 建値（USD または円）と 150 円/$ の換算列。記事 4 本合計。
-3. **自然さ:** 自動採点しない。`tmp/translate-bakeoff/hedging-prose/<model>.md` を先に読み、イディオムの直訳・ですます混在を見る。keep token 欠落は構造の減点であり自然さの代用ではない。
+3. **自然さ:** `hedging-prose/<model>.md` を先に読む。表の「未翻訳」は原文コピー（日本語比率が極端に低い）。keep token が全部当たっていても翻訳成功ではない。PLaMo には英語の title/content JSON をそのまま返させないアダプタを使う。
 
 `contentExcerpt` は先頭 400 文字だけなので、自然さの判定には使わない。
 
