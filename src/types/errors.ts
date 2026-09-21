@@ -58,18 +58,23 @@ export type InternalError = {
   readonly reason: string
 }
 
+export type CsrfFailedError = {
+  readonly kind: 'csrf_failed'
+}
+
 export type FetchError = PayloadTooLargeError | FetchFailedError
 
 export type ExtractError = InvalidUrlError | FetchError | ExtractFailedError
 
 export type PipelineError = ExtractError | TranslateFailedError | EpubFailedError
 
-export type HttpErrorStatus = 400 | 401 | 404 | 413 | 422 | 500 | 502 | 503
+export type HttpErrorStatus = 400 | 401 | 403 | 404 | 413 | 422 | 500 | 502 | 503
 
 export const httpStatusByErrorKind = {
   invalid_url: 400,
   invalid_epub: 400,
   unauthorized: 401,
+  csrf_failed: 403,
   not_found: 404,
   payload_too_large: 413,
   extract_failed: 422,
@@ -81,6 +86,7 @@ export const httpStatusByErrorKind = {
 } as const satisfies Record<
   | PipelineError['kind']
   | UnauthorizedError['kind']
+  | CsrfFailedError['kind']
   | NotFoundError['kind']
   | InvalidEpubError['kind']
   | QueueFailedError['kind']

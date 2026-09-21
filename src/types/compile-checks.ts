@@ -247,7 +247,16 @@ type _purchasedBookUsesBearer = Assert<
     : false
 >
 
+type _postCandidateUsesBearer = Assert<
+  ApiRoutes['postCandidate']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
+
+type _listCandidatesUsesBearer = Assert<
+  ApiRoutes['listCandidates']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
+
 type _epubFailedIs500 = Assert<Equals<(typeof httpStatusByErrorKind)['epub_failed'], 500>>
+type _csrfFailedIs403 = Assert<Equals<(typeof httpStatusByErrorKind)['csrf_failed'], 403>>
 
 type _storeDeleteReturnsBoolean = Assert<
   ReturnType<ArticleStore['delete']> extends Promise<boolean> ? true : false
@@ -282,6 +291,7 @@ type _envHasSecretsAndBucket = Assert<
   Cloudflare.Env extends {
     ARTICLES: R2Bucket
     CLIP_QUEUE: Queue
+    CANDIDATES: D1Database
     OPENAI_API_KEY: string
     OPENROUTER_API_KEY: string
     CLIP_TOKEN: string
@@ -352,7 +362,10 @@ export type CompileChecks = {
   readonly getArticleUsesBasic: _getArticleUsesBasic
   readonly getArticleEpubUsesBasic: _getArticleEpubUsesBasic
   readonly purchasedBookUsesBearer: _purchasedBookUsesBearer
+  readonly postCandidateUsesBearer: _postCandidateUsesBearer
+  readonly listCandidatesUsesBearer: _listCandidatesUsesBearer
   readonly epubFailedIs500: _epubFailedIs500
+  readonly csrfFailedIs403: _csrfFailedIs403
   readonly storeDeleteReturnsBoolean: _storeDeleteReturnsBoolean
   readonly pipelinesReturnResults: _pipelinesReturnResults
   readonly keysAreObjectKeys: _keysAreObjectKeys

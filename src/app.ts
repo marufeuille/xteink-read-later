@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { unavailableClassification } from './classify/taxonomy'
 import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
+import { mountCandidateRoutes, type CandidateHttpDeps } from './http/candidate-routes'
 import { toClipJobBody, toClipQueuedBody } from './http/clip-job'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { parseClipShareText } from './http/clip-request'
@@ -46,7 +47,7 @@ export type AppDeps = {
   readonly store?: ArticleStore
   readonly createStore?: CreateArticleStore
   readonly queue?: Queue<ClipQueueMessage>
-}
+} & CandidateHttpDeps
 
 function storeFor(env: Cloudflare.Env, deps: AppDeps): ArticleStore {
   if (deps.store !== undefined) {
@@ -290,6 +291,8 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     }
     return c.json({ deleted: true }, 200)
   })
+
+  mountCandidateRoutes(app, deps)
 
   return app
 }

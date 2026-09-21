@@ -19,6 +19,16 @@
       "bucket_name": "xteink-read-later-articles"
     }
   ],
+  // Local/dev placeholder. Deploy job looks up or creates the named D1 database
+  // and rewrites this id before `wrangler deploy`. See .github/scripts/ensure-d1-database.sh.
+  "d1_databases": [
+    {
+      "binding": "CANDIDATES",
+      "database_name": "xteink-read-later-candidates",
+      "database_id": "00000000-0000-4000-8000-000000000073",
+      "migrations_dir": "migrations"
+    }
+  ],
   "queues": {
     "producers": [
       {
