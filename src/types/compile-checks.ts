@@ -45,13 +45,22 @@ import {
   type ClipJobKey,
 } from './id'
 import type { ClipQueueMessage } from './job'
-import type { CandidateClipLog, CandidateRecommendLog, FeedScheduleLog, OpdsDownloadLog } from '../log'
+import type {
+  CandidateClipLog,
+  CandidateRecommendLog,
+  DailyDigestLog,
+  DigestScheduleLog,
+  FeedScheduleLog,
+  OpdsDownloadLog,
+} from '../log'
 import type { ClipPipeline, ClipResult, ExtractPipeline, ExtractResult } from './pipeline'
 import type { Result } from './result'
 import type { ArticleStore, ArticleWrite } from './store'
 import type { JevFailedError } from './jev'
 import type { PrRiskBlocker, PrRiskJudgment, PrRiskRoute, PrRiskTrialAction } from './pr-risk'
 import {
+  DAILY_DIGEST_CRON,
+  DAILY_DIGEST_TIMEZONE,
   DAILY_IDENTITY_STRATEGY,
   DAILY_TIMEZONE,
   type DailyIssueIdentity,
@@ -340,6 +349,7 @@ type _envHasSecretsAndBucket = Assert<
     ARTICLES: R2Bucket
     CLIP_QUEUE: Queue
     FEED_QUEUE: Queue
+    DIGEST_QUEUE: Queue
     CANDIDATES: D1Database
     OPENAI_API_KEY: string
     OPENROUTER_API_KEY: string
@@ -394,6 +404,14 @@ type _dailyTimezoneIsTokyo = Assert<Equals<typeof DAILY_TIMEZONE, 'Asia/Tokyo'>>
 type _feedCollectCronIsUtc1900 = Assert<Equals<typeof FEED_COLLECT_CRON, '0 19 * * *'>>
 type _feedCollectTimezoneIsTokyo = Assert<Equals<typeof FEED_COLLECT_TIMEZONE, 'Asia/Tokyo'>>
 type _feedScheduleLogHasNoUrl = Assert<'url' extends keyof FeedScheduleLog ? false : true>
+type _dailyDigestCronIsUtc2100 = Assert<Equals<typeof DAILY_DIGEST_CRON, '0 21 * * *'>>
+type _dailyDigestTimezoneIsTokyo = Assert<Equals<typeof DAILY_DIGEST_TIMEZONE, 'Asia/Tokyo'>>
+type _digestScheduleLogHasNoUrl = Assert<'url' extends keyof DigestScheduleLog ? false : true>
+type _dailyDigestLogHasNoUrl = Assert<'url' extends keyof DailyDigestLog ? false : true>
+type _dailyDigestLogHasNoBody = Assert<'contentHtml' extends keyof DailyDigestLog ? false : true>
+type _postDailyDigestUsesBearer = Assert<
+  ApiRoutes['postDailyDigest']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
 type _dailyIdentityHasCatalogFields = Assert<
   DailyIssueIdentity extends {
     readonly opdsEntryId: string
@@ -489,4 +507,10 @@ export type CompileChecks = {
   readonly feedCollectCronIsUtc1900: _feedCollectCronIsUtc1900
   readonly feedCollectTimezoneIsTokyo: _feedCollectTimezoneIsTokyo
   readonly feedScheduleLogHasNoUrl: _feedScheduleLogHasNoUrl
+  readonly dailyDigestCronIsUtc2100: _dailyDigestCronIsUtc2100
+  readonly dailyDigestTimezoneIsTokyo: _dailyDigestTimezoneIsTokyo
+  readonly digestScheduleLogHasNoUrl: _digestScheduleLogHasNoUrl
+  readonly dailyDigestLogHasNoUrl: _dailyDigestLogHasNoUrl
+  readonly dailyDigestLogHasNoBody: _dailyDigestLogHasNoBody
+  readonly postDailyDigestUsesBearer: _postDailyDigestUsesBearer
 }
