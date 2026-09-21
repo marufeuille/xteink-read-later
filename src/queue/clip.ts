@@ -25,6 +25,7 @@ import type {
 import { isClipJobId, isClipRunId, parseHttpUrl } from '../types'
 
 export const CLIP_QUEUE_MAX_RETRIES = 3
+export const CLIP_QUEUE_NAME = 'xteink-read-later-clip'
 
 export type ClipQueueHandlerDeps = {
   readonly clipPipeline?: ClipPipeline

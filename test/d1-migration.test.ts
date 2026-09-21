@@ -18,4 +18,14 @@ describe('D1 candidate migration', () => {
     expect(sql).not.toMatch(/CREATE TABLE candidate_articles[\s\S]*topic /)
     expect(sql).toContain('Existing R2 articles are not migrated')
   })
+
+  it('creates feed source tables without mixing outlet type and article topics', () => {
+    const sql = readFileSync(join(root, 'migrations/0002_feed_sources.sql'), 'utf8')
+    expect(sql).toContain('CREATE TABLE feed_sources')
+    expect(sql).toContain('feed_url TEXT NOT NULL UNIQUE')
+    expect(sql).toContain("source_type IN ('corporate_blog', 'posting_site', 'news', 'curation')")
+    expect(sql).toContain('topic_tags TEXT NOT NULL DEFAULT')
+    expect(sql).toContain('enabled INTEGER NOT NULL DEFAULT 1')
+    expect(sql).toContain('Collection is separate from clip Queue')
+  })
 })

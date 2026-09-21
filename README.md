@@ -129,7 +129,7 @@ npm run dev
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
-`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`GET /candidates.json` は Bearer `CLIP_TOKEN`。候補の Web 画面は同じトークンで `/candidates/login` し、HttpOnly Cookie を使う（HTML にトークンは出さない。フォーム POST は CSRF トークン必須）。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` と候補の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect` は Bearer `CLIP_TOKEN`。候補と情報源の Web 画面は同じトークンで `/candidates/login` し、HttpOnly Cookie を使う（HTML にトークンは出さない。フォーム POST は CSRF トークン必須）。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。
 
 ### 読書候補（翻訳しない URL 投入）
 
@@ -147,7 +147,31 @@ curl -sS "$WORKER/candidates.json" \
   -H "Authorization: Bearer $CLIP_TOKEN"
 ```
 
-同一記事はリダイレクト後 URL と canonical でまとめる。別の発見 URL は `candidate_discoveries` に残す（情報源の種別。話題の分類列には混ぜない）。
+同一記事はリダイレクト後 URL と canonical でまとめる。別の発見 URL は `candidate_discoveries` に残す（情報源の種別。話題の分類列には混ぜない）。フィード由来は `feed:<sourceId>`、手動投入は `manual_url`。
+
+### 情報源（RSS/Atom の巡回）
+
+企業ブログや Zenn などのフィードを登録し、手動で収集して候補にする。`POST /clip` の全文生成 Queue とは別の `FEED_QUEUE`（`xteink-read-later-feed`）で処理する。媒体ごとの専用パーサは置かない。
+
+ブラウザ: `{worker}/sources`（候補一覧から「情報源」）。名前・サイト URL・フィード URL・情報源種別（企業ブログ / 投稿サイト / ニュース / キュレーション）・任意の話題タグ・有効/停止。種別は記事の話題やおすすめ度とは別。サイト URL だけ入れてフィードを発見できないときは、フィード URL を入れる。RSS の無いサイトは汎用クローラーせず、単発の記事 URL 投入を使う。停止は今後の収集だけ止め、既存候補や送信済み全文は消さない。
+
+初期に通した媒体（専用コードは無い。記録のみ）:
+
+- Zenn トピックフィード（投稿サイト）例: `https://zenn.dev/topics/cloudflare/feed`
+- Mercari Engineering Blog（企業ブログ）: `https://engineering.mercari.com/blog/feed.xml`
+
+1 回の収集は情報源ごとに独立する。件数 20、フィードサイズ約 1MB、時間 20 秒、Queue 再試行 3 回が上限。失敗は情報源一覧に出る。同じ「今すぐ収集」で再実行する。
+
+```bash
+curl -sS "$WORKER/sources" \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
+  -d '{"name":"Zenn Cloudflare","siteUrl":"https://zenn.dev/topics/cloudflare","feedUrl":"https://zenn.dev/topics/cloudflare/feed","sourceType":"posting_site","topicTags":["cloudflare"]}'
+curl -sS "$WORKER/sources/$SOURCE_ID/collect" \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
+  -X POST
+```
+
 
 ローカルの D1 は `wrangler dev` が migrations を適用する。手元で確認するとき:
 
@@ -255,7 +279,7 @@ CI の `typecheck, unit, e2e` が失敗した run ではデプロイジョブは
 
 ### 初回だけ — Cloudflare 側（Workers Secret）
 
-アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。R2 バケット `xteink-read-later-articles`、Queue `xteink-read-later-clip`、D1 `xteink-read-later-candidates` は main のデプロイジョブが無ければ作る（手元で作ってもよい）。
+アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。R2 バケット `xteink-read-later-articles`、Queue `xteink-read-later-clip`、Queue `xteink-read-later-feed`、D1 `xteink-read-later-candidates` は main のデプロイジョブが無ければ作る（手元で作ってもよい）。
 
 ```bash
 npx wrangler login
@@ -266,7 +290,7 @@ npx wrangler secret put OPDS_USERNAME
 npx wrangler secret put OPDS_PASSWORD
 ```
 
-プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。任意で `npx wrangler d1 create xteink-read-later-candidates`（id はデプロイジョブが wrangler.jsonc に書く）。
+プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。任意で `npx wrangler queues create xteink-read-later-feed`。任意で `npx wrangler d1 create xteink-read-later-candidates`（id はデプロイジョブが wrangler.jsonc に書く）。
 
 ### GitHub Secrets（Actions が Cloudflare に認証するため）
 

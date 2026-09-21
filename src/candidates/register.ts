@@ -6,6 +6,7 @@ import {
   ok,
   type CandidateArticle,
   type CandidateRegisterResult,
+  type CandidateSourceKind,
   type CandidateStore,
   type FetchPage,
   type HttpUrl,
@@ -19,6 +20,7 @@ export type RegisterCandidateDeps = {
   readonly store: CandidateStore
   readonly fetchPage: FetchPage
   readonly now?: () => Date
+  readonly sourceKind?: CandidateSourceKind
 }
 
 function isoNow(now: () => Date): string {
@@ -45,16 +47,17 @@ async function persist(
   submittedUrl: HttpUrl,
   discoveredAt: string,
   saved: CandidateArticle,
+  sourceKind: CandidateSourceKind,
 ): Promise<void> {
   await store.put(saved)
   await store.addDiscovery({
     id: await candidateDiscoveryIdFrom({
       candidateId: saved.id,
-      sourceKind: CANDIDATE_SOURCE_KIND_MANUAL_URL,
+      sourceKind,
       discoveredUrl: submittedUrl,
     }),
     candidateId: saved.id,
-    sourceKind: CANDIDATE_SOURCE_KIND_MANUAL_URL,
+    sourceKind,
     discoveredUrl: submittedUrl,
     discoveredAt,
   })
@@ -89,6 +92,7 @@ export async function registerCandidate(
 ): Promise<Result<CandidateRegisterResult, InvalidUrlError>> {
   const now = deps.now ?? (() => new Date())
   const discoveredAt = isoNow(now)
+  const sourceKind = deps.sourceKind ?? CANDIDATE_SOURCE_KIND_MANUAL_URL
   const fetchable = assertFetchableCandidateUrl(submittedUrl)
   if (!fetchable.ok) {
     return fetchable
@@ -115,7 +119,7 @@ export async function registerCandidate(
       updatedAt: discoveredAt,
     }
     const saved = savedCandidate(existing, incoming)
-    await persist(deps.store, submittedUrl, discoveredAt, saved)
+    await persist(deps.store, submittedUrl, discoveredAt, saved, sourceKind)
     return ok({
       candidate: saved,
       duplicate: existing !== null,
@@ -149,7 +153,7 @@ export async function registerCandidate(
     updatedAt: discoveredAt,
   }
   const saved = savedCandidate(existing, incoming)
-  await persist(deps.store, submittedUrl, discoveredAt, saved)
+  await persist(deps.store, submittedUrl, discoveredAt, saved, sourceKind)
   const noticeKind = metadata.paywalled ? 'paywalled' : existing !== null ? 'duplicate' : 'registered'
   return ok({
     candidate: saved,

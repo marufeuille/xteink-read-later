@@ -10,11 +10,15 @@ declare const clipJobIdBrand: unique symbol
 declare const clipRunIdBrand: unique symbol
 declare const candidateIdBrand: unique symbol
 declare const candidateDiscoveryIdBrand: unique symbol
+declare const feedSourceIdBrand: unique symbol
+declare const feedRunIdBrand: unique symbol
 
 export type ClipJobId = string & { readonly [clipJobIdBrand]: void }
 export type ClipRunId = string & { readonly [clipRunIdBrand]: void }
 export type CandidateId = string & { readonly [candidateIdBrand]: void }
 export type CandidateDiscoveryId = string & { readonly [candidateDiscoveryIdBrand]: void }
+export type FeedSourceId = string & { readonly [feedSourceIdBrand]: void }
+export type FeedRunId = string & { readonly [feedRunIdBrand]: void }
 
 export type ArticleMetaKey = `articles/${ArticleId}/meta.json`
 export type ArticleEpubKey = `articles/${ArticleId}/book.epub`
@@ -26,6 +30,8 @@ const CLIP_JOB_ID_PATTERN = /^job_[a-f0-9]{32}$/
 const CLIP_RUN_ID_PATTERN = /^run_[a-f0-9]{32}$/
 const CANDIDATE_ID_PATTERN = /^cand_[a-f0-9]{32}$/
 const CANDIDATE_DISCOVERY_ID_PATTERN = /^disc_[a-f0-9]{32}$/
+const FEED_SOURCE_ID_PATTERN = /^src_[a-f0-9]{32}$/
+const FEED_RUN_ID_PATTERN = /^frun_[a-f0-9]{32}$/
 
 function bytesToHex(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
@@ -54,6 +60,14 @@ export function isCandidateId(value: string): value is CandidateId {
 
 export function isCandidateDiscoveryId(value: string): value is CandidateDiscoveryId {
   return CANDIDATE_DISCOVERY_ID_PATTERN.test(value)
+}
+
+export function isFeedSourceId(value: string): value is FeedSourceId {
+  return FEED_SOURCE_ID_PATTERN.test(value)
+}
+
+export function isFeedRunId(value: string): value is FeedRunId {
+  return FEED_RUN_ID_PATTERN.test(value)
 }
 
 export function asArticleId(value: string): ArticleId {
@@ -91,10 +105,30 @@ export function asCandidateDiscoveryId(value: string): CandidateDiscoveryId {
   return value
 }
 
+export function asFeedSourceId(value: string): FeedSourceId {
+  if (!isFeedSourceId(value)) {
+    throw new TypeError(`Invalid feed source id: ${value}`)
+  }
+  return value
+}
+
+export function asFeedRunId(value: string): FeedRunId {
+  if (!isFeedRunId(value)) {
+    throw new TypeError(`Invalid feed run id: ${value}`)
+  }
+  return value
+}
+
 export function newClipRunId(): ClipRunId {
   const bytes = new Uint8Array(16)
   crypto.getRandomValues(bytes)
   return asClipRunId(`run_${bytesToHex(bytes)}`)
+}
+
+export function newFeedRunId(): FeedRunId {
+  const bytes = new Uint8Array(16)
+  crypto.getRandomValues(bytes)
+  return asFeedRunId(`frun_${bytesToHex(bytes)}`)
 }
 
 export async function articleIdFromCanonicalUrl(canonicalUrl: HttpUrl): Promise<ArticleId> {
@@ -126,6 +160,11 @@ export async function candidateDiscoveryIdFrom(input: {
     new TextEncoder().encode(`${input.candidateId}\0${input.sourceKind}\0${input.discoveredUrl}`),
   )
   return asCandidateDiscoveryId(`disc_${hex}`)
+}
+
+export async function feedSourceIdFromFeedUrl(feedUrl: HttpUrl): Promise<FeedSourceId> {
+  const hex = await sha256Hex32(new TextEncoder().encode(feedUrl))
+  return asFeedSourceId(`src_${hex}`)
 }
 
 export function purchasedCanonicalUrl(id: ArticleId): HttpUrl {

@@ -76,8 +76,14 @@ describe('error-response', () => {
     expect(toErrorBody({ kind: 'not_found' }).error.status).toBe(404)
     expect(toErrorBody({ kind: 'queue_failed', reason: 'queue unavailable' }).error.status).toBe(503)
     expect(toErrorBody({ kind: 'csrf_failed' }).error.status).toBe(403)
+    expect(toErrorBody({ kind: 'invalid_feed', reason: 'not a feed', url: 'https://example.com/x' }).error.status).toBe(
+      400,
+    )
+    expect(toErrorBody({ kind: 'source_disabled' }).error.status).toBe(409)
     expect(errorMessage({ kind: 'queue_failed', reason: 'queue unavailable' })).toContain('queue unavailable')
     expect(errorMessage({ kind: 'unauthorized' })).toBe('Unauthorized')
     expect(errorMessage({ kind: 'csrf_failed' })).toBe('CSRF token mismatch')
+    expect(errorMessage({ kind: 'invalid_feed', reason: 'not a feed', url: '' })).toBe('not a feed')
+    expect(errorMessage({ kind: 'source_disabled' })).toBe('Source is stopped')
   })
 })

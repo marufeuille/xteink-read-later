@@ -1,24 +1,17 @@
-import type { FetchError, FetchedPage, FetchPage, HttpUrl, Result } from '../types'
-import { err, ok, parseHttpUrl } from '../types'
-import { readBoundedBytes } from './bounded-body'
-import { FETCH_TIMEOUT_MS, MAX_HTML_BYTES, USER_AGENT } from './constants'
-import { decodeHtmlBytes } from './html-encoding'
+import { readBoundedBytes } from '../extract/bounded-body'
+import { FETCH_TIMEOUT_MS, USER_AGENT } from '../extract/constants'
+import { decodeHtmlBytes } from '../extract/html-encoding'
+import type { FetchError, FetchedFeed, FetchFeed, HttpUrl, Result } from '../types'
+import { err, MAX_FEED_BYTES, ok, parseHttpUrl } from '../types'
+import { isFeedContentType } from './parse'
 
-function isHtmlContentType(contentType: string): boolean {
-  if (contentType.length === 0) {
-    return true
-  }
-  const mime = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
-  return mime === 'text/html' || mime === 'application/xhtml+xml'
-}
-
-export const fetchPage: FetchPage = async (url: HttpUrl): Promise<Result<FetchedPage, FetchError>> => {
+export const fetchFeed: FetchFeed = async (url: HttpUrl): Promise<Result<FetchedFeed, FetchError>> => {
   try {
     const response = await fetch(url, {
       redirect: 'follow',
       headers: {
         'User-Agent': USER_AGENT,
-        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        Accept: 'application/rss+xml, application/atom+xml, application/xml, text/xml;q=0.9, */*;q=0.8',
         'Accept-Language': 'ja,en;q=0.8',
       },
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -33,7 +26,7 @@ export const fetchPage: FetchPage = async (url: HttpUrl): Promise<Result<Fetched
     }
 
     const contentType = response.headers.get('content-type') ?? ''
-    if (!isHtmlContentType(contentType)) {
+    if (!isFeedContentType(contentType)) {
       return err({
         kind: 'fetch_failed',
         url,
@@ -41,7 +34,7 @@ export const fetchPage: FetchPage = async (url: HttpUrl): Promise<Result<Fetched
       })
     }
 
-    const bytes = await readBoundedBytes(response, MAX_HTML_BYTES)
+    const bytes = await readBoundedBytes(response, MAX_FEED_BYTES)
     if (!bytes.ok) {
       return bytes
     }
@@ -59,8 +52,8 @@ export const fetchPage: FetchPage = async (url: HttpUrl): Promise<Result<Fetched
     return ok({
       requestedUrl: url,
       finalUrl,
-      contentType: contentType || 'text/html',
-      html: decoded.html,
+      contentType: contentType || 'application/xml',
+      xml: decoded.html,
     })
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)

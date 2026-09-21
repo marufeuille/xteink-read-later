@@ -34,6 +34,10 @@
       {
         "binding": "CLIP_QUEUE",
         "queue": "xteink-read-later-clip"
+      },
+      {
+        "binding": "FEED_QUEUE",
+        "queue": "xteink-read-later-feed"
       }
     ],
     "consumers": [
@@ -42,6 +46,13 @@
         "max_batch_size": 1,
         "max_batch_timeout": 1,
         // No DLQ; recover stuck jobs with POST /clip.
+        "max_retries": 3
+      },
+      {
+        "queue": "xteink-read-later-feed",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        // No DLQ; recover failed collections with POST /sources/:id/collect.
         "max_retries": 3
       }
     ]

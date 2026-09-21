@@ -255,8 +255,22 @@ type _listCandidatesUsesBearer = Assert<
   ApiRoutes['listCandidates']['auth'] extends { readonly scheme: 'bearer' } ? true : false
 >
 
+type _listFeedSourcesUsesBearer = Assert<
+  ApiRoutes['listFeedSources']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
+
+type _postFeedSourceUsesBearer = Assert<
+  ApiRoutes['postFeedSource']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
+
+type _collectFeedSourceUsesBearer = Assert<
+  ApiRoutes['collectFeedSource']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
+
 type _epubFailedIs500 = Assert<Equals<(typeof httpStatusByErrorKind)['epub_failed'], 500>>
 type _csrfFailedIs403 = Assert<Equals<(typeof httpStatusByErrorKind)['csrf_failed'], 403>>
+type _invalidFeedIs400 = Assert<Equals<(typeof httpStatusByErrorKind)['invalid_feed'], 400>>
+type _sourceDisabledIs409 = Assert<Equals<(typeof httpStatusByErrorKind)['source_disabled'], 409>>
 
 type _storeDeleteReturnsBoolean = Assert<
   ReturnType<ArticleStore['delete']> extends Promise<boolean> ? true : false
@@ -291,6 +305,7 @@ type _envHasSecretsAndBucket = Assert<
   Cloudflare.Env extends {
     ARTICLES: R2Bucket
     CLIP_QUEUE: Queue
+    FEED_QUEUE: Queue
     CANDIDATES: D1Database
     OPENAI_API_KEY: string
     OPENROUTER_API_KEY: string
@@ -364,8 +379,13 @@ export type CompileChecks = {
   readonly purchasedBookUsesBearer: _purchasedBookUsesBearer
   readonly postCandidateUsesBearer: _postCandidateUsesBearer
   readonly listCandidatesUsesBearer: _listCandidatesUsesBearer
+  readonly listFeedSourcesUsesBearer: _listFeedSourcesUsesBearer
+  readonly postFeedSourceUsesBearer: _postFeedSourceUsesBearer
+  readonly collectFeedSourceUsesBearer: _collectFeedSourceUsesBearer
   readonly epubFailedIs500: _epubFailedIs500
   readonly csrfFailedIs403: _csrfFailedIs403
+  readonly invalidFeedIs400: _invalidFeedIs400
+  readonly sourceDisabledIs409: _sourceDisabledIs409
   readonly storeDeleteReturnsBoolean: _storeDeleteReturnsBoolean
   readonly pipelinesReturnResults: _pipelinesReturnResults
   readonly keysAreObjectKeys: _keysAreObjectKeys
