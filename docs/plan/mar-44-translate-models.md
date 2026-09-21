@@ -7,7 +7,7 @@
 ## 決定
 
 1. **読書向け整形は残す。** DeepL 単体は採用しない。
-2. **本番モデルは `gpt-4o-mini` から `gpt-4.1-mini` に上げる。** プロンプト、Chat Completions URL、`OPENAI_API_KEY` はそのまま。
+2. **本番モデルは当時 `gpt-4o-mini` から `gpt-4.1-mini` に上げた。** プロンプト、Chat Completions URL、`OPENAI_API_KEY` はそのまま。**MAR-71 で `gpt-5.6-luna` に差し替えた**（`temperature` は送らず、`reasoning_effort=none`、`max_completion_tokens=16000`）。
 3. **PLaMo 3.0 Prime は次点。** OpenAI 互換だが Secret・`json_schema`・`max_tokens` が要る。ライブ比較は `.dev.vars` に `PLAMO_API_KEY` を置いて `npm run translate:bakeoff`。
 4. **DeepL、DeepL+LLM 二段、`plamo-2-translate` 自前ホスト、gpt-4o は採用しない。** `gpt-5.6-luna` は日本語品質で勝てば差し替えてよい（同じ `OPENAI_API_KEY`。`temperature` は送らない）。
 
@@ -77,4 +77,4 @@ npm run translate:bakeoff
 
 `contentExcerpt` は先頭 400 文字だけなので、自然さの判定には使わない。
 
-PLaMo か Luna が自然さで明確に勝ち、かつ 60 秒以内なら、その時点で差し替え PR を切る。二段翻訳はしない。
+MAR-71 で Luna を本番に差し替えた。二段翻訳はしない。

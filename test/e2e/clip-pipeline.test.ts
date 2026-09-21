@@ -151,11 +151,17 @@ describe('clip pipeline E2E (fixture network)', () => {
     const pageUrl = 'https://example.com/en/compatibility-date'
     const { fetchedUrls } = installNetworkMock({
       pages: { [pageUrl]: { html: fixtureHtml('en-tech.html') } },
-      openai: async () =>
-        openaiMessageResponse(
+      openai: async (request) => {
+        const body = (await request.json()) as Record<string, unknown>
+        expect(body.model).toBe('gpt-5.6-luna')
+        expect(body.temperature).toBeUndefined()
+        expect(body.reasoning_effort).toBe('none')
+        expect(body.max_completion_tokens).toBe(16_000)
+        return openaiMessageResponse(
           'compatibility_date を最新に保つ',
           '# compatibility_date を最新に保つ\n\nnodejs_compat が必要。\n\n```\n{"compatibility_date":"2026-09-19"}\n```',
-        ),
+        )
+      },
     })
     const ctx = app()
     const response = await clipAndDrain(ctx, pageUrl)

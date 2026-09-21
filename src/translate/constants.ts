@@ -1,6 +1,8 @@
-export const OPENAI_MODEL = 'gpt-4.1-mini'
+export const OPENAI_MODEL = 'gpt-5.6-luna'
 export const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 export const OPENAI_MAX_INPUT_CHARS = 80_000
+export const OPENAI_MAX_COMPLETION_TOKENS = 16_000
+export const OPENAI_REASONING_EFFORT = 'none'
 export const TRANSLATE_TIMEOUT_MS = 60_000
 
 export const TRANSLATE_SYSTEM_PROMPT = `You convert web articles into Japanese Markdown for later EPUB conversion.

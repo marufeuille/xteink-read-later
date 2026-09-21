@@ -176,7 +176,7 @@ curl -sS -H "Authorization: Bearer $CLIP_TOKEN" \
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
 ```
 
-ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。token と記事全文は出さない。英語記事は OpenAI `gpt-4.1-mini` で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。モデル選定のメモは `docs/plan/mar-44-translate-models.md`。
+ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。token と記事全文は出さない。英語記事は OpenAI `gpt-5.6-luna` で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。モデル選定のメモは `docs/plan/mar-44-translate-models.md`。
 
 | 状態 | 意味 |
 | --- | --- |

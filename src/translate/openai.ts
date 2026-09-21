@@ -10,8 +10,10 @@ import { err, ok } from '../types'
 import { htmlToMarkdown, markdownToHtml } from '../extract/sanitize-html'
 import {
   OPENAI_CHAT_URL,
+  OPENAI_MAX_COMPLETION_TOKENS,
   OPENAI_MAX_INPUT_CHARS,
   OPENAI_MODEL,
+  OPENAI_REASONING_EFFORT,
   TRANSLATE_SYSTEM_PROMPT,
   TRANSLATE_TIMEOUT_MS,
 } from './constants'
@@ -170,7 +172,8 @@ export const translateArticle: TranslateArticle = async (
         signal: controller.signal,
         body: JSON.stringify({
           model: OPENAI_MODEL,
-          temperature: 0.2,
+          reasoning_effort: OPENAI_REASONING_EFFORT,
+          max_completion_tokens: OPENAI_MAX_COMPLETION_TOKENS,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
