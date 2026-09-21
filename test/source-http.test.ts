@@ -13,7 +13,7 @@ import {
   type FetchFeed,
   type FetchPage,
 } from '../src/types'
-import { bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
+import { accessIdentity, bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
 import { createFakeFeedQueue } from './fake-feed-queue'
 import { createFakeQueue } from './fake-queue'
 
@@ -84,7 +84,9 @@ const articlePages = {
   ),
 }
 
-function appWith(options: { fetchPage?: FetchPage; fetchFeed?: FetchFeed } = {}) {
+function appWith(
+  options: { fetchPage?: FetchPage; fetchFeed?: FetchFeed; access?: boolean } = {},
+) {
   const candidateStore = createMemoryCandidateStore()
   const sourceStore = createMemoryFeedSourceStore()
   const queue = createFakeQueue()
@@ -112,6 +114,7 @@ function appWith(options: { fetchPage?: FetchPage; fetchFeed?: FetchFeed } = {})
     sourceStore,
     fetchPage,
     fetchFeed,
+    ...(options.access === true ? accessIdentity() : {}),
   })
   const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue, FEED_QUEUE: feedQueue } as Cloudflare.Env
   return { app, candidateStore, sourceStore, queue, feedQueue, env }
@@ -143,6 +146,28 @@ describe('source HTTP', () => {
     )
     expect(created.status).toBe(401)
     expect(await created.text()).not.toContain(TEST_CLIP_TOKEN)
+    const htmlGet = await app.request('/sources', {}, env)
+    expect(htmlGet.status).toBe(401)
+    expect(await htmlGet.text()).toContain('Google アカウントで入る')
+  })
+
+  it('accepts Access HTML and rejects form collect without CSRF', async () => {
+    const { app, env } = appWith({ access: true })
+    const listed = await app.request('/sources', {}, env)
+    expect(listed.status).toBe(200)
+    const page = await listed.text()
+    expect(page).toContain('情報源')
+    expect(page).not.toContain(TEST_CLIP_TOKEN)
+    const denied = await app.request(
+      '/sources/collect',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf: 'nope' }).toString(),
+      },
+      env,
+    )
+    expect(denied.status).toBe(403)
   })
 
   it('discovers a feed from the site URL and asks for a feed URL when missing', async () => {

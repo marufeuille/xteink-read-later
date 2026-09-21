@@ -138,6 +138,9 @@ describe('candidate fixture e2e', () => {
 
     const unauth = await ctx.hono.request('/candidates.json', { headers: { accept: 'application/json' } }, ctx.env)
     expect(unauth.status).toBe(401)
+    const unauthHtml = await ctx.hono.request('/candidates', {}, ctx.env)
+    expect(unauthHtml.status).toBe(401)
+    expect(await unauthHtml.text()).toContain('Google アカウントで入る')
 
     const clip = await ctx.hono.request(
       '/clip',

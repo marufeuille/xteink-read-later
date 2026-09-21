@@ -13,6 +13,16 @@
     "cpu_ms": 30000
   },
   "workers_dev": true,
+  // wrangler dev だけ。本番の管理画面は Zero Trust のパス単位 Access（Google）で保護する。
+  // Worker 全体には掛けない（OPDS / POST /clip を壊す）。
+  "access": {
+    "dev": {
+      "aud": "xteink-read-later-dev",
+      "identity": {
+        "email": "dev@localhost"
+      }
+    }
+  },
   "r2_buckets": [
     {
       "binding": "ARTICLES",

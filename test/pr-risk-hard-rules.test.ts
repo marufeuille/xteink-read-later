@@ -13,6 +13,9 @@ describe('matchHardRules', () => {
       reasons: ['auth'],
       files: ['src/http/auth.ts'],
     })
+    expect(matchHardRules([file('src/http/clip-web-auth.ts')]).reasons).toEqual(['auth'])
+    expect(matchHardRules([file('src/http/access-identity.ts')]).reasons).toEqual(['auth'])
+    expect(matchHardRules([file('src/http/candidate-session.ts')]).reasons).toEqual(['auth'])
     expect(matchHardRules([file('.dev.vars.example')]).reasons).toEqual(['secrets'])
     expect(matchHardRules([file('.dev.vars.local')]).reasons).toEqual(['secrets'])
     expect(

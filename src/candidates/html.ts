@@ -68,7 +68,7 @@ const STYLES = `
 body { font-family: system-ui, sans-serif; margin: 0 auto; padding: 1rem; max-width: 80rem; line-height: 1.45; }
 h1 { font-size: 1.25rem; }
 label { display: block; margin: 0.75rem 0 0.35rem; }
-input[type="url"], input[type="password"], input[type="search"], select {
+input[type="url"], input[type="search"], select {
   width: 100%; box-sizing: border-box; font-size: 1rem; padding: 0.55rem;
 }
 button { font-size: 1rem; padding: 0.7rem 1rem; min-height: 44px; margin-top: 0.75rem; margin-right: 0.5rem; }
@@ -122,17 +122,10 @@ export function htmlResponse(title: string, body: string, status = 200, headers:
   })
 }
 
-export function loginPageHtml(error?: string): string {
-  const notice =
-    error === undefined ? '' : `<p class="notice" role="alert">${escapeHtml(error)}</p>`
-  return `<div class="login"><h1>候補一覧に入る</h1>
-${notice}
-<p class="note">トークンはページに埋め込みません。Cookie は HttpOnly です。</p>
-<form method="post" action="/candidates/login">
-  <label for="token">トークン</label>
-  <input id="token" name="token" type="password" autocomplete="current-password" required />
-  <button type="submit">入る</button>
-</form></div>`
+export function accessRequiredHtml(): string {
+  return `<div class="login"><h1>Google アカウントで入る</h1>
+<p class="note">Cloudflare Access が Google 認証します。トークンは使いません。認証後にこのページを開き直してください。</p>
+<p class="note"><a href="/candidates">候補一覧</a> · <a href="/sources">情報源</a></p></div>`
 }
 
 function recommendReasonsLabel(item: CandidatePublic): string {

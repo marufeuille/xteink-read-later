@@ -3,7 +3,7 @@ import { sendCandidateClip } from '../candidates/clip'
 import { enrichCandidatePublic, syncCandidateCompletion, candidateIdParam } from '../candidates/delivery'
 import { listOffset, toCandidateListBodyFromPublic, toCandidatePublic } from '../candidates/list'
 import { candidatesLocation, parseCandidateListFilters, parseListPage } from '../candidates/list-filter'
-import { candidatesPageHtml, htmlResponse, loginPageHtml, toRegisterJson } from '../candidates/html'
+import { candidatesPageHtml, htmlResponse, toRegisterJson } from '../candidates/html'
 import { reevaluateCandidate } from '../candidates/recommend'
 import { registerCandidate } from '../candidates/register'
 import { parseClipUrl } from '../extract/parse-clip-url'
@@ -23,14 +23,14 @@ import {
   type EvaluateSystemOne,
   type FetchPage,
 } from '../types'
-import { clipTokenAuthorized } from './auth'
+import { defaultGetAccessIdentity, type GetAccessIdentity } from './access-identity'
 import {
-  candidateSessionClearCookie,
-  candidateSessionSetCookie,
-  createCandidateSession,
-  csrfTokensMatch,
-} from './candidate-session'
-import { bearerOk, requestIsHttps, requireClipWebAuth, sessionFrom, wantsJson, type ClipWebAuth } from './clip-web-auth'
+  ACCESS_LOGOUT_PATH,
+  denyIfCsrfMismatch,
+  presentedCsrf,
+  requireClipWebAuth,
+  wantsJson,
+} from './clip-web-auth'
 import { parseClipShareText } from './clip-request'
 import { toErrorResponse } from './error-response'
 
@@ -43,6 +43,7 @@ export type CandidateHttpDeps = {
   readonly fetchPage?: FetchPage
   readonly now?: () => Date
   readonly evaluateRecommend?: EvaluateSystemOne
+  readonly getAccessIdentity?: GetAccessIdentity
 }
 
 const NOTICE_MESSAGES: Record<CandidateNoticeKind, string> = {
@@ -83,16 +84,6 @@ function articleStoreFor(env: Cloudflare.Env, deps: CandidateHttpDeps): ArticleS
 
 function clipQueueFor(env: Cloudflare.Env, deps: CandidateHttpDeps): Queue<ClipQueueMessage> {
   return deps.queue ?? env.CLIP_QUEUE
-}
-
-async function requireCsrf(
-  auth: ClipWebAuth,
-  presented: string | undefined,
-): Promise<Response | null> {
-  if (auth.via === 'session' && !(await csrfTokensMatch(presented, auth.session.csrfToken))) {
-    return toErrorResponse({ kind: 'csrf_failed' })
-  }
-  return null
 }
 
 async function listedBody(
@@ -174,57 +165,27 @@ async function readActionFlag(
 export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps = {}): void {
   const fetchPage = deps.fetchPage ?? defaultFetchPage
   const now = deps.now ?? (() => new Date())
+  const webAuth = (c: Context<AppEnv>) =>
+    requireClipWebAuth(c, deps.getAccessIdentity ?? defaultGetAccessIdentity)
 
-  app.on('GET', ['/candidates/login', '/candidates/login/'], async (c) => {
-    if ((await bearerOk(c)) || (await sessionFrom(c)) !== null) {
-      return c.redirect('/candidates', 302)
-    }
-    return htmlResponse('候補一覧に入る', loginPageHtml())
-  })
-
-  app.on('POST', ['/candidates/login', '/candidates/login/'], async (c) => {
-    let token = ''
-    try {
-      const form = await c.req.parseBody()
-      token = typeof form.token === 'string' ? form.token.trim() : ''
-    } catch {
-      return htmlResponse('候補一覧に入る', loginPageHtml('トークンを入力してください'), 400)
-    }
-    if (!(await clipTokenAuthorized(`Bearer ${token}`, c.env.CLIP_TOKEN))) {
-      return htmlResponse('候補一覧に入る', loginPageHtml('トークンが違います'), 401)
-    }
-    const session = await createCandidateSession(c.env.CLIP_TOKEN)
-    return htmlResponse('読書候補', '<p>移動します。</p><p><a href="/candidates">候補一覧</a></p>', 303, {
-      location: '/candidates',
-      'set-cookie': candidateSessionSetCookie(session, requestIsHttps(c)),
-    })
-  })
+  app.on('GET', ['/candidates/login', '/candidates/login/'], (c) => c.redirect('/candidates', 302))
 
   app.on('POST', ['/candidates/logout', '/candidates/logout/'], async (c) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
-    if (auth.via === 'session') {
-      let csrf = ''
-      try {
-        const form = await c.req.parseBody()
-        csrf = typeof form.csrf === 'string' ? form.csrf : ''
-      } catch {
-        csrf = ''
-      }
-      if (!(await csrfTokensMatch(csrf, auth.session.csrfToken))) {
-        return toErrorResponse({ kind: 'csrf_failed' })
-      }
+    const denied = await denyIfCsrfMismatch(auth, await presentedCsrf(c, false))
+    if (denied !== null) {
+      return denied
     }
-    return htmlResponse('候補一覧に入る', loginPageHtml(), 303, {
-      location: '/candidates/login',
-      'set-cookie': candidateSessionClearCookie(requestIsHttps(c)),
+    return htmlResponse('出る', '<p>出ます</p>', 303, {
+      location: ACCESS_LOGOUT_PATH,
     })
   })
 
   const list = async (c: Context<AppEnv>) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -235,7 +196,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     if (wantsJson(c)) {
       return c.json(body, 200)
     }
-    const csrfToken = auth.via === 'session' ? auth.session.csrfToken : ''
+    const csrfToken = auth.csrfToken
     const notice = noticeFromQuery(c.req.query('notice'))
     return htmlResponse(
       '読書候補',
@@ -249,7 +210,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
   app.on('GET', ['/candidates', '/candidates/', '/candidates.json', '/candidates.json/'], list)
 
   app.on('POST', ['/candidates/:id/clip', '/candidates/:id/clip/'], async (c) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -262,7 +223,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     if (parsed instanceof Response) {
       return parsed
     }
-    const denied = await requireCsrf(auth, parsed.csrf)
+    const denied = await denyIfCsrfMismatch(auth, parsed.csrf)
     if (denied !== null) {
       return denied
     }
@@ -297,7 +258,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
   })
 
   app.on('POST', ['/candidates/:id/recommend', '/candidates/:id/recommend/'], async (c) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -310,7 +271,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     if (parsed instanceof Response) {
       return parsed
     }
-    const denied = await requireCsrf(auth, parsed.csrf)
+    const denied = await denyIfCsrfMismatch(auth, parsed.csrf)
     if (denied !== null) {
       return denied
     }
@@ -349,7 +310,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
   })
 
   app.on('POST', ['/candidates', '/candidates/'], async (c) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -369,9 +330,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
         return toErrorResponse({ kind: 'invalid_url', url: '' })
       }
       rawUrl = shareText
-      if (auth.via === 'session' && !(await csrfTokensMatch(c.req.header('x-csrf-token'), auth.session.csrfToken))) {
-        return toErrorResponse({ kind: 'csrf_failed' })
-      }
+      csrf = c.req.header('x-csrf-token') ?? ''
     } else {
       try {
         const form = await c.req.parseBody()
@@ -381,9 +340,10 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
       } catch {
         return htmlResponse('読書候補', '<p>URL を入力してください</p>', 400)
       }
-      if (auth.via === 'session' && !(await csrfTokensMatch(csrf, auth.session.csrfToken))) {
-        return toErrorResponse({ kind: 'csrf_failed' })
-      }
+    }
+    const denied = await denyIfCsrfMismatch(auth, csrf)
+    if (denied !== null) {
+      return denied
     }
 
     const parsed = parseClipUrl({ url: rawUrl })

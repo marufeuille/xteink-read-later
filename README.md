@@ -125,17 +125,17 @@ cp .dev.vars.example .dev.vars
 npm run dev
 ```
 
-`wrangler dev` は既定で `http://localhost:8787` を開く。`.dev.vars` の `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。`OPENROUTER_API_KEY` が無いときは記事分類をスキップし、未分類のまま載せる。
+`wrangler dev` は既定で `http://localhost:8787` を開く。管理画面は wrangler の Access 開発用 identity（`wrangler.jsonc` の `access.dev`、email `dev@localhost`）で入る。`.dev.vars` の `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。`OPENROUTER_API_KEY` が無いときは記事分類をスキップし、未分類のまま載せる。
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
-`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`POST /candidates/:id/recommend`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect` は Bearer `CLIP_TOKEN`。候補と情報源の Web 画面は同じトークンで `/candidates/login` し、HttpOnly Cookie を使う（HTML にトークンは出さない。フォーム POST は CSRF トークン必須）。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と clip ポインタ、おすすめ判定（本文は持たない）を持つ。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`POST /candidates/:id/recommend`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect` は Bearer `CLIP_TOKEN`。候補と情報源の **Web 画面**（`/candidates`・`/sources` とその配下）は Cloudflare Access の Google 認証。Worker は `ctx.access` の email を見る。トークンログインとセッション Cookie は使わない。フォーム POST は CSRF トークン必須。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。Access は **Worker 全体には掛けない**（OPDS と `POST /clip` を壊す）。`POST /clip` と `GET /opds` と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と clip ポインタ、おすすめ判定（本文は持たない）を持つ。
 
 ### 読書候補（翻訳しない URL 投入）
 
 見つけた記事 URL を候補として残す。`POST /clip` の即時全文生成契約は変えない。
 
-ブラウザ: `{worker}/candidates/login` に `CLIP_TOKEN` を入れて入る。一覧はテーブル形式で、1ページあたり約30件。タイトル（フリーワード）・おすすめ度・ソースで絞り込める。公開日は **Asia/Tokyo (UTC+9)** の暦日。公開日が無い記事は「公開日不明」で、発見日を公開日の代わりにはしない。有料と判定した記事は一覧から外し、投入直後に理由を出す。無料全文を確認できない記事は「本文取得済み」と表示しない。
+ブラウザ: `{worker}/candidates` を開く。Cloudflare Access が Google アカウントで入らせる。`CLIP_TOKEN` の入力欄は無い。ローカルの `npm run dev` は wrangler の Access 開発用 identity（`dev@localhost`）を使う。一覧はテーブル形式で、1ページあたり約30件。タイトル（フリーワード）・おすすめ度・ソースで絞り込める。公開日は **Asia/Tokyo (UTC+9)** の暦日。公開日が無い記事は「公開日不明」で、発見日を公開日の代わりにはしない。有料と判定した記事は一覧から外し、投入直後に理由を出す。無料全文を確認できない記事は「本文取得済み」と表示しない。
 
 一覧にはデータエンジニア視点のおすすめ度（おすすめ / 関連あり / 優先度低）と判定状態（未判定・材料不足・低確信・失敗）を出す。理由は固定ラベルのみ。モデル確信度はおすすめ度ではない。判定失敗や低評価でも候補は残し、全文送信は続けられる。手動投入で抽出本文があるときは翻訳前 excerpt で Jev 判定する。フィード収集では時間予算のため未判定のまま残し、一覧の「判定する」で明示評価する。基準は `docs/de-recommend.md`。
 
@@ -306,6 +306,24 @@ npx wrangler secret put OPDS_PASSWORD
 ```
 
 プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。任意で `npx wrangler queues create xteink-read-later-feed`。任意で `npx wrangler d1 create xteink-read-later-candidates`（id はデプロイジョブが wrangler.jsonc に書く）。
+
+### 初回だけ — 管理画面の Google 認証（Cloudflare Access）
+
+候補一覧と情報源のブラウザ画面だけを Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`・`/opds`・`/articles`・`/books` は今までどおり Bearer / Basic。
+
+1. [Zero Trust](https://one.dash.cloudflare.com/) で組織を有効にする。
+2. [Google を identity provider にする](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/)。Google Cloud の OAuth クライアントが必要。Authorized redirect URI は `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/callback`。
+3. **Zero Trust → Access → Applications** で self-hosted アプリを作る。ドメインは本番の `workers.dev` ホストに次のパスだけ（JSON の `/candidates.json` と `/sources.json` は含めない）:
+   - `xteink-read-later.<account>.workers.dev/candidates`
+   - `xteink-read-later.<account>.workers.dev/candidates/`
+   - `xteink-read-later.<account>.workers.dev/candidates/*`
+   - `xteink-read-later.<account>.workers.dev/sources`
+   - `xteink-read-later.<account>.workers.dev/sources/`
+   - `xteink-read-later.<account>.workers.dev/sources/*`
+4. Allow ポリシー: Login method = Google、自分の Google メール。Reusable policy をアプリに付ける。
+5. `/candidates` を開いて Google で入れること、`/opds` が Access ログインに飛ばないことを確認する。
+
+Access を掛ける前にこの変更が本番へ出ると、管理 HTML は 401 になる（JSON API の Bearer は残る）。復旧は Access アプリを足すか、この PR を戻す。
 
 ### GitHub Secrets（Actions が Cloudflare に認証するため）
 

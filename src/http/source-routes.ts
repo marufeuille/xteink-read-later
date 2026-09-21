@@ -20,8 +20,8 @@ import {
   type FetchFeed,
   type FetchPage,
 } from '../types'
-import { csrfTokensMatch } from './candidate-session'
-import { requireClipWebAuth, wantsJson, type ClipWebAuth } from './clip-web-auth'
+import { defaultGetAccessIdentity, type GetAccessIdentity } from './access-identity'
+import { denyIfCsrfMismatch, presentedCsrf, requireClipWebAuth, wantsJson } from './clip-web-auth'
 import { toErrorResponse } from './error-response'
 
 export type SourceHttpDeps = {
@@ -31,6 +31,7 @@ export type SourceHttpDeps = {
   readonly fetchFeed?: FetchFeed
   readonly now?: () => Date
   readonly feedQueue?: Queue<FeedQueueMessage>
+  readonly getAccessIdentity?: GetAccessIdentity
 }
 
 function storeFor(env: Cloudflare.Env, deps: SourceHttpDeps): FeedSourceStore {
@@ -47,13 +48,6 @@ function queueFor(env: Cloudflare.Env, deps: SourceHttpDeps): Queue<FeedQueueMes
 
 function nowIso(now: () => Date): string {
   return now().toISOString()
-}
-
-async function requireCsrf(c: Context<AppEnv>, auth: ClipWebAuth, presented: string | undefined): Promise<Response | null> {
-  if (auth.via === 'session' && !(await csrfTokensMatch(presented, auth.session.csrfToken))) {
-    return toErrorResponse({ kind: 'csrf_failed' })
-  }
-  return null
 }
 
 function emptySourceFields(): Pick<
@@ -196,9 +190,11 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
   const fetchPage = deps.fetchPage ?? defaultFetchPage
   const fetchFeed = deps.fetchFeed ?? defaultFetchFeed
   const now = deps.now ?? (() => new Date())
+  const webAuth = (c: Context<AppEnv>) =>
+    requireClipWebAuth(c, deps.getAccessIdentity ?? defaultGetAccessIdentity)
 
   const list = async (c: Context<AppEnv>) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -206,7 +202,7 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
     if (wantsJson(c)) {
       return c.json({ sources }, 200)
     }
-    const csrfToken = auth.via === 'session' ? auth.session.csrfToken : ''
+    const csrfToken = auth.csrfToken
     const notice = sourceNoticeMessage(c.req.query('notice'))
     return htmlResponse(
       '情報源',
@@ -220,23 +216,12 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
   app.on('GET', ['/sources', '/sources/', '/sources.json', '/sources.json/'], list)
 
   app.on('POST', ['/sources/collect', '/sources/collect/'], async (c) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
     const json = wantsJson(c)
-    let csrf = ''
-    if (!json) {
-      try {
-        const form = await c.req.parseBody()
-        csrf = typeof form.csrf === 'string' ? form.csrf : ''
-      } catch {
-        csrf = ''
-      }
-    } else {
-      csrf = c.req.header('x-csrf-token') ?? ''
-    }
-    const denied = await requireCsrf(c, auth, csrf)
+    const denied = await denyIfCsrfMismatch(auth, await presentedCsrf(c, json))
     if (denied !== null) {
       return denied
     }
@@ -260,7 +245,7 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
   })
 
   app.on('POST', ['/sources', '/sources/'], async (c) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -269,7 +254,7 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
     if (form instanceof Response) {
       return form
     }
-    const denied = await requireCsrf(c, auth, form.csrf)
+    const denied = await denyIfCsrfMismatch(auth, form.csrf)
     if (denied !== null) {
       return denied
     }
@@ -293,7 +278,7 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
           '情報源',
           sourcesPageHtml({
             sources: (await storeFor(c.env, deps).list()).map(toFeedSourcePublic),
-            csrfToken: auth.via === 'session' ? auth.session.csrfToken : '',
+            csrfToken: auth.csrfToken,
             notice:
               sourceNoticeMessage('feed_missing') ??
               'サイトからフィードを見つけられませんでした。フィード URL を入力してください',
@@ -334,7 +319,7 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
   })
 
   app.on('POST', ['/sources/:id/collect', '/sources/:id/collect/'], async (c) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -343,16 +328,7 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
     if (id === undefined || !isFeedSourceId(id)) {
       return toErrorResponse({ kind: 'not_found' })
     }
-    let csrf = json ? (c.req.header('x-csrf-token') ?? '') : ''
-    if (!json) {
-      try {
-        const form = await c.req.parseBody()
-        csrf = typeof form.csrf === 'string' ? form.csrf : ''
-      } catch {
-        csrf = ''
-      }
-    }
-    const denied = await requireCsrf(c, auth, csrf)
+    const denied = await denyIfCsrfMismatch(auth, await presentedCsrf(c, json))
     if (denied !== null) {
       return denied
     }
@@ -375,7 +351,7 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
   })
 
   app.on('POST', ['/sources/:id', '/sources/:id/'], async (c) => {
-    const auth = await requireClipWebAuth(c)
+    const auth = await webAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -388,7 +364,7 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
     if (form instanceof Response) {
       return form
     }
-    const denied = await requireCsrf(c, auth, form.csrf)
+    const denied = await denyIfCsrfMismatch(auth, form.csrf)
     if (denied !== null) {
       return denied
     }

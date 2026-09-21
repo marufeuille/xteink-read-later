@@ -7,7 +7,7 @@ import { evaluatedRecommendation, unevaluatedRecommendation } from '../src/recom
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import { createMemoryStore } from '../src/store/memory'
 import { CANDIDATE_LIST_PAGE_SIZE, asCandidateId, err, ok, parseHttpUrl, type EvaluateSystemOne, type FetchPage } from '../src/types'
-import { bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
+import { accessIdentity, bearerAuthorization, TEST_ACCESS_EMAIL, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
 import { createFakeQueue } from './fake-queue'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
@@ -31,7 +31,11 @@ function fetchHtml(pages: Record<string, string>): FetchPage {
   }
 }
 
-function appWith(fetchPage: FetchPage = fetchHtml({}), evaluateRecommend?: EvaluateSystemOne) {
+function appWith(
+  fetchPage: FetchPage = fetchHtml({}),
+  evaluateRecommend?: EvaluateSystemOne,
+  accessEmail: string | null = null,
+) {
   const candidateStore = createMemoryCandidateStore()
   const queue = createFakeQueue()
   const app = createApp({
@@ -40,6 +44,7 @@ function appWith(fetchPage: FetchPage = fetchHtml({}), evaluateRecommend?: Evalu
     candidateStore,
     fetchPage,
     ...(evaluateRecommend === undefined ? {} : { evaluateRecommend }),
+    ...(accessEmail === null ? {} : accessIdentity(accessEmail)),
   })
   const env = {
     ...TEST_BINDINGS,
@@ -47,6 +52,10 @@ function appWith(fetchPage: FetchPage = fetchHtml({}), evaluateRecommend?: Evalu
     ...(evaluateRecommend === undefined ? {} : { OPENROUTER_API_KEY: 'or-test' }),
   } as Cloudflare.Env
   return { app, candidateStore, env }
+}
+
+function appWithAccess(fetchPage: FetchPage = fetchHtml({}), evaluateRecommend?: EvaluateSystemOne) {
+  return appWith(fetchPage, evaluateRecommend, TEST_ACCESS_EMAIL)
 }
 
 function csrfFrom(body: string): string {
@@ -57,17 +66,8 @@ function csrfFrom(body: string): string {
   return match[1]
 }
 
-function sessionCookie(response: Response): string {
-  const header = response.headers.get('set-cookie') ?? ''
-  const match = /^(xr_candidates=[^;]+)/.exec(header)
-  if (match?.[1] === undefined) {
-    throw new Error(`missing session cookie: ${header}`)
-  }
-  return match[1]
-}
-
 describe('candidate HTTP auth', () => {
-  it('rejects unauthenticated JSON writes and redirects HTML list to login', async () => {
+  it('rejects unauthenticated JSON writes and HTML list', async () => {
     const { app, env } = appWith()
     const json = await app.request(
       '/candidates',
@@ -85,54 +85,37 @@ describe('candidate HTTP auth', () => {
     expect(listed.status).toBe(401)
 
     const htmlGet = await app.request('/candidates', {}, env)
-    expect(htmlGet.status).toBe(302)
-    expect(htmlGet.headers.get('location')).toBe('/candidates/login')
+    expect(htmlGet.status).toBe(401)
+    const htmlBody = await htmlGet.text()
+    expect(htmlBody).toContain('Google アカウントで入る')
+    expect(htmlBody).not.toContain(TEST_CLIP_TOKEN)
+    expect(htmlBody).not.toContain('name="token"')
   })
 
-  it('does not embed CLIP_TOKEN in the login or list HTML', async () => {
-    const { app, env } = appWith(
+  it('redirects the old token login path and does not embed CLIP_TOKEN', async () => {
+    const { app, env } = appWithAccess(
       fetchHtml({ 'https://example.com/ja/workers-cpu': html('ja-tech.html') }),
     )
     const login = await app.request('/candidates/login', {}, env)
-    expect(await login.text()).not.toContain(TEST_CLIP_TOKEN)
+    expect(login.status).toBe(302)
+    expect(login.headers.get('location')).toBe('/candidates')
 
-    const entered = await app.request(
-      '/candidates/login',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
-      },
-      env,
-    )
-    expect(entered.status).toBe(303)
-    const cookie = sessionCookie(entered)
-    expect(cookie).not.toContain(TEST_CLIP_TOKEN)
-    const list = await app.request('/candidates', { headers: { cookie } }, env)
+    const list = await app.request('/candidates', {}, env)
     const listHtml = await list.text()
+    expect(list.status).toBe(200)
     expect(listHtml).not.toContain(TEST_CLIP_TOKEN)
     expect(listHtml).toContain('Asia/Tokyo')
   })
 
-  it('rejects cookie POSTs without a matching CSRF token', async () => {
-    const { app, env } = appWith(
+  it('rejects Access form POSTs without a matching CSRF token', async () => {
+    const { app, env } = appWithAccess(
       fetchHtml({ 'https://example.com/ja/workers-cpu': html('ja-tech.html') }),
     )
-    const entered = await app.request(
-      '/candidates/login',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
-      },
-      env,
-    )
-    const cookie = sessionCookie(entered)
     const denied = await app.request(
       '/candidates',
       {
         method: 'POST',
-        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ url: 'https://example.com/ja/workers-cpu', csrf: 'nope' }).toString(),
       },
       env,
@@ -416,36 +399,22 @@ describe('candidate JSON API', () => {
 })
 
 describe('candidate HTML form', () => {
-  it('accepts a cookie session with CSRF and shows fetch failure state', async () => {
-    const { app, env } = appWith(async (url) => err({ kind: 'fetch_failed', url, reason: 'HTTP 502' }))
-    const entered = await app.request(
-      '/candidates/login',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
-      },
-      env,
-    )
-    const cookie = sessionCookie(entered)
-    const formPage = await app.request('/candidates', { headers: { cookie } }, env)
+  it('accepts Access identity with CSRF and shows fetch failure state', async () => {
+    const { app, env } = appWithAccess(async (url) => err({ kind: 'fetch_failed', url, reason: 'HTTP 502' }))
+    const formPage = await app.request('/candidates', {}, env)
     const csrf = csrfFrom(await formPage.text())
     const submitted = await app.request(
       '/candidates',
       {
         method: 'POST',
-        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ url: 'https://down.example.com/a', csrf }).toString(),
       },
       env,
     )
     expect(submitted.status).toBe(303)
     expect(submitted.headers.get('location')).toContain('notice=fetch_failed')
-    const listed = await app.request(
-      submitted.headers.get('location') ?? '/candidates',
-      { headers: { cookie } },
-      env,
-    )
+    const listed = await app.request(submitted.headers.get('location') ?? '/candidates', {}, env)
     const listedHtml = await listed.text()
     expect(listedHtml).toContain('<table')
     expect(listedHtml).toContain('ソース')
@@ -455,20 +424,10 @@ describe('candidate HTML form', () => {
     expect(listedHtml).not.toContain(TEST_CLIP_TOKEN)
   })
 
-  it('rejects clip POSTs without CSRF and accepts a session send', async () => {
-    const { app, env } = appWith(
+  it('rejects clip POSTs without CSRF and accepts an Access send', async () => {
+    const { app, env } = appWithAccess(
       fetchHtml({ 'https://example.com/ja/workers-cpu': html('ja-tech.html') }),
     )
-    const entered = await app.request(
-      '/candidates/login',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
-      },
-      env,
-    )
-    const cookie = sessionCookie(entered)
     const created = await app.request(
       '/candidates',
       {
@@ -486,14 +445,14 @@ describe('candidate HTML form', () => {
       `/candidates/${id}/clip`,
       {
         method: 'POST',
-        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ csrf: 'nope' }).toString(),
       },
       env,
     )
     expect(denied.status).toBe(403)
 
-    const formPage = await app.request('/candidates?title=CPU', { headers: { cookie } }, env)
+    const formPage = await app.request('/candidates?title=CPU', {}, env)
     const formHtml = await formPage.text()
     expect(formHtml).toContain('<table')
     expect(formHtml).toContain('name="return_to" value="title=CPU"')
@@ -502,7 +461,7 @@ describe('candidate HTML form', () => {
       `/candidates/${id}/clip`,
       {
         method: 'POST',
-        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ csrf, return_to: 'title=CPU' }).toString(),
       },
       env,
@@ -512,7 +471,7 @@ describe('candidate HTML form', () => {
   })
 
   it('keeps HTML filters selected and in paging links', async () => {
-    const { app, candidateStore, env } = appWith()
+    const { app, candidateStore, env } = appWithAccess()
     const now = '2026-09-21T00:00:00.000Z'
     const put = async (index: number, outlet: string, recommendation: ReturnType<typeof unevaluatedRecommendation> | ReturnType<typeof evaluatedRecommendation>) => {
       const url = parseHttpUrl(`https://example.com/p/${index}`)
@@ -559,19 +518,9 @@ describe('candidate HTML form', () => {
         durationMs: 3,
       }),
     )
-    const entered = await app.request(
-      '/candidates/login',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
-      },
-      env,
-    )
-    const cookie = sessionCookie(entered)
     const pending = await app.request(
       '/candidates?title=Article&grade=pending&outlet=Example',
-      { headers: { cookie } },
+      {},
       env,
     )
     const pendingHtml = await pending.text()
@@ -581,7 +530,7 @@ describe('candidate HTML form', () => {
     expect(pendingHtml).toContain('href="/candidates?title=Article&amp;grade=pending&amp;outlet=Example&amp;page=2"')
     expect(pendingHtml).not.toContain('Article 99')
 
-    const recommended = await app.request('/candidates?grade=recommended', { headers: { cookie } }, env)
+    const recommended = await app.request('/candidates?grade=recommended', {}, env)
     const recommendedHtml = await recommended.text()
     expect(recommendedHtml).toContain('value="recommended" selected')
     expect(recommendedHtml).toContain('Article 99')
@@ -605,7 +554,7 @@ describe('candidate recommendation HTTP', () => {
   })
 
   it('shows recommendation on the list and keeps failed judgments visible', async () => {
-    const { app, env } = appWith(
+    const { app, env } = appWithAccess(
       fetchHtml({ 'https://example.com/ja/workers-cpu': html('ja-tech.html') }),
       evaluate,
     )
@@ -636,16 +585,7 @@ describe('candidate recommendation HTTP', () => {
     }
     expect(listBody.groups[0]?.items[0]?.recommendation.grade).toBe('related')
 
-    const entered = await app.request(
-      '/candidates/login',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
-      },
-      env,
-    )
-    const listHtml = await app.request('/candidates', { headers: { cookie: sessionCookie(entered) } }, env)
+    const listHtml = await app.request('/candidates', {}, env)
     const page = await listHtml.text()
     expect(page).toContain('関連あり')
     expect(page).toContain('DE関連')
@@ -675,24 +615,15 @@ describe('candidate recommendation HTTP', () => {
     )
     expect(unauth.status).toBe(401)
 
-    const entered = await app.request(
-      '/candidates/login',
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
-      },
-      env,
-    )
-    const cookie = sessionCookie(entered)
-    const denied = await app.request(
+    const { app: accessApp, env: accessEnv } = appWithAccess()
+    const denied = await accessApp.request(
       `/candidates/${id}/recommend`,
       {
         method: 'POST',
-        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ csrf: 'nope' }).toString(),
       },
-      env,
+      accessEnv,
     )
     expect(denied.status).toBe(403)
   })
