@@ -16,3 +16,16 @@ export function pipelineLogFields(
 export function logPipeline(entry: PipelineLog, ctx?: PipelineLogContext): void {
   console.log(JSON.stringify({ event: 'pipeline', ...pipelineLogFields(ctx), ...entry }))
 }
+
+export type FeedLog = {
+  readonly stage: 'collect'
+  readonly durationMs: number
+  readonly errorKind?: string
+  readonly sourceId?: string
+  readonly runId?: string
+  readonly attempt?: number
+}
+
+export function logFeed(entry: FeedLog): void {
+  console.log(JSON.stringify({ event: 'feed', ...entry }))
+}

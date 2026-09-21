@@ -1,8 +1,24 @@
-import type { ArticleId, CandidateDiscoveryId, CandidateId, HttpUrl } from './id'
+import type { ArticleId, CandidateDiscoveryId, CandidateId, FeedSourceId, HttpUrl } from './id'
 
 export const CANDIDATE_SOURCE_KIND_MANUAL_URL = 'manual_url' as const
+export const CANDIDATE_SOURCE_KIND_FEED_PREFIX = 'feed:' as const
 
-export type CandidateSourceKind = typeof CANDIDATE_SOURCE_KIND_MANUAL_URL
+export type CandidateFeedSourceKind = `${typeof CANDIDATE_SOURCE_KIND_FEED_PREFIX}${FeedSourceId}`
+export type CandidateSourceKind = typeof CANDIDATE_SOURCE_KIND_MANUAL_URL | CandidateFeedSourceKind
+
+export function candidateFeedSourceKind(sourceId: FeedSourceId): CandidateFeedSourceKind {
+  return `${CANDIDATE_SOURCE_KIND_FEED_PREFIX}${sourceId}`
+}
+
+export function isCandidateSourceKind(value: string): value is CandidateSourceKind {
+  if (value === CANDIDATE_SOURCE_KIND_MANUAL_URL) {
+    return true
+  }
+  return (
+    value.startsWith(CANDIDATE_SOURCE_KIND_FEED_PREFIX) &&
+    /^src_[a-f0-9]{32}$/.test(value.slice(CANDIDATE_SOURCE_KIND_FEED_PREFIX.length))
+  )
+}
 
 export const CANDIDATE_FETCH_STATUSES = ['fetched', 'fetch_failed'] as const
 export type CandidateFetchStatus = (typeof CANDIDATE_FETCH_STATUSES)[number]

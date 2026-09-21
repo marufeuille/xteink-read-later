@@ -13,17 +13,14 @@ import {
   type CandidateStore,
   type FetchPage,
 } from '../types'
-import { clipTokenAuthorized, unauthorizedResponse } from './auth'
+import { clipTokenAuthorized } from './auth'
 import {
-  CANDIDATE_SESSION_COOKIE,
   candidateSessionClearCookie,
   candidateSessionSetCookie,
   createCandidateSession,
   csrfTokensMatch,
-  parseCandidateSession,
-  parseCookieHeader,
-  type CandidateSession,
 } from './candidate-session'
+import { bearerOk, requestIsHttps, requireClipWebAuth, sessionFrom, wantsJson } from './clip-web-auth'
 import { parseClipShareText } from './clip-request'
 import { toErrorResponse } from './error-response'
 
@@ -32,51 +29,6 @@ export type CandidateHttpDeps = {
   readonly createCandidateStore?: (env: Cloudflare.Env) => CandidateStore
   readonly fetchPage?: FetchPage
   readonly now?: () => Date
-}
-
-function requestIsHttps(c: Context<AppEnv>): boolean {
-  return new URL(c.req.url).protocol === 'https:'
-}
-
-function wantsJson(c: Context<AppEnv>): boolean {
-  const path = new URL(c.req.url).pathname
-  if (path.endsWith('.json')) {
-    return true
-  }
-  const accept = c.req.header('accept') ?? ''
-  if (accept.includes('application/json') && !accept.includes('text/html')) {
-    return true
-  }
-  const contentType = (c.req.header('content-type') ?? '').split(';')[0]?.trim().toLowerCase()
-  return contentType === 'application/json'
-}
-
-async function bearerOk(c: Context<AppEnv>): Promise<boolean> {
-  return clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN)
-}
-
-async function sessionFrom(c: Context<AppEnv>): Promise<CandidateSession | null> {
-  const raw = parseCookieHeader(c.req.header('cookie'), CANDIDATE_SESSION_COOKIE)
-  return parseCandidateSession(raw, c.env.CLIP_TOKEN)
-}
-
-async function requireCandidateAuth(
-  c: Context<AppEnv>,
-): Promise<{ readonly via: 'bearer' } | { readonly via: 'session'; readonly session: CandidateSession } | Response> {
-  if (await bearerOk(c)) {
-    return { via: 'bearer' }
-  }
-  const session = await sessionFrom(c)
-  if (session !== null) {
-    return { via: 'session', session }
-  }
-  if (wantsJson(c)) {
-    return unauthorizedResponse('bearer')
-  }
-  if (c.req.method === 'GET') {
-    return c.redirect('/candidates/login', 302)
-  }
-  return htmlResponse('入る', loginPageHtml('認証が必要です'), 401)
 }
 
 function noticeFromQuery(raw: string | undefined): CandidateNotice | undefined {
@@ -132,7 +84,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
   })
 
   app.on('POST', ['/candidates/logout', '/candidates/logout/'], async (c) => {
-    const auth = await requireCandidateAuth(c)
+    const auth = await requireClipWebAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -155,7 +107,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
   })
 
   const list = async (c: Context<AppEnv>) => {
-    const auth = await requireCandidateAuth(c)
+    const auth = await requireClipWebAuth(c)
     if (auth instanceof Response) {
       return auth
     }
@@ -182,7 +134,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
   app.on('GET', ['/candidates', '/candidates/', '/candidates.json', '/candidates.json/'], list)
 
   app.on('POST', ['/candidates', '/candidates/'], async (c) => {
-    const auth = await requireCandidateAuth(c)
+    const auth = await requireClipWebAuth(c)
     if (auth instanceof Response) {
       return auth
     }

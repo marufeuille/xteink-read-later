@@ -113,6 +113,7 @@ export function candidatesPageHtml(input: {
   return `<h1>読書候補</h1>
 ${notice}
 <p class="note">${escapeHtml(input.list.timezoneNote ?? CANDIDATE_TIMEZONE_NOTE)}</p>
+<nav><a href="/sources">情報源</a></nav>
 <form method="post" action="/candidates">
   <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />
   <label for="url">記事 URL</label>

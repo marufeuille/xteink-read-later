@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Mercari Engineering Blog</title>
+  <link href="https://engineering.mercari.com/blog/" rel="alternate"/>
+  <updated>2026-09-01T00:00:00Z</updated>
+  <entry>
+    <title>Hello from Mercari Engineering</title>
+    <link href="https://engineering.mercari.com/blog/entry/2026-09-01-hello/" rel="alternate"/>
+    <id>https://engineering.mercari.com/blog/entry/2026-09-01-hello/</id>
+    <published>2026-09-01T00:00:00+09:00</published>
+    <updated>2026-09-01T00:00:00+09:00</updated>
+  </entry>
+  <entry>
+    <title>Workers で RSS を読む</title>
+    <link href="https://zenn.dev/example/articles/feed-collect" rel="alternate"/>
+    <id>https://zenn.dev/example/articles/feed-collect</id>
+    <published>2026-09-01T09:00:00+09:00</published>
+  </entry>
+</feed>

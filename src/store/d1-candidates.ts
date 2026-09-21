@@ -3,6 +3,7 @@ import {
   asCandidateDiscoveryId,
   asCandidateId,
   isArticleId,
+  isCandidateSourceKind,
   parseHttpUrl,
   type CandidateArticle,
   type CandidateDiscovery,
@@ -37,7 +38,7 @@ function isExclusionReason(value: unknown): value is CandidateExclusionReason | 
 }
 
 function isSourceKind(value: unknown): value is CandidateSourceKind {
-  return value === 'manual_url'
+  return typeof value === 'string' && isCandidateSourceKind(value)
 }
 
 type CandidateRow = {

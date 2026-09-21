@@ -62,20 +62,32 @@ export type CsrfFailedError = {
   readonly kind: 'csrf_failed'
 }
 
+export type InvalidFeedError = {
+  readonly kind: 'invalid_feed'
+  readonly reason: string
+  readonly url: string
+}
+
+export type SourceDisabledError = {
+  readonly kind: 'source_disabled'
+}
+
 export type FetchError = PayloadTooLargeError | FetchFailedError
 
 export type ExtractError = InvalidUrlError | FetchError | ExtractFailedError
 
 export type PipelineError = ExtractError | TranslateFailedError | EpubFailedError
 
-export type HttpErrorStatus = 400 | 401 | 403 | 404 | 413 | 422 | 500 | 502 | 503
+export type HttpErrorStatus = 400 | 401 | 403 | 404 | 409 | 413 | 422 | 500 | 502 | 503
 
 export const httpStatusByErrorKind = {
   invalid_url: 400,
   invalid_epub: 400,
+  invalid_feed: 400,
   unauthorized: 401,
   csrf_failed: 403,
   not_found: 404,
+  source_disabled: 409,
   payload_too_large: 413,
   extract_failed: 422,
   epub_failed: 500,
@@ -87,6 +99,8 @@ export const httpStatusByErrorKind = {
   | PipelineError['kind']
   | UnauthorizedError['kind']
   | CsrfFailedError['kind']
+  | InvalidFeedError['kind']
+  | SourceDisabledError['kind']
   | NotFoundError['kind']
   | InvalidEpubError['kind']
   | QueueFailedError['kind']
