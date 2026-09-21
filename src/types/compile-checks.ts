@@ -52,6 +52,11 @@ import type { ArticleStore, ArticleWrite } from './store'
 import type { JevFailedError } from './jev'
 import type { PrRiskBlocker, PrRiskJudgment, PrRiskRoute, PrRiskTrialAction } from './pr-risk'
 import {
+  DAILY_IDENTITY_STRATEGY,
+  DAILY_TIMEZONE,
+  type DailyIssueIdentity,
+} from './daily'
+import {
   RECOMMEND_ERROR_CODES,
   RECOMMEND_GRADES,
   RECOMMEND_STATUSES,
@@ -383,6 +388,19 @@ type _candidateRecommendLogHasNoBody = Assert<
   'contentHtml' extends keyof CandidateRecommendLog ? false : true
 >
 
+type _dailyStrategyIsNewIdPerDay = Assert<Equals<typeof DAILY_IDENTITY_STRATEGY, 'new-id-per-jst-day'>>
+type _dailyTimezoneIsTokyo = Assert<Equals<typeof DAILY_TIMEZONE, 'Asia/Tokyo'>>
+type _dailyIdentityHasCatalogFields = Assert<
+  DailyIssueIdentity extends {
+    readonly opdsEntryId: string
+    readonly acquisitionUrl: string
+    readonly filename: `${DailyIssueIdentity['articleId']}.epub`
+    readonly epubIdentifier: string
+  }
+    ? true
+    : false
+>
+
 export type CompileChecks = {
   readonly languageIsBinary: _languageIsBinary
   readonly storedLanguageIsJa: _storedLanguageIsJa
@@ -461,4 +479,7 @@ export type CompileChecks = {
   readonly postCandidateRecommendUsesBearer: _postCandidateRecommendUsesBearer
   readonly candidateRecommendLogHasNoUrl: _candidateRecommendLogHasNoUrl
   readonly candidateRecommendLogHasNoBody: _candidateRecommendLogHasNoBody
+  readonly dailyStrategyIsNewIdPerDay: _dailyStrategyIsNewIdPerDay
+  readonly dailyTimezoneIsTokyo: _dailyTimezoneIsTokyo
+  readonly dailyIdentityHasCatalogFields: _dailyIdentityHasCatalogFields
 }
