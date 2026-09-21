@@ -164,7 +164,7 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 
 ### 情報源（RSS/Atom の巡回）
 
-企業ブログや Zenn などのフィードを登録し、手動で収集して候補にする。`POST /clip` の全文生成 Queue とは別の `FEED_QUEUE`（`xteink-read-later-feed`）で処理する。媒体ごとの専用パーサは置かない。
+企業ブログや Zenn などのフィードを登録し、候補にする。毎日 **04:00 Asia/Tokyo**（UTC 19:00）の Cron が有効な情報源を `FEED_QUEUE`（`xteink-read-later-feed`）に載せる。手動の「今すぐ収集」も残す。`POST /clip` の全文生成 Queue とは別。媒体ごとの専用パーサは置かない。
 
 ブラウザ: `{worker}/sources`（候補一覧から「情報源」）。名前・サイト URL・フィード URL・情報源種別（企業ブログ / 投稿サイト / ニュース / キュレーション）・任意の話題タグ・有効/停止。種別は記事の話題やおすすめ度とは別。サイト URL だけ入れてフィードを発見できないときは、フィード URL を入れる。RSS の無いサイトは汎用クローラーせず、単発の記事 URL 投入を使う。停止は今後の収集だけ止め、既存候補や送信済み全文は消さない。
 
@@ -173,7 +173,7 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 - Zenn トピックフィード（投稿サイト）例: `https://zenn.dev/topics/cloudflare/feed`
 - Mercari Engineering Blog（企業ブログ）: `https://engineering.mercari.com/blog/feed.xml`
 
-1 回の収集は情報源ごとに独立する。件数 20、フィードサイズ約 1MB、時間 20 秒、Queue 再試行 3 回が上限。失敗は情報源一覧に出る。同じ「今すぐ収集」で再実行する。
+1 回の収集は情報源ごとに独立する。件数 20、フィードサイズ約 1MB、時間 20 秒、Queue 再試行 3 回が上限。失敗は情報源一覧に出る。同じ「今すぐ収集」か翌日の Cron で再実行する。Cron は enqueue だけで本文翻訳しない。
 
 ```bash
 curl -sS "$WORKER/sources" \
@@ -184,7 +184,6 @@ curl -sS "$WORKER/sources/$SOURCE_ID/collect" \
   -H "Authorization: Bearer $CLIP_TOKEN" \
   -X POST
 ```
-
 
 ローカルの D1 は `wrangler dev` が migrations を適用する。手元で確認するとき:
 

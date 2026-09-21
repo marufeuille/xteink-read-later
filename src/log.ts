@@ -73,3 +73,15 @@ export type FeedLog = {
 export function logFeed(entry: FeedLog): void {
   console.log(JSON.stringify({ event: 'feed', ...entry }))
 }
+
+export type FeedScheduleLog = {
+  readonly event: 'feed_schedule'
+  readonly cron: string
+  readonly queued: number
+  readonly failed: number
+  readonly durationMs: number
+}
+
+export function logFeedSchedule(entry: Omit<FeedScheduleLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'feed_schedule', ...entry } satisfies FeedScheduleLog))
+}
