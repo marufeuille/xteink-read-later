@@ -3,9 +3,10 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/app'
+import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryCandidateStore } from '../../src/store/memory-candidates'
 import { createMemoryStore } from '../../src/store/memory'
-import { bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from '../bindings'
+import { basicAuthorization, bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from '../bindings'
 import { createFakeQueue } from '../fake-queue'
 import { installNetworkMock } from './mock-network'
 
@@ -106,5 +107,62 @@ describe('candidate fixture e2e', () => {
     )
     expect(clip.status).toBe(202)
     expect(((await clip.json()) as { status: string }).status).toBe('queued')
+  })
+
+  it('sends full text from the list and lists the completed EPUB in OPDS', async () => {
+    installNetworkMock({
+      pages: {
+        'https://example.com/ja/workers-cpu': { html: fixtureHtml('ja-tech.html') },
+      },
+    })
+    const store = createMemoryStore()
+    const candidateStore = createMemoryCandidateStore()
+    const queue = createFakeQueue()
+    const clipPipeline = createClipPipeline()
+    const hono = createApp({ store, queue, candidateStore })
+    const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+    const headers = {
+      'content-type': 'application/json',
+      authorization: bearerAuthorization(),
+    }
+
+    const registered = await hono.request(
+      '/candidates',
+      { method: 'POST', headers, body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }) },
+      env,
+    )
+    expect(registered.status).toBe(201)
+    const candidateId = ((await registered.json()) as { id: string }).id
+
+    const sent = await hono.request(
+      `/candidates/${candidateId}/clip`,
+      { method: 'POST', headers, body: '{}' },
+      env,
+    )
+    expect(sent.status).toBe(202)
+    expect(((await sent.json()) as { deliveryState: string }).deliveryState).toBe('preparing')
+
+    await queue.drain(env, { clipPipeline, store, candidateStore })
+
+    const listed = await hono.request('/candidates.json', { headers: { authorization: bearerAuthorization() } }, env)
+    const listBody = (await listed.json()) as {
+      groups: { items: { deliveryState: string; availableInOpds: boolean; completedArticleId: string | null }[] }[]
+    }
+    const item = listBody.groups[0]?.items[0]
+    expect(item?.deliveryState).toBe('available')
+    expect(item?.availableInOpds).toBe(true)
+    expect(item?.completedArticleId).toMatch(/^art_/)
+
+    const catalog = await hono.request('/opds', { headers: { authorization: basicAuthorization() } }, env)
+    expect(catalog.status).toBe(200)
+    const xml = await catalog.text()
+    expect(xml).toContain('Cloudflare Workers の CPU 制限')
+    expect(xml).toContain(`opds/download/${item?.completedArticleId}.epub`)
+
+    const epub = await hono.request(`/opds/download/${item?.completedArticleId}.epub`, {
+      headers: { authorization: basicAuthorization() },
+    }, env)
+    expect(epub.status).toBe(200)
+    expect(epub.headers.get('content-type')).toBe('application/epub+zip')
   })
 })

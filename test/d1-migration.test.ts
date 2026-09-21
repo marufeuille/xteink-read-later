@@ -19,6 +19,16 @@ describe('D1 candidate migration', () => {
     expect(sql).toContain('Existing R2 articles are not migrated')
   })
 
+  it('adds clip job pointers without a second status machine', () => {
+    const sql = readFileSync(join(root, 'migrations/0003_candidate_clip.sql'), 'utf8')
+    expect(sql).toContain('ALTER TABLE candidate_articles ADD COLUMN clip_job_id TEXT')
+    expect(sql).toContain('ADD COLUMN clip_run_id TEXT')
+    expect(sql).toContain('ADD COLUMN selected_at TEXT')
+    expect(sql).toContain('Job status')
+    expect(sql).toContain('Do not store a second status machine')
+    expect(sql).not.toMatch(/ADD COLUMN \w*status/i)
+  })
+
   it('creates feed source tables without mixing outlet type and article topics', () => {
     const sql = readFileSync(join(root, 'migrations/0002_feed_sources.sql'), 'utf8')
     expect(sql).toContain('CREATE TABLE feed_sources')

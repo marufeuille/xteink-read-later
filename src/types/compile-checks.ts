@@ -45,6 +45,7 @@ import {
   type ClipJobKey,
 } from './id'
 import type { ClipQueueMessage } from './job'
+import type { CandidateClipLog, OpdsDownloadLog } from '../log'
 import type { ClipPipeline, ClipResult, ExtractPipeline, ExtractResult } from './pipeline'
 import type { Result } from './result'
 import type { ArticleStore, ArticleWrite } from './store'
@@ -201,6 +202,14 @@ type _pipelineLogHasNoUrl = Assert<'url' extends keyof PipelineLog ? false : tru
 
 type _pipelineLogHasNoExtracted = Assert<'extracted' extends keyof PipelineLog ? false : true>
 
+type _candidateClipLogHasNoUrl = Assert<'url' extends keyof CandidateClipLog ? false : true>
+
+type _candidateClipLogHasNoBody = Assert<'contentHtml' extends keyof CandidateClipLog ? false : true>
+
+type _opdsDownloadLogHasNoUrl = Assert<'url' extends keyof OpdsDownloadLog ? false : true>
+
+type _opdsDownloadLogHasNoBody = Assert<'contentHtml' extends keyof OpdsDownloadLog ? false : true>
+
 type _pipelineLogHasNoJobId = Assert<'jobId' extends keyof PipelineLog ? false : true>
 
 type PipelineStage = (typeof PIPELINE_STAGES)[number]
@@ -251,6 +260,10 @@ type _postCandidateUsesBearer = Assert<
   ApiRoutes['postCandidate']['auth'] extends { readonly scheme: 'bearer' } ? true : false
 >
 
+type _postCandidateClipUsesBearer = Assert<
+  ApiRoutes['postCandidateClip']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
+
 type _listCandidatesUsesBearer = Assert<
   ApiRoutes['listCandidates']['auth'] extends { readonly scheme: 'bearer' } ? true : false
 >
@@ -271,6 +284,7 @@ type _epubFailedIs500 = Assert<Equals<(typeof httpStatusByErrorKind)['epub_faile
 type _csrfFailedIs403 = Assert<Equals<(typeof httpStatusByErrorKind)['csrf_failed'], 403>>
 type _invalidFeedIs400 = Assert<Equals<(typeof httpStatusByErrorKind)['invalid_feed'], 400>>
 type _sourceDisabledIs409 = Assert<Equals<(typeof httpStatusByErrorKind)['source_disabled'], 409>>
+type _candidateUnsendableIs409 = Assert<Equals<(typeof httpStatusByErrorKind)['candidate_unsendable'], 409>>
 
 type _storeDeleteReturnsBoolean = Assert<
   ReturnType<ArticleStore['delete']> extends Promise<boolean> ? true : false
@@ -367,6 +381,10 @@ export type CompileChecks = {
   readonly queueMessageKeys: _queueMessageKeys
   readonly pipelineLogHasNoUrl: _pipelineLogHasNoUrl
   readonly pipelineLogHasNoExtracted: _pipelineLogHasNoExtracted
+  readonly candidateClipLogHasNoUrl: _candidateClipLogHasNoUrl
+  readonly candidateClipLogHasNoBody: _candidateClipLogHasNoBody
+  readonly opdsDownloadLogHasNoUrl: _opdsDownloadLogHasNoUrl
+  readonly opdsDownloadLogHasNoBody: _opdsDownloadLogHasNoBody
   readonly pipelineLogHasNoJobId: _pipelineLogHasNoJobId
   readonly pipelineLogStageMatches: _pipelineLogStageMatches
   readonly timingStagesMatchLog: _timingStagesMatchLog
@@ -378,6 +396,7 @@ export type CompileChecks = {
   readonly getArticleEpubUsesBasic: _getArticleEpubUsesBasic
   readonly purchasedBookUsesBearer: _purchasedBookUsesBearer
   readonly postCandidateUsesBearer: _postCandidateUsesBearer
+  readonly postCandidateClipUsesBearer: _postCandidateClipUsesBearer
   readonly listCandidatesUsesBearer: _listCandidatesUsesBearer
   readonly listFeedSourcesUsesBearer: _listFeedSourcesUsesBearer
   readonly postFeedSourceUsesBearer: _postFeedSourceUsesBearer
@@ -386,6 +405,7 @@ export type CompileChecks = {
   readonly csrfFailedIs403: _csrfFailedIs403
   readonly invalidFeedIs400: _invalidFeedIs400
   readonly sourceDisabledIs409: _sourceDisabledIs409
+  readonly candidateUnsendableIs409: _candidateUnsendableIs409
   readonly storeDeleteReturnsBoolean: _storeDeleteReturnsBoolean
   readonly pipelinesReturnResults: _pipelinesReturnResults
   readonly keysAreObjectKeys: _keysAreObjectKeys

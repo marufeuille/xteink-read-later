@@ -1,4 +1,4 @@
-import type { PipelineLog, PipelineLogContext } from './types'
+import type { ArticleId, CandidateId, ClipJobId, ClipRunId, PipelineLog, PipelineLogContext } from './types'
 
 export function pipelineLogFields(
   ctx: PipelineLogContext | undefined,
@@ -15,6 +15,34 @@ export function pipelineLogFields(
 
 export function logPipeline(entry: PipelineLog, ctx?: PipelineLogContext): void {
   console.log(JSON.stringify({ event: 'pipeline', ...pipelineLogFields(ctx), ...entry }))
+}
+
+export type CandidateClipLog = {
+  readonly event: 'candidate_clip'
+  readonly action: 'select' | 'reuse' | 'regenerate'
+  readonly candidateId: CandidateId
+  readonly jobId: ClipJobId
+  readonly runId?: ClipRunId
+  readonly articleId?: ArticleId
+  readonly selectedAt: string
+  readonly discoveredAt: string
+  readonly publishedAt: string | null
+  readonly reused: boolean
+  readonly regenerated: boolean
+}
+
+export type OpdsDownloadLog = {
+  readonly event: 'opds_download'
+  readonly articleId: ArticleId
+  readonly durationMs: number
+}
+
+export function logCandidateClip(entry: Omit<CandidateClipLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'candidate_clip', ...entry } satisfies CandidateClipLog))
+}
+
+export function logOpdsDownload(entry: Omit<OpdsDownloadLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'opds_download', ...entry } satisfies OpdsDownloadLog))
 }
 
 export type FeedLog = {

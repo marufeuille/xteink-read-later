@@ -296,6 +296,9 @@ describe('candidate JSON API', () => {
         exclusionReason: null,
         fullTextState: 'unconfirmed',
         completedArticleId: null,
+        clipJobId: null,
+        clipRunId: null,
+        selectedAt: null,
         createdAt: now,
         updatedAt: now,
       })
@@ -354,5 +357,58 @@ describe('candidate HTML form', () => {
     expect(listedHtml).toContain('取得失敗')
     expect(listedHtml).not.toContain('本文取得済み')
     expect(listedHtml).not.toContain(TEST_CLIP_TOKEN)
+  })
+
+  it('rejects clip POSTs without CSRF and accepts a session send', async () => {
+    const { app, env } = appWith(
+      fetchHtml({ 'https://example.com/ja/workers-cpu': html('ja-tech.html') }),
+    )
+    const entered = await app.request(
+      '/candidates/login',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
+      },
+      env,
+    )
+    const cookie = sessionCookie(entered)
+    const created = await app.request(
+      '/candidates',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: bearerAuthorization(),
+        },
+        body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
+      },
+      env,
+    )
+    const id = ((await created.json()) as { id: string }).id
+    const denied = await app.request(
+      `/candidates/${id}/clip`,
+      {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf: 'nope' }).toString(),
+      },
+      env,
+    )
+    expect(denied.status).toBe(403)
+
+    const formPage = await app.request('/candidates', { headers: { cookie } }, env)
+    const csrf = csrfFrom(await formPage.text())
+    const sent = await app.request(
+      `/candidates/${id}/clip`,
+      {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf }).toString(),
+      },
+      env,
+    )
+    expect(sent.status).toBe(303)
+    expect(sent.headers.get('location')).toContain('notice=clipped')
   })
 })
