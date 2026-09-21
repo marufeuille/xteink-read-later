@@ -11,7 +11,13 @@ import { toErrorResponse } from './http/error-response'
 import { parsePurchasedBookForm } from './http/purchased-book'
 import { enqueueClipJob } from './job/enqueue'
 import { logOpdsDownload } from './log'
-import { buildOpdsCatalog, OPDS_CACHE_CONTROL, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
+import {
+  buildOpdsCatalog,
+  OPDS_CACHE_CONTROL,
+  opdsCatalogContentType,
+  parseOpdsCatalogPath,
+  parseOpdsDownloadFile,
+} from './opds/catalog'
 import { createR2Store } from './store/r2'
 import type {
   AppEnv,
@@ -217,22 +223,45 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     if (denied !== null) {
       return denied
     }
-    const origin = parseHttpUrl(new URL(c.req.url).origin)
+    const requestUrl = new URL(c.req.url)
+    const location = parseOpdsCatalogPath(requestUrl.pathname)
+    if (location === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    const origin = parseHttpUrl(requestUrl.origin)
     if (origin === null) {
-      return toErrorResponse({ kind: 'invalid_url', url: new URL(c.req.url).origin })
+      return toErrorResponse({ kind: 'invalid_url', url: requestUrl.origin })
     }
     const articles = await storeFor(c.env, deps).listMeta()
-    const catalog = buildOpdsCatalog(articles, origin)
+    const catalog = buildOpdsCatalog(articles, origin, location)
+    if (catalog === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
     return new Response(catalog.xml, {
       status: 200,
       headers: {
-        'content-type': `${OPDS_CATALOG_TYPE};charset=utf-8`,
+        'content-type': opdsCatalogContentType(catalog.feedKind),
         'cache-control': OPDS_CACHE_CONTROL,
       },
     })
   }
 
-  app.on('GET', ['/opds', '/opds/'], opdsCatalog)
+  app.on(
+    'GET',
+    [
+      '/opds',
+      '/opds/',
+      '/opds/clip',
+      '/opds/clip/',
+      '/opds/ebook',
+      '/opds/ebook/',
+      '/opds/clip/:date',
+      '/opds/clip/:date/',
+      '/opds/ebook/:date',
+      '/opds/ebook/:date/',
+    ],
+    opdsCatalog,
+  )
 
   app.get('/opds/download/:file', async (c) => {
     const denied = await requireOpdsBasic(c)

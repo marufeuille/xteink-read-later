@@ -98,8 +98,21 @@ describe('POST /books', () => {
       )
       expect(catalog.status).toBe(200)
       const xml = await catalog.text()
-      expect(xml).toContain('Dummy purchased title')
-      expect(xml).toContain(`opds/download/${body.id}.epub`)
+      expect(xml).toContain('https://read.example.com/opds/ebook')
+      expect(xml).not.toContain('Dummy purchased title')
+      const shelf = await app.request(
+        'https://read.example.com/opds/ebook',
+        { headers: { authorization: basicAuthorization() } },
+        BINDINGS,
+      )
+      const dateHref = /href="(https:\/\/read\.example\.com\/opds\/ebook\/\d{4}-\d{2}-\d{2})"/.exec(
+        await shelf.text(),
+      )?.[1]
+      expect(dateHref).toBeDefined()
+      const day = await app.request(dateHref ?? '', { headers: { authorization: basicAuthorization() } }, BINDINGS)
+      const dayXml = await day.text()
+      expect(dayXml).toContain('Dummy purchased title')
+      expect(dayXml).toContain(`opds/download/${body.id}.epub`)
 
       const metaRes = await app.request(
         `https://read.example.com/articles/${body.id}`,

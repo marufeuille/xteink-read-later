@@ -166,7 +166,7 @@ Bearer 必須。R2 上の当該記事を削除。MAR-35 の手動削除。
 
 ### `GET /opds`
 
-OPDS 1.2 相当の Atom カタログ。新しい記事が上。各 entry に acquisition link（EPUB）。`GET /opds` と `GET /opds/` は同じルート。
+OPDS の入り口。`GET /opds` と `GET /opds/` は同じナビゲーションで、中身があるときだけ `clip` と `ebook` に入る。その下は Asia/Tokyo の暦日（`/opds/clip/YYYY-MM-DD`、`/opds/ebook/YYYY-MM-DD`）の取得フィードで、その日の本だけ、新しいものが上。本が無い日と空の棚は出さない。まとめは最新 1 冊だけルートの取得エントリで、日付棚には入らない。取得 URL は `/opds/download/:id.epub` のまま。
 
 CrossPoint 登録の注意: 本番は https、カタログ URL は `/opds`（origin だけや `/opds/` は端末に入れない）、HTTP Basic のみ（`CLIP_TOKEN` は使わない）、空パスワード不可。
 

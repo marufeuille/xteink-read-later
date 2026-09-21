@@ -61,12 +61,27 @@ describe('daily OPDS fixture e2e', () => {
     expect(catalog.headers.get('cache-control')).toBe(OPDS_CACHE_CONTROL)
     const xml = await catalog.text()
     expect(xml).toContain('まとめ 2026-09-21')
-    expect(xml).toContain('クリップ記事')
+    expect(xml).toContain('https://read.example.com/opds/clip')
+    expect(xml).not.toContain('クリップ記事')
     expect(xml).not.toContain('まとめ 2026-09-20')
     expect(xml).toContain(day2.identity.opdsEntryId)
     expect(xml).toContain(day2.identity.acquisitionUrl)
     expect(xml).not.toContain(day1.identity.opdsEntryId)
     expect(xml).not.toContain(day1.identity.filename)
+
+    const clipShelf = await app.request(
+      'https://read.example.com/opds/clip',
+      { headers: { authorization: basicAuthorization() } },
+      TEST_BINDINGS,
+    )
+    const clipDate = /href="(https:\/\/read\.example\.com\/opds\/clip\/\d{4}-\d{2}-\d{2})"/.exec(
+      await clipShelf.text(),
+    )?.[1]
+    expect(clipDate).toBeDefined()
+    const clipDay = await app.request(clipDate ?? '', { headers: { authorization: basicAuthorization() } }, TEST_BINDINGS)
+    const clipXml = await clipDay.text()
+    expect(clipXml).toContain('クリップ記事')
+    expect(clipXml).not.toContain('まとめ')
 
     const download = await app.request(
       day2.identity.acquisitionUrl,
