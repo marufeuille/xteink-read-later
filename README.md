@@ -16,7 +16,7 @@ Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xte
 
 ### 2. Xteink で読む
 
-CrossPoint JP に OPDS カタログを **一度だけ** 登録する。そのあと端末の一覧を開き、新しいものが上にあることを確認して EPUB を取る。
+CrossPoint JP に OPDS カタログを **一度だけ** 登録する。ルートは棚の入口なので、`clip`（Web 記事）か `ebook`（買った本）を開き、その日のフォルダから EPUB を取る。日付の中は新しいものが上。まとめは最新 1 冊だけルートに出る。
 
 登録する URL:
 
@@ -29,8 +29,9 @@ https://xteink-read-later.<account>.workers.dev/opds
 - CrossPoint には **末尾スラッシュなし** で入れる（サーバは `/opds/` も同じルートだが、端末側の取り違えを避ける）
 - 認証は **HTTP Basic**（`OPDS_USERNAME` / `OPDS_PASSWORD`）。**`CLIP_TOKEN` や Bearer は使わない**
 - 空パスワードは使わない（端末が username-only を送らない）
+- 棚を辿って EPUB を取る CrossPoint 実機確認は未実施
 
-英語記事を共有したあとは、カタログ先頭の EPUB が日本語になっていることを端末で確認する。
+英語記事を共有したあとは、その日の `clip` にある EPUB が日本語になっていることを端末で確認する。
 
 ### 3. 買った EPUB をカタログに載せる
 
@@ -44,7 +45,7 @@ curl -sS "$WORKER/books" \
   -F "epub=@book.epub;type=application/epub+zip"
 ```
 
-上げたあとは手順 2 と同じカタログを更新して読む。秘密値と本文はログにも README にも出さない。
+上げたあとは手順 2 の `ebook` 棚を更新して読む。秘密値と本文はログにも README にも出さない。
 
 削除は `DELETE /articles/:id`（Bearer `CLIP_TOKEN`）。無い id は 404。
 
@@ -129,7 +130,7 @@ npm run dev
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
-`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`POST /candidates/:id/recommend`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect`・`POST /digest` は Bearer `CLIP_TOKEN`。候補と情報源の **Web 画面**（`/candidates`・`/sources` とその配下）は Cloudflare Access の Google 認証。Worker は `ctx.access` の email を見る。トークンログインとセッション Cookie は使わない。フォーム POST は CSRF トークン必須。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。Access は **Worker 全体には掛けない**（OPDS と `POST /clip` を壊す）。`POST /clip` と `GET /opds` と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と clip ポインタ、おすすめ判定（本文は持たない）を持つ。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`POST /candidates/:id/recommend`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect`・`POST /digest` は Bearer `CLIP_TOKEN`。候補と情報源の **Web 画面**（`/candidates`・`/sources` とその配下）は Cloudflare Access の Google 認証。Worker は `ctx.access` の email を見る。トークンログインとセッション Cookie は使わない。フォーム POST は CSRF トークン必須。`GET /opds`（`clip` / `ebook` と日付を含む）・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。Access は **Worker 全体には掛けない**（OPDS と `POST /clip` を壊す）。`POST /clip` と `GET /opds`（棚と日付を含む）と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と clip ポインタ、おすすめ判定（本文は持たない）を持つ。
 
 ### 読書候補（翻訳しない URL 投入）
 

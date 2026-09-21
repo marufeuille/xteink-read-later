@@ -269,6 +269,22 @@ type _opdsDownloadUsesBasic = Assert<
     : false
 >
 
+type _opdsClipUsesBasic = Assert<
+  ApiRoutes['opdsClip']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
+type _opdsEbookUsesBasic = Assert<
+  ApiRoutes['opdsEbook']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
+type _opdsClipDateUsesBasic = Assert<
+  ApiRoutes['opdsClipDate']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
+type _opdsEbookDateUsesBasic = Assert<
+  ApiRoutes['opdsEbookDate']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
 type _getArticleUsesBasic = Assert<
   ApiRoutes['getArticle']['auth'] extends { readonly scheme: 'basic' } ? true : false
 >

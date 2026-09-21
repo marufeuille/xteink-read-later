@@ -16,7 +16,7 @@
 | ファイル名 | `{id}.epub` |
 | EPUB `dc:identifier` | `urn:xteink:daily:YYYY-MM-DD` |
 | タイトル | `まとめ YYYY-MM-DD` |
-| カタログ | デイリーは **最新 1 冊だけ**。クリップや購入 EPUB は消さない |
+| カタログ | デイリーは **最新 1 冊だけ**、`/opds` の取得エントリ。`clip` / `ebook` の日付棚には入れない。クリップや購入 EPUB は消さない |
 | HTTP | `GET /opds` と EPUB 取得は `Cache-Control: no-store` |
 | 端末の旧号 | カタログから消えるだけ。端末内ファイルの削除は利用者 |
 

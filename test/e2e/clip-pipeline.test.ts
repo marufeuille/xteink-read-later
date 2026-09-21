@@ -312,7 +312,7 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(((await meta.json()) as { title: string }).title).toBe(extractTitle)
 
     const catalog = await ctx.hono.request(
-      '/opds',
+      '/opds/clip/2026-04-12',
       { headers: { authorization: basicAuthorization() } },
       ctx.env,
     )

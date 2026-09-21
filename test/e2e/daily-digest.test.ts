@@ -176,8 +176,20 @@ describe('daily digest fixture e2e', () => {
     expect(catalog.status).toBe(200)
     const xml = await catalog.text()
     expect(xml).toContain('まとめ 2026-09-21')
-    expect(xml).toContain('クリップ記事')
+    expect(xml).toContain('https://read.example.com/opds/clip')
+    expect(xml).not.toContain('クリップ記事')
     expect(xml).not.toContain('まとめ 2026-09-20')
+    const clipShelf = await app.request(
+      'https://read.example.com/opds/clip',
+      { headers: { authorization: basicAuthorization() } },
+      env,
+    )
+    expect(clipShelf.status).toBe(200)
+    const clipXml = await clipShelf.text()
+    const clipDate = /href="(https:\/\/read\.example\.com\/opds\/clip\/\d{4}-\d{2}-\d{2})"/.exec(clipXml)?.[1]
+    expect(clipDate).toBeDefined()
+    const clipDay = await app.request(clipDate ?? '', { headers: { authorization: basicAuthorization() } }, env)
+    expect(await clipDay.text()).toContain('クリップ記事')
     expect(xml).not.toContain(yesterday.identity.opdsEntryId)
 
     const listedMeta = await store.listMeta()

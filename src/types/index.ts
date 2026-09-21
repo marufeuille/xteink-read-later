@@ -173,7 +173,14 @@ export type {
   ClipRunningJob,
   PipelineLogContext,
 } from './job'
-export type { BuildOpdsCatalog, OpdsAcquisition, OpdsCatalog } from './opds'
+export type {
+  BuildOpdsCatalog,
+  OpdsAcquisition,
+  OpdsCatalog,
+  OpdsFeedKind,
+  OpdsLocation,
+  OpdsShelf,
+} from './opds'
 export type {
   CandidateArticle,
   CandidateClipBody,

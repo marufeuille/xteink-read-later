@@ -137,6 +137,10 @@ export type ApiRoutes = {
     { readonly deleted: true }
   >
   readonly opdsCatalog: RouteSpec<'GET', '/opds', BasicAuth, OpdsCatalog>
+  readonly opdsClip: RouteSpec<'GET', '/opds/clip', BasicAuth, OpdsCatalog>
+  readonly opdsEbook: RouteSpec<'GET', '/opds/ebook', BasicAuth, OpdsCatalog>
+  readonly opdsClipDate: RouteSpec<'GET', '/opds/clip/:date', BasicAuth, OpdsCatalog>
+  readonly opdsEbookDate: RouteSpec<'GET', '/opds/ebook/:date', BasicAuth, OpdsCatalog>
   readonly opdsDownload: RouteSpec<
     'GET',
     '/opds/download/:id.epub',
