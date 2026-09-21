@@ -1,4 +1,5 @@
 import type { ArticleFields, ArticleMeta, ExtractedArticle, TranslatedArticle } from './article'
+import type { CandidateListBody, CandidateRegisterBody } from './candidate'
 import type { ClassifyErrorCode } from './classify'
 import type { ErrorKind, HttpStatusOf, TranslateFailedError } from './errors'
 import type { ArticleEpubKey, ArticleId, ClipJobId, EpubBytes, HttpUrl } from './id'
@@ -141,6 +142,8 @@ export type ApiRoutes = {
     EpubBytes
   >
   readonly postPurchasedBook: RouteSpec<'POST', '/books', BearerAuth, PurchasedBookBody>
+  readonly postCandidate: RouteSpec<'POST', '/candidates', BearerAuth, CandidateRegisterBody>
+  readonly listCandidates: RouteSpec<'GET', '/candidates.json', BearerAuth, CandidateListBody>
 }
 
 export const PIPELINE_STAGES = ['queue', 'fetch', 'extract', 'translate', 'epub', 'store', 'classify'] as const

@@ -129,7 +129,33 @@ npm run dev
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
-`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id` は Bearer `CLIP_TOKEN`。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`GET /candidates.json` は Bearer `CLIP_TOKEN`。候補の Web 画面は同じトークンで `/candidates/login` し、HttpOnly Cookie を使う（HTML にトークンは出さない。フォーム POST は CSRF トークン必須）。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` と候補の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。
+
+### 読書候補（翻訳しない URL 投入）
+
+見つけた記事 URL を候補として残す。`POST /clip` の即時全文生成契約は変えない。
+
+ブラウザ: `{worker}/candidates/login` に `CLIP_TOKEN` を入れて入る。一覧はスマホ向け。公開日は **Asia/Tokyo (UTC+9)** の暦日で分ける。公開日が無い記事は「公開日不明」で、発見日を公開日の代わりにはしない。有料と判定した記事は一覧から外し、投入直後に理由を出す。無料全文を確認できない記事は「本文取得済み」と表示しない。
+
+```bash
+curl -sS "$WORKER/candidates" \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
+  -d '{"url":"https://example.com/article"}'
+# 201 { "id":"cand_…", "duplicate": false, "candidate": { "title":"…", "listingState":"listed", … }, "notice": { "kind":"registered", "message":"…" } }
+curl -sS "$WORKER/candidates.json" \
+  -H "Authorization: Bearer $CLIP_TOKEN"
+```
+
+同一記事はリダイレクト後 URL と canonical でまとめる。別の発見 URL は `candidate_discoveries` に残す（情報源の種別。話題の分類列には混ぜない）。
+
+ローカルの D1 は `wrangler dev` が migrations を適用する。手元で確認するとき:
+
+```bash
+npx wrangler d1 migrations apply xteink-read-later-candidates --local
+```
+
+本番は main のデプロイジョブがデータベース作成と `wrangler d1 migrations apply --remote` を行う。失敗したらデプロイは進まない。Worker を前のリリースに戻しても D1 のテーブルは残る（未使用になるだけ）。スキーマを戻すときは [D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/) か、新しい migration で直す。D1 を消さない。R2 の記事・購入 EPUB・OPDS はこの DB と独立している。
 
 ### クリップが止まったとき
 
@@ -229,7 +255,7 @@ CI の `typecheck, unit, e2e` が失敗した run ではデプロイジョブは
 
 ### 初回だけ — Cloudflare 側（Workers Secret）
 
-アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。R2 バケット `xteink-read-later-articles` と Queue `xteink-read-later-clip` は main のデプロイジョブが無ければ作る（手元で作ってもよい）。
+アプリ用の値は GitHub Secrets に置かず、Worker に一度だけ入れる。以降の Actions デプロイでは上書きされない。R2 バケット `xteink-read-later-articles`、Queue `xteink-read-later-clip`、D1 `xteink-read-later-candidates` は main のデプロイジョブが無ければ作る（手元で作ってもよい）。
 
 ```bash
 npx wrangler login
@@ -240,7 +266,7 @@ npx wrangler secret put OPDS_USERNAME
 npx wrangler secret put OPDS_PASSWORD
 ```
 
-プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。
+プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。任意で `npx wrangler d1 create xteink-read-later-candidates`（id はデプロイジョブが wrangler.jsonc に書く）。
 
 ### GitHub Secrets（Actions が Cloudflare に認証するため）
 
@@ -248,7 +274,7 @@ npx wrangler secret put OPDS_PASSWORD
 
 | Name | 中身 |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers** に加え、Account 権限 **Workers R2 Storage: Edit**（バケット作成と bind）と **Workers Queues: Edit**（キュー作成と bind）。対象アカウントだけに scope する |
+| `CLOUDFLARE_API_TOKEN` | [Account API tokens](https://dash.cloudflare.com/profile/api-tokens) で Create Token。テンプレート **Edit Cloudflare Workers** に加え、Account 権限 **Workers R2 Storage: Edit**（バケット作成と bind）、**Workers Queues: Edit**（キュー作成と bind）、**D1: Edit**（データベース作成と migration）。対象アカウントだけに scope する |
 | `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの [Account ID](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/) |
 | `OPENROUTER_API_KEY` | PR リスク分類の試行専用。未設定でも `pr-risk-trial` は記録し、推奨ルートは追加レビュー。設定済みなら Jev の choice / noul / 信頼度もコメントに残る。アプリの記事分類は Cloudflare 側の同じ名前の secret を使う |
 

@@ -9,11 +9,18 @@ import type {
   TranslateFailedBody,
   TranslateFailedError,
   UnauthorizedError,
+  CsrfFailedError,
 } from '../types'
 import { httpStatusByErrorKind } from '../types'
 
 export function errorMessage(
-  error: PipelineError | NotFoundError | UnauthorizedError | InvalidEpubError | QueueFailedError,
+  error:
+    | PipelineError
+    | NotFoundError
+    | UnauthorizedError
+    | InvalidEpubError
+    | QueueFailedError
+    | CsrfFailedError,
 ): string {
   switch (error.kind) {
     case 'invalid_url':
@@ -38,11 +45,13 @@ export function errorMessage(
       return 'Article not found'
     case 'unauthorized':
       return 'Unauthorized'
+    case 'csrf_failed':
+      return 'CSRF token mismatch'
   }
 }
 
 export function toErrorBody(
-  error: ExtractError | NotFoundError | EpubFailedError | InvalidEpubError | QueueFailedError,
+  error: ExtractError | NotFoundError | EpubFailedError | InvalidEpubError | QueueFailedError | CsrfFailedError,
 ): ErrorBody {
   const message = errorMessage(error)
   switch (error.kind) {
@@ -62,6 +71,8 @@ export function toErrorBody(
       return { error: { status: 503, code: 'queue_failed', message } }
     case 'not_found':
       return { error: { status: 404, code: 'not_found', message } }
+    case 'csrf_failed':
+      return { error: { status: 403, code: 'csrf_failed', message } }
   }
 }
 
@@ -77,7 +88,7 @@ export function toTranslateFailedBody(error: TranslateFailedError): TranslateFai
 }
 
 export function toErrorResponse(
-  error: PipelineError | NotFoundError | InvalidEpubError | QueueFailedError,
+  error: PipelineError | NotFoundError | InvalidEpubError | QueueFailedError | CsrfFailedError,
 ): Response {
   if (error.kind === 'translate_failed') {
     return Response.json(toTranslateFailedBody(error), { status: 503 })

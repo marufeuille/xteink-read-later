@@ -8,9 +8,13 @@ export type EpubBytes = Uint8Array & { readonly [epubBytesBrand]: void }
 
 declare const clipJobIdBrand: unique symbol
 declare const clipRunIdBrand: unique symbol
+declare const candidateIdBrand: unique symbol
+declare const candidateDiscoveryIdBrand: unique symbol
 
 export type ClipJobId = string & { readonly [clipJobIdBrand]: void }
 export type ClipRunId = string & { readonly [clipRunIdBrand]: void }
+export type CandidateId = string & { readonly [candidateIdBrand]: void }
+export type CandidateDiscoveryId = string & { readonly [candidateDiscoveryIdBrand]: void }
 
 export type ArticleMetaKey = `articles/${ArticleId}/meta.json`
 export type ArticleEpubKey = `articles/${ArticleId}/book.epub`
@@ -20,6 +24,8 @@ export type ClipJobKey = `jobs/${ClipJobId}.json`
 const ARTICLE_ID_PATTERN = /^art_[a-f0-9]{32}$/
 const CLIP_JOB_ID_PATTERN = /^job_[a-f0-9]{32}$/
 const CLIP_RUN_ID_PATTERN = /^run_[a-f0-9]{32}$/
+const CANDIDATE_ID_PATTERN = /^cand_[a-f0-9]{32}$/
+const CANDIDATE_DISCOVERY_ID_PATTERN = /^disc_[a-f0-9]{32}$/
 
 function bytesToHex(bytes: Uint8Array): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
@@ -40,6 +46,14 @@ export function isClipJobId(value: string): value is ClipJobId {
 
 export function isClipRunId(value: string): value is ClipRunId {
   return CLIP_RUN_ID_PATTERN.test(value)
+}
+
+export function isCandidateId(value: string): value is CandidateId {
+  return CANDIDATE_ID_PATTERN.test(value)
+}
+
+export function isCandidateDiscoveryId(value: string): value is CandidateDiscoveryId {
+  return CANDIDATE_DISCOVERY_ID_PATTERN.test(value)
 }
 
 export function asArticleId(value: string): ArticleId {
@@ -63,6 +77,20 @@ export function asClipRunId(value: string): ClipRunId {
   return value
 }
 
+export function asCandidateId(value: string): CandidateId {
+  if (!isCandidateId(value)) {
+    throw new TypeError(`Invalid candidate id: ${value}`)
+  }
+  return value
+}
+
+export function asCandidateDiscoveryId(value: string): CandidateDiscoveryId {
+  if (!isCandidateDiscoveryId(value)) {
+    throw new TypeError(`Invalid candidate discovery id: ${value}`)
+  }
+  return value
+}
+
 export function newClipRunId(): ClipRunId {
   const bytes = new Uint8Array(16)
   crypto.getRandomValues(bytes)
@@ -82,6 +110,22 @@ export async function articleIdFromBytes(bytes: Uint8Array): Promise<ArticleId> 
 export async function clipJobIdFromUrl(url: HttpUrl): Promise<ClipJobId> {
   const hex = await sha256Hex32(new TextEncoder().encode(url))
   return asClipJobId(`job_${hex}`)
+}
+
+export async function candidateIdFromCanonicalUrl(canonicalUrl: HttpUrl): Promise<CandidateId> {
+  const hex = await sha256Hex32(new TextEncoder().encode(canonicalUrl))
+  return asCandidateId(`cand_${hex}`)
+}
+
+export async function candidateDiscoveryIdFrom(input: {
+  readonly candidateId: CandidateId
+  readonly sourceKind: string
+  readonly discoveredUrl: HttpUrl
+}): Promise<CandidateDiscoveryId> {
+  const hex = await sha256Hex32(
+    new TextEncoder().encode(`${input.candidateId}\0${input.sourceKind}\0${input.discoveredUrl}`),
+  )
+  return asCandidateDiscoveryId(`disc_${hex}`)
 }
 
 export function purchasedCanonicalUrl(id: ArticleId): HttpUrl {
