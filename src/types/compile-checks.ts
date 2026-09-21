@@ -45,7 +45,7 @@ import {
   type ClipJobKey,
 } from './id'
 import type { ClipQueueMessage } from './job'
-import type { CandidateClipLog, CandidateRecommendLog, OpdsDownloadLog } from '../log'
+import type { CandidateClipLog, CandidateRecommendLog, FeedScheduleLog, OpdsDownloadLog } from '../log'
 import type { ClipPipeline, ClipResult, ExtractPipeline, ExtractResult } from './pipeline'
 import type { Result } from './result'
 import type { ArticleStore, ArticleWrite } from './store'
@@ -56,6 +56,7 @@ import {
   DAILY_TIMEZONE,
   type DailyIssueIdentity,
 } from './daily'
+import { FEED_COLLECT_CRON, FEED_COLLECT_TIMEZONE } from './source'
 import {
   RECOMMEND_ERROR_CODES,
   RECOMMEND_GRADES,
@@ -390,6 +391,9 @@ type _candidateRecommendLogHasNoBody = Assert<
 
 type _dailyStrategyIsNewIdPerDay = Assert<Equals<typeof DAILY_IDENTITY_STRATEGY, 'new-id-per-jst-day'>>
 type _dailyTimezoneIsTokyo = Assert<Equals<typeof DAILY_TIMEZONE, 'Asia/Tokyo'>>
+type _feedCollectCronIsUtc1900 = Assert<Equals<typeof FEED_COLLECT_CRON, '0 19 * * *'>>
+type _feedCollectTimezoneIsTokyo = Assert<Equals<typeof FEED_COLLECT_TIMEZONE, 'Asia/Tokyo'>>
+type _feedScheduleLogHasNoUrl = Assert<'url' extends keyof FeedScheduleLog ? false : true>
 type _dailyIdentityHasCatalogFields = Assert<
   DailyIssueIdentity extends {
     readonly opdsEntryId: string
@@ -482,4 +486,7 @@ export type CompileChecks = {
   readonly dailyStrategyIsNewIdPerDay: _dailyStrategyIsNewIdPerDay
   readonly dailyTimezoneIsTokyo: _dailyTimezoneIsTokyo
   readonly dailyIdentityHasCatalogFields: _dailyIdentityHasCatalogFields
+  readonly feedCollectCronIsUtc1900: _feedCollectCronIsUtc1900
+  readonly feedCollectTimezoneIsTokyo: _feedCollectTimezoneIsTokyo
+  readonly feedScheduleLogHasNoUrl: _feedScheduleLogHasNoUrl
 }

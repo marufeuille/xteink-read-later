@@ -1,4 +1,5 @@
 import { createApp } from './app'
+import { runScheduledFeedCollection } from './feeds/schedule'
 import { clipPipeline } from './pipeline/clip'
 import { createClipQueueHandler } from './queue/clip'
 import { createFeedQueueHandler, FEED_QUEUE_NAME } from './queue/feed'
@@ -20,5 +21,8 @@ export default {
       createStore: createR2Store,
       createCandidateStore: createD1CandidateStore,
     })(batch as MessageBatch<ClipQueueMessage>, env)
+  },
+  async scheduled(controller, env) {
+    await runScheduledFeedCollection(env, { cron: controller.cron })
   },
 } satisfies ExportedHandler<Cloudflare.Env, ClipQueueMessage | FeedQueueMessage>

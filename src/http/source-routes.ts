@@ -1,18 +1,17 @@
 import type { Context, Hono } from 'hono'
 import { fetchPage as defaultFetchPage } from '../extract/fetch-page'
 import { fetchFeed as defaultFetchFeed } from '../feeds/fetch'
+import { enqueueCollection, enqueueEnabledCollections } from '../feeds/enqueue'
 import { sourceNoticeMessage, sourcesPageHtml, htmlResponse } from '../feeds/html'
-import { isActiveFeedCollection, parseEnabledInput, parseTopicTagsInput } from '../feeds/source-input'
+import { parseEnabledInput, parseTopicTagsInput } from '../feeds/source-input'
 import { resolveSourceUrls } from '../feeds/resolve'
 import { createD1FeedSourceStore } from '../store/d1-sources'
 import {
   feedSourceIdFromFeedUrl,
   isFeedSourceId,
   isFeedSourceType,
-  newFeedRunId,
   toFeedSourcePublic,
   type AppEnv,
-  type FeedCollectBody,
   type FeedQueueMessage,
   type FeedSource,
   type FeedSourceStore,
@@ -22,7 +21,7 @@ import {
 } from '../types'
 import { defaultGetAccessIdentity, type GetAccessIdentity } from './access-identity'
 import { denyIfCsrfMismatch, presentedCsrf, requireClipWebAuth, wantsJson } from './clip-web-auth'
-import { toErrorResponse } from './error-response'
+import { errorMessage, toErrorResponse } from './error-response'
 
 export type SourceHttpDeps = {
   readonly sourceStore?: FeedSourceStore
@@ -35,11 +34,7 @@ export type SourceHttpDeps = {
 }
 
 function storeFor(env: Cloudflare.Env, deps: SourceHttpDeps): FeedSourceStore {
-  if (deps.sourceStore !== undefined) {
-    return deps.sourceStore
-  }
-  const create = deps.createSourceStore ?? createD1FeedSourceStore
-  return create(env)
+  return deps.sourceStore ?? (deps.createSourceStore ?? createD1FeedSourceStore)(env)
 }
 
 function queueFor(env: Cloudflare.Env, deps: SourceHttpDeps): Queue<FeedQueueMessage> {
@@ -140,52 +135,6 @@ function invalidTypeResponse(json: boolean): Response {
     : htmlResponse('情報源', '<p>情報源種別を選んでください</p>', 400)
 }
 
-async function enqueueCollection(
-  source: FeedSource,
-  store: FeedSourceStore,
-  queue: Queue<FeedQueueMessage>,
-  now: () => Date,
-  nowMs: number,
-): Promise<{ readonly source: FeedSource; readonly body: FeedCollectBody } | Response> {
-  if (!source.enabled) {
-    return toErrorResponse({ kind: 'source_disabled' })
-  }
-  if (isActiveFeedCollection(source, nowMs) && source.collectionRunId !== null) {
-    return {
-      source,
-      body: { sourceId: source.id, runId: source.collectionRunId, status: 'queued' },
-    }
-  }
-  const runId = newFeedRunId()
-  const updated: FeedSource = {
-    ...source,
-    collectionRunId: runId,
-    collectionStatus: 'queued',
-    collectionAttempt: 0,
-    collectionErrorCode: null,
-    collectionErrorMessage: null,
-    updatedAt: nowIso(now),
-  }
-  await store.put(updated)
-  try {
-    await queue.send({ sourceId: source.id, runId })
-  } catch (cause) {
-    const failed: FeedSource = {
-      ...updated,
-      collectionStatus: 'failed',
-      collectionErrorCode: 'queue_failed',
-      collectionErrorMessage: cause instanceof Error ? cause.message : 'queue send failed',
-      updatedAt: nowIso(now),
-    }
-    await store.put(failed)
-    return toErrorResponse({
-      kind: 'queue_failed',
-      reason: cause instanceof Error ? cause.message : 'queue send failed',
-    })
-  }
-  return { source: updated, body: { sourceId: source.id, runId, status: 'queued' } }
-}
-
 export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}): void {
   const fetchPage = deps.fetchPage ?? defaultFetchPage
   const fetchFeed = deps.fetchFeed ?? defaultFetchFeed
@@ -225,21 +174,22 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
     if (denied !== null) {
       return denied
     }
-    const store = storeFor(c.env, deps)
-    const queue = queueFor(c.env, deps)
-    const enabled = await store.listEnabled()
-    const runs: FeedCollectBody[] = []
-    const failures: { sourceId: FeedSource['id']; error: string }[] = []
-    for (const source of enabled) {
-      const queued = await enqueueCollection(source, store, queue, now, Date.now())
-      if (queued instanceof Response) {
-        failures.push({ sourceId: source.id, error: queued.statusText || String(queued.status) })
-        continue
-      }
-      runs.push(queued.body)
-    }
+    const queued = await enqueueEnabledCollections({
+      store: storeFor(c.env, deps),
+      queue: queueFor(c.env, deps),
+      now,
+    })
     if (json) {
-      return c.json({ runs, failures }, 202)
+      return c.json(
+        {
+          runs: queued.runs,
+          failures: queued.failures.map((item) => ({
+            sourceId: item.sourceId,
+            error: errorMessage(item.error),
+          })),
+        },
+        202,
+      )
     }
     return htmlResponse('情報源', '<p>収集を予約しました</p>', 303, { location: '/sources?notice=queued' })
   })
@@ -337,15 +287,15 @@ export function mountSourceRoutes(app: Hono<AppEnv>, deps: SourceHttpDeps = {}):
     if (source === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
-    const queued = await enqueueCollection(source, store, queueFor(c.env, deps), now, Date.now())
-    if (queued instanceof Response) {
-      if (!json && queued.status === 409) {
+    const queued = await enqueueCollection(source, { store, queue: queueFor(c.env, deps), now })
+    if (!queued.ok) {
+      if (!json && queued.error.kind === 'source_disabled') {
         return htmlResponse('情報源', '<p>停止中です</p>', 303, { location: '/sources?notice=stopped' })
       }
-      return queued
+      return toErrorResponse(queued.error)
     }
     if (json) {
-      return c.json(queued.body, 202)
+      return c.json(queued.value, 202)
     }
     return htmlResponse('情報源', '<p>収集を予約しました</p>', 303, { location: '/sources?notice=queued' })
   })

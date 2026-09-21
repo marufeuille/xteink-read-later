@@ -66,5 +66,9 @@
         "max_retries": 3
       }
     ]
+  },
+  "triggers": {
+    // Daily feed collection at 04:00 Asia/Tokyo (UTC 19:00). Keep in sync with FEED_COLLECT_CRON.
+    "crons": ["0 19 * * *"]
   }
 }
