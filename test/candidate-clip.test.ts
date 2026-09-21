@@ -8,6 +8,7 @@ import { resolveCandidateDelivery } from '../src/candidates/delivery'
 import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
 import { logCandidateClip, logOpdsDownload } from '../src/log'
+import { unevaluatedRecommendation } from '../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import { createMemoryStore } from '../src/store/memory'
 import {
@@ -73,6 +74,7 @@ function listedCandidate(overrides: Partial<CandidateArticle> & Pick<CandidateAr
     clipJobId: null,
     clipRunId: null,
     selectedAt: null,
+    recommendation: unevaluatedRecommendation(),
     createdAt: now,
     updatedAt: now,
     ...overrides,

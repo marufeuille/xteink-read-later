@@ -1,5 +1,5 @@
 import type { ArticleFields, ArticleMeta, ExtractedArticle, TranslatedArticle } from './article'
-import type { CandidateClipBody, CandidateListBody, CandidateRegisterBody } from './candidate'
+import type { CandidateClipBody, CandidateListBody, CandidateRecommendBody, CandidateRegisterBody } from './candidate'
 import type { ClassifyErrorCode } from './classify'
 import type { ErrorKind, HttpStatusOf, TranslateFailedError } from './errors'
 import type { ArticleEpubKey, ArticleId, ClipJobId, EpubBytes, HttpUrl } from './id'
@@ -145,6 +145,12 @@ export type ApiRoutes = {
   readonly postPurchasedBook: RouteSpec<'POST', '/books', BearerAuth, PurchasedBookBody>
   readonly postCandidate: RouteSpec<'POST', '/candidates', BearerAuth, CandidateRegisterBody>
   readonly postCandidateClip: RouteSpec<'POST', '/candidates/:id/clip', BearerAuth, CandidateClipBody>
+  readonly postCandidateRecommend: RouteSpec<
+    'POST',
+    '/candidates/:id/recommend',
+    BearerAuth,
+    CandidateRecommendBody
+  >
   readonly listCandidates: RouteSpec<'GET', '/candidates.json', BearerAuth, CandidateListBody>
   readonly listFeedSources: RouteSpec<'GET', '/sources.json', BearerAuth, FeedSourceListBody>
   readonly postFeedSource: RouteSpec<'POST', '/sources', BearerAuth, FeedSourceWriteBody>

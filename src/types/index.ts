@@ -162,6 +162,7 @@ export type {
   CandidateNotice,
   CandidateNoticeKind,
   CandidatePublic,
+  CandidateRecommendBody,
   CandidateRegisterBody,
   CandidateRegisterResult,
   CandidateSourceKind,
@@ -248,6 +249,29 @@ export type {
 } from './pipeline'
 export type { Err, Ok, Result } from './result'
 export { err, ok } from './result'
+export type {
+  CandidateRecommendPublic,
+  CandidateRecommendation,
+  EvaluateDeRecommendation,
+  EvaluatedRecommendation,
+  FailedRecommendation,
+  InsufficientRecommendation,
+  LowConfidenceRecommendation,
+  RecommendArticleInput,
+  RecommendErrorCode,
+  RecommendGrade,
+  RecommendReasonId,
+  RecommendStatus,
+  RecommendVersion,
+  SkippedRecommendation,
+  UnevaluatedRecommendation,
+} from './recommend'
+export {
+  RECOMMEND_ERROR_CODES,
+  RECOMMEND_GRADES,
+  RECOMMEND_REASON_IDS,
+  RECOMMEND_STATUSES,
+} from './recommend'
 export type {
   ArticleStore,
   ArticleWrite,

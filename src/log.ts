@@ -45,6 +45,22 @@ export function logOpdsDownload(entry: Omit<OpdsDownloadLog, 'event'>): void {
   console.log(JSON.stringify({ event: 'opds_download', ...entry } satisfies OpdsDownloadLog))
 }
 
+export type CandidateRecommendLog = {
+  readonly event: 'candidate_recommend'
+  readonly candidateId: CandidateId
+  readonly status: string
+  readonly grade: string | null
+  readonly version: string | null
+  readonly durationMs: number
+  readonly inputTokens: number | null
+  readonly reused: boolean
+  readonly errorCode: string | null
+}
+
+export function logCandidateRecommend(entry: Omit<CandidateRecommendLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'candidate_recommend', ...entry } satisfies CandidateRecommendLog))
+}
+
 export type FeedLog = {
   readonly stage: 'collect'
   readonly durationMs: number

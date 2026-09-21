@@ -1,5 +1,6 @@
 import type { ArticleId, CandidateDiscoveryId, CandidateId, ClipJobId, ClipRunId, FeedSourceId, HttpUrl } from './id'
 import type { ClipJobError } from './job'
+import type { CandidateRecommendation, CandidateRecommendPublic } from './recommend'
 
 export const CANDIDATE_SOURCE_KIND_MANUAL_URL = 'manual_url' as const
 export const CANDIDATE_SOURCE_KIND_FEED_PREFIX = 'feed:' as const
@@ -58,6 +59,7 @@ export type CandidateArticle = {
   readonly clipJobId: ClipJobId | null
   readonly clipRunId: ClipRunId | null
   readonly selectedAt: string | null
+  readonly recommendation: CandidateRecommendation
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -103,6 +105,7 @@ export type CandidateNoticeKind =
   | 'reused'
   | 'unsendable'
   | 'clip_failed'
+  | 'rejudged'
 
 export type CandidateNotice = {
   readonly kind: CandidateNoticeKind
@@ -134,6 +137,13 @@ export type CandidatePublic = {
   readonly deliveryState: CandidateDeliveryState
   readonly deliveryError: ClipJobError | null
   readonly availableInOpds: boolean
+  readonly recommendation: CandidateRecommendPublic
+}
+
+export type CandidateRecommendBody = {
+  readonly candidateId: CandidateId
+  readonly reused: boolean
+  readonly candidate: CandidatePublic
 }
 
 export type CandidateClipBody = {

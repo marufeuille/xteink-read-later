@@ -3,6 +3,7 @@ import { sendCandidateClip } from '../candidates/clip'
 import { enrichCandidatePublic, syncCandidateCompletion, candidateIdParam } from '../candidates/delivery'
 import { listOffset, parseListPage, toCandidateListBodyFromPublic, toCandidatePublic } from '../candidates/list'
 import { candidatesPageHtml, htmlResponse, loginPageHtml, toRegisterJson } from '../candidates/html'
+import { reevaluateCandidate } from '../candidates/recommend'
 import { registerCandidate } from '../candidates/register'
 import { parseClipUrl } from '../extract/parse-clip-url'
 import { fetchPage as defaultFetchPage } from '../extract/fetch-page'
@@ -17,6 +18,7 @@ import {
   type CandidateStore,
   type ClipQueueMessage,
   type CreateArticleStore,
+  type EvaluateSystemOne,
   type FetchPage,
 } from '../types'
 import { clipTokenAuthorized } from './auth'
@@ -38,32 +40,27 @@ export type CandidateHttpDeps = {
   readonly queue?: Queue<ClipQueueMessage>
   readonly fetchPage?: FetchPage
   readonly now?: () => Date
+  readonly evaluateRecommend?: EvaluateSystemOne
+}
+
+const NOTICE_MESSAGES: Record<CandidateNoticeKind, string> = {
+  registered: '候補に登録しました',
+  duplicate: '同じ記事はすでに候補にあります',
+  paywalled: '有料記事と判定したため、読書候補からは除外しました',
+  fetch_failed: 'ページを取得できませんでした',
+  clipped: '全文の準備を開始しました',
+  reused: '完成済みの EPUB を再利用します（OPDSで取得可能）',
+  unsendable: '有料または全文を取得できないため送れません',
+  clip_failed: '全文の送信に失敗しました。再試行できます',
+  rejudged: 'おすすめ度を判定しました',
 }
 
 function noticeFromQuery(raw: string | undefined): CandidateNotice | undefined {
-  const messages: Record<CandidateNoticeKind, string> = {
-    registered: '候補に登録しました',
-    duplicate: '同じ記事はすでに候補にあります',
-    paywalled: '有料記事と判定したため、読書候補からは除外しました',
-    fetch_failed: 'ページを取得できませんでした',
-    clipped: '全文の準備を開始しました',
-    reused: '完成済みの EPUB を再利用します（OPDSで取得可能）',
-    unsendable: '有料または全文を取得できないため送れません',
-    clip_failed: '全文の送信に失敗しました。再試行できます',
-  }
-  if (
-    raw !== 'registered' &&
-    raw !== 'duplicate' &&
-    raw !== 'paywalled' &&
-    raw !== 'fetch_failed' &&
-    raw !== 'clipped' &&
-    raw !== 'reused' &&
-    raw !== 'unsendable' &&
-    raw !== 'clip_failed'
-  ) {
+  if (raw === undefined || !Object.hasOwn(NOTICE_MESSAGES, raw)) {
     return undefined
   }
-  return { kind: raw, message: messages[raw] }
+  const kind = raw as CandidateNoticeKind
+  return { kind, message: NOTICE_MESSAGES[kind] }
 }
 
 function candidateStoreFor(env: Cloudflare.Env, deps: CandidateHttpDeps): CandidateStore {
@@ -124,26 +121,30 @@ async function listedBody(
   return toCandidateListBodyFromPublic(publics, listed.total, listed.limit, pageNumber)
 }
 
-async function readClipSend(c: Context<AppEnv>, json: boolean): Promise<{ regenerate: boolean; csrf: string } | Response> {
+async function readActionFlag(
+  c: Context<AppEnv>,
+  json: boolean,
+  field: 'force' | 'regenerate',
+): Promise<{ flag: boolean; csrf: string } | Response> {
   if (json) {
-    let regenerate = false
+    let flag = false
     const raw = await c.req.text().catch(() => '')
     if (raw.trim() !== '') {
       try {
         const body: unknown = JSON.parse(raw)
-        if (typeof body === 'object' && body !== null && 'regenerate' in body) {
-          regenerate = (body as { regenerate?: unknown }).regenerate === true
+        if (typeof body === 'object' && body !== null && field in body) {
+          flag = (body as Record<string, unknown>)[field] === true
         }
       } catch {
-        regenerate = false
+        flag = false
       }
     }
-    return { regenerate, csrf: c.req.header('x-csrf-token') ?? '' }
+    return { flag, csrf: c.req.header('x-csrf-token') ?? '' }
   }
   try {
     const form = await c.req.parseBody()
     return {
-      regenerate: form.regenerate === '1' || form.regenerate === 'true',
+      flag: form[field] === '1' || form[field] === 'true',
       csrf: typeof form.csrf === 'string' ? form.csrf : '',
     }
   } catch {
@@ -236,7 +237,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     if (candidateId === null) {
       return json ? toErrorResponse({ kind: 'not_found' }) : htmlResponse('読書候補', '<p>候補が見つかりません</p>', 404)
     }
-    const parsed = await readClipSend(c, json)
+    const parsed = await readActionFlag(c, json, 'regenerate')
     if (parsed instanceof Response) {
       return parsed
     }
@@ -246,7 +247,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     }
     const sent = await sendCandidateClip({
       candidateId,
-      regenerate: parsed.regenerate,
+      regenerate: parsed.flag,
       candidateStore: candidateStoreFor(c.env, deps),
       articleStore: articleStoreFor(c.env, deps),
       queue: clipQueueFor(c.env, deps),
@@ -271,6 +272,58 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     const notice = sent.value.reused && sent.value.body.deliveryState === 'available' ? 'reused' : 'clipped'
     return htmlResponse('読書候補', '<p>送信しました</p>', 303, {
       location: `/candidates?notice=${notice}`,
+    })
+  })
+
+  app.on('POST', ['/candidates/:id/recommend', '/candidates/:id/recommend/'], async (c) => {
+    const auth = await requireClipWebAuth(c)
+    if (auth instanceof Response) {
+      return auth
+    }
+    const json = wantsJson(c)
+    const candidateId = candidateIdParam(c.req.param('id'))
+    if (candidateId === null) {
+      return json ? toErrorResponse({ kind: 'not_found' }) : htmlResponse('読書候補', '<p>候補が見つかりません</p>', 404)
+    }
+    const parsed = await readActionFlag(c, json, 'force')
+    if (parsed instanceof Response) {
+      return parsed
+    }
+    const denied = await requireCsrf(auth, parsed.csrf)
+    if (denied !== null) {
+      return denied
+    }
+    const judged = await reevaluateCandidate({
+      candidateId,
+      force: parsed.flag,
+      store: candidateStoreFor(c.env, deps),
+      fetchPage,
+      now,
+      jevDeps: { OPENROUTER_API_KEY: c.env.OPENROUTER_API_KEY },
+      ...(deps.evaluateRecommend === undefined ? {} : { evaluate: deps.evaluateRecommend }),
+    })
+    if (!judged.ok) {
+      return json
+        ? toErrorResponse(judged.error)
+        : htmlResponse('読書候補', '<p>候補が見つかりません</p>', 404)
+    }
+    if (json) {
+      const publicItem = await enrichCandidatePublic(
+        judged.value.candidate,
+        articleStoreFor(c.env, deps),
+        now().getTime(),
+      )
+      return c.json(
+        {
+          candidateId: judged.value.candidate.id,
+          reused: judged.value.reused,
+          candidate: publicItem,
+        },
+        200,
+      )
+    }
+    return htmlResponse('読書候補', '<p>判定しました</p>', 303, {
+      location: '/candidates?notice=rejudged',
     })
   })
 
@@ -320,6 +373,8 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
       store: candidateStoreFor(c.env, deps),
       fetchPage,
       now,
+      jevDeps: { OPENROUTER_API_KEY: c.env.OPENROUTER_API_KEY },
+      ...(deps.evaluateRecommend === undefined ? {} : { evaluateRecommend: deps.evaluateRecommend }),
     })
     if (!registered.ok) {
       return json

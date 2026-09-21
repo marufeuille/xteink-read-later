@@ -1,3 +1,4 @@
+import { RECOMMEND_REASON_LABELS, recommendDisplayLabel } from '../recommend/taxonomy'
 import { CANDIDATE_LIST_TIMEZONE, type CandidateListBody, type CandidateNotice, type CandidatePublic } from '../types'
 import { candidateCanRegenerate, candidateCanSend } from './delivery'
 import { CANDIDATE_TIMEZONE_NOTE, calendarDateInTimeZone } from './list'
@@ -110,36 +111,57 @@ ${notice}
 </form>`
 }
 
-function clipForm(item: CandidatePublic, csrfToken: string, regenerate: boolean, label: string): string {
-  const regen = regenerate ? '<input type="hidden" name="regenerate" value="1" />' : ''
-  return `<form method="post" action="/candidates/${escapeHtml(item.id)}/clip">
+function recommendReasonsLabel(item: CandidatePublic): string {
+  if (item.recommendation.reasons.length === 0) {
+    return ''
+  }
+  return item.recommendation.reasons.map((reason) => RECOMMEND_REASON_LABELS[reason]).join(' · ')
+}
+
+function candidateActionForm(
+  item: CandidatePublic,
+  csrfToken: string,
+  action: 'clip' | 'recommend',
+  flag: 'force' | 'regenerate' | null,
+  label: string,
+): string {
+  const extra = flag === null ? '' : `<input type="hidden" name="${flag}" value="1" />`
+  return `<form method="post" action="/candidates/${escapeHtml(item.id)}/${action}">
   <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}" />
-  ${regen}
+  ${extra}
   <button type="submit">${escapeHtml(label)}</button>
 </form>`
 }
 
+function actionsBlock(buttons: readonly string[]): string {
+  return buttons.length === 0 ? '' : `<div class="actions">${buttons.join('')}</div>`
+}
+
 function itemActions(item: CandidatePublic, csrfToken: string): string {
+  const buttons: string[] = []
+  const judged =
+    item.recommendation.status === 'evaluated' || item.recommendation.status === 'low_confidence'
+  if (item.exclusionReason !== 'paywalled') {
+    buttons.push(
+      candidateActionForm(item, csrfToken, 'recommend', judged ? 'force' : null, judged ? '再判定' : '判定する'),
+    )
+  }
   if (item.fetchStatus === 'fetch_failed' && item.deliveryState === 'unsent') {
-    return '<p class="note">ページを取得できていないため、全文は送れません</p>'
+    return `${actionsBlock(buttons)}<p class="note">ページを取得できていないため、全文は送れません</p>`
   }
   if (item.deliveryState === 'preparing') {
-    return '<p class="note">準備中です。<a href="/candidates">表示を更新</a></p>'
+    return `${actionsBlock(buttons)}<p class="note">準備中です。<a href="/candidates">表示を更新</a></p>`
   }
-  const buttons: string[] = []
   if (candidateCanSend(item) && item.deliveryState === 'unsent') {
-    buttons.push(clipForm(item, csrfToken, false, '全文を送る'))
+    buttons.push(candidateActionForm(item, csrfToken, 'clip', null, '全文を送る'))
   }
   if (candidateCanSend(item) && item.deliveryState === 'failed') {
-    buttons.push(clipForm(item, csrfToken, false, '再試行'))
+    buttons.push(candidateActionForm(item, csrfToken, 'clip', null, '再試行'))
   }
   if (candidateCanRegenerate(item)) {
-    buttons.push(clipForm(item, csrfToken, true, '再生成'))
+    buttons.push(candidateActionForm(item, csrfToken, 'clip', 'regenerate', '再生成'))
   }
-  if (buttons.length === 0) {
-    return ''
-  }
-  return `<div class="actions">${buttons.join('')}</div>`
+  return actionsBlock(buttons)
 }
 
 function itemHtml(item: CandidatePublic, csrfToken: string): string {
@@ -148,10 +170,12 @@ function itemHtml(item: CandidatePublic, csrfToken: string): string {
       ? '公開日不明'
       : `公開日 ${escapeHtml(calendarDateInTimeZone(item.publishedAt, CANDIDATE_LIST_TIMEZONE))}`
   const discovered = `発見日 ${escapeHtml(item.discoveredAt)}`
+  const reasons = recommendReasonsLabel(item)
   return `<article class="item">
   <h3>${escapeHtml(item.title)}</h3>
   <p class="meta">${escapeHtml(item.outlet)} · ${published}</p>
   <p class="meta">${discovered} · ${escapeHtml(fetchStatusLabel(item))}</p>
+  <p class="meta">${escapeHtml(recommendDisplayLabel(item.recommendation))}${reasons === '' ? '' : ` · ${escapeHtml(reasons)}`}</p>
   <p class="meta">${escapeHtml(deliveryLabel(item))}</p>
   <p><a href="${escapeHtml(item.canonicalUrl)}">元記事</a></p>
   ${itemActions(item, csrfToken)}
@@ -189,6 +213,7 @@ export function candidatesPageHtml(input: {
 ${notice}
 <p class="note">${escapeHtml(input.list.timezoneNote ?? CANDIDATE_TIMEZONE_NOTE)}</p>
 <p class="note">「OPDSで取得可能」はカタログに載った状態です。端末のダウンロード済みや読了ではありません。</p>
+<p class="note">おすすめ度はデータエンジニア視点の読書補助です。品質の保証ではありません。未判定・材料不足・低確信・失敗は低評価ではありません。</p>
 <nav><a href="/sources">情報源</a></nav>
 <form method="post" action="/candidates">
   <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />

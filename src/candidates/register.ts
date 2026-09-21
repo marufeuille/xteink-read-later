@@ -8,19 +8,26 @@ import {
   type CandidateRegisterResult,
   type CandidateSourceKind,
   type CandidateStore,
+  type EvaluateSystemOne,
   type FetchPage,
   type HttpUrl,
   type InvalidUrlError,
+  type JevDeps,
   type Result,
 } from '../types'
+import { RECOMMEND_MAX_CALLS_PER_REGISTER, unevaluatedRecommendation } from '../recommend/taxonomy'
 import { assertFetchableCandidateUrl } from './fetch-policy'
 import { extractCandidateMetadata } from './metadata'
+import { logResolvedRecommendation, resolveDeRecommendation, type RecommendBudget } from './recommend'
 
 export type RegisterCandidateDeps = {
   readonly store: CandidateStore
   readonly fetchPage: FetchPage
   readonly now?: () => Date
   readonly sourceKind?: CandidateSourceKind
+  readonly jevDeps?: JevDeps
+  readonly evaluateRecommend?: EvaluateSystemOne
+  readonly maxJevCalls?: number
 }
 
 function isoNow(now: () => Date): string {
@@ -65,13 +72,14 @@ async function persist(
 
 function clipPointers(existing: CandidateArticle | null): Pick<
   CandidateArticle,
-  'completedArticleId' | 'clipJobId' | 'clipRunId' | 'selectedAt'
+  'completedArticleId' | 'clipJobId' | 'clipRunId' | 'selectedAt' | 'recommendation'
 > {
   return {
     completedArticleId: existing?.completedArticleId ?? null,
     clipJobId: existing?.clipJobId ?? null,
     clipRunId: existing?.clipRunId ?? null,
     selectedAt: existing?.selectedAt ?? null,
+    recommendation: existing?.recommendation ?? unevaluatedRecommendation(),
   }
 }
 
@@ -98,6 +106,37 @@ function savedCandidate(existing: CandidateArticle | null, incoming: CandidateAr
   }
 }
 
+async function persistJudged(
+  saved: CandidateArticle,
+  input: {
+    readonly extractedHtml: string | null
+    readonly paywalled: boolean
+    readonly now: Date
+    readonly budget: RecommendBudget
+    readonly deps: RegisterCandidateDeps
+    readonly submittedUrl: HttpUrl
+    readonly discoveredAt: string
+    readonly sourceKind: CandidateSourceKind
+  },
+): Promise<CandidateArticle> {
+  const resolved = await resolveDeRecommendation({
+    existing: saved.recommendation,
+    extractedHtml: input.extractedHtml,
+    title: saved.title,
+    outlet: saved.outlet,
+    canonicalUrl: saved.canonicalUrl,
+    paywalled: input.paywalled,
+    now: input.now,
+    budget: input.budget,
+    ...(input.deps.jevDeps === undefined ? {} : { jevDeps: input.deps.jevDeps }),
+    ...(input.deps.evaluateRecommend === undefined ? {} : { evaluate: input.deps.evaluateRecommend }),
+  })
+  const judged: CandidateArticle = { ...saved, recommendation: resolved.recommendation }
+  await persist(input.deps.store, input.submittedUrl, input.discoveredAt, judged, input.sourceKind)
+  logResolvedRecommendation(judged, resolved.reused)
+  return judged
+}
+
 export async function registerCandidate(
   submittedUrl: HttpUrl,
   deps: RegisterCandidateDeps,
@@ -105,6 +144,7 @@ export async function registerCandidate(
   const now = deps.now ?? (() => new Date())
   const discoveredAt = isoNow(now)
   const sourceKind = deps.sourceKind ?? CANDIDATE_SOURCE_KIND_MANUAL_URL
+  const budget: RecommendBudget = { remainingCalls: deps.maxJevCalls ?? RECOMMEND_MAX_CALLS_PER_REGISTER }
   const fetchable = assertFetchableCandidateUrl(submittedUrl)
   if (!fetchable.ok) {
     return fetchable
@@ -130,10 +170,18 @@ export async function registerCandidate(
       createdAt: existing?.createdAt ?? discoveredAt,
       updatedAt: discoveredAt,
     }
-    const saved = savedCandidate(existing, incoming)
-    await persist(deps.store, submittedUrl, discoveredAt, saved, sourceKind)
+    const judged = await persistJudged(savedCandidate(existing, incoming), {
+      extractedHtml: null,
+      paywalled: false,
+      now: now(),
+      budget,
+      deps,
+      submittedUrl,
+      discoveredAt,
+      sourceKind,
+    })
     return ok({
-      candidate: saved,
+      candidate: judged,
       duplicate: existing !== null,
       notice: toPublicNotice(existing !== null ? 'duplicate' : 'fetch_failed'),
     })
@@ -164,11 +212,19 @@ export async function registerCandidate(
     createdAt: existing?.createdAt ?? discoveredAt,
     updatedAt: discoveredAt,
   }
-  const saved = savedCandidate(existing, incoming)
-  await persist(deps.store, submittedUrl, discoveredAt, saved, sourceKind)
+  const judged = await persistJudged(savedCandidate(existing, incoming), {
+    extractedHtml: extracted?.ok === true ? extracted.value.contentHtml : null,
+    paywalled: metadata.paywalled,
+    now: now(),
+    budget,
+    deps,
+    submittedUrl,
+    discoveredAt,
+    sourceKind,
+  })
   const noticeKind = metadata.paywalled ? 'paywalled' : existing !== null ? 'duplicate' : 'registered'
   return ok({
-    candidate: saved,
+    candidate: judged,
     duplicate: existing !== null,
     notice: toPublicNotice(noticeKind),
   })

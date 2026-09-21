@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { assertFetchableCandidateUrl } from '../src/candidates/fetch-policy'
 import { calendarDateInTimeZone, groupCandidatesByPublishedDate } from '../src/candidates/list'
 import { registerCandidate } from '../src/candidates/register'
+import { unevaluatedRecommendation } from '../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import {
   asCandidateId,
@@ -198,6 +199,7 @@ describe('published date grouping', () => {
       clipJobId: null,
       clipRunId: null,
       selectedAt: null,
+      recommendation: unevaluatedRecommendation(),
       createdAt: '2026-09-21T00:00:00.000Z',
       updatedAt: '2026-09-21T00:00:00.000Z',
     }
@@ -254,6 +256,7 @@ describe('published date grouping', () => {
         clipJobId: null,
         clipRunId: null,
         selectedAt: null,
+        recommendation: unevaluatedRecommendation(),
         createdAt: now,
         updatedAt: now,
       })

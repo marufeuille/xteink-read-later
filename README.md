@@ -129,13 +129,15 @@ npm run dev
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
-`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect` は Bearer `CLIP_TOKEN`。候補と情報源の Web 画面は同じトークンで `/candidates/login` し、HttpOnly Cookie を使う（HTML にトークンは出さない。フォーム POST は CSRF トークン必須）。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と `clip_job_id` / `clip_run_id` / `completed_article_id` / `selected_at` の対応だけ持つ。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`POST /candidates/:id/recommend`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect` は Bearer `CLIP_TOKEN`。候補と情報源の Web 画面は同じトークンで `/candidates/login` し、HttpOnly Cookie を使う（HTML にトークンは出さない。フォーム POST は CSRF トークン必須）。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と clip ポインタ、おすすめ判定（本文は持たない）を持つ。
 
 ### 読書候補（翻訳しない URL 投入）
 
 見つけた記事 URL を候補として残す。`POST /clip` の即時全文生成契約は変えない。
 
 ブラウザ: `{worker}/candidates/login` に `CLIP_TOKEN` を入れて入る。一覧はスマホ向け。公開日は **Asia/Tokyo (UTC+9)** の暦日で分ける。公開日が無い記事は「公開日不明」で、発見日を公開日の代わりにはしない。有料と判定した記事は一覧から外し、投入直後に理由を出す。無料全文を確認できない記事は「本文取得済み」と表示しない。
+
+一覧にはデータエンジニア視点のおすすめ度（おすすめ / 関連あり / 優先度低）と判定状態（未判定・材料不足・低確信・失敗）を出す。理由は固定ラベルのみ。モデル確信度はおすすめ度ではない。判定失敗や低評価でも候補は残し、全文送信は続けられる。手動投入で抽出本文があるときは翻訳前 excerpt で Jev 判定する。フィード収集では時間予算のため未判定のまま残し、一覧の「判定する」で明示評価する。基準は `docs/de-recommend.md`。
 
 一覧の「全文を送る」は既存のクリップ Queue に載せる。状態は未送信 / 準備中 / OPDSで取得可能 / 失敗。失敗は理由と再試行。完成済み EPUB は再利用し、明示の「再生成」だけ新しく作る。「OPDSで取得可能」はカタログ掲載であり、端末のダウンロード済みや読了ではない。選択日時と OPDS の EPUB 取得要求は JSON ログに残す（本文・token・URL は出さない）。読了とはみなさない。
 
@@ -151,6 +153,11 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/clip" \
   -H 'content-type: application/json' \
   -H "Authorization: Bearer $CLIP_TOKEN"
 # 202 { "candidateId":"cand_…", "jobId":"job_…", "runId":"run_…", "status":"queued", "deliveryState":"preparing", "reused": false }
+curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN" \
+  -d '{"force":true}'
+# 200 { "candidateId":"cand_…", "reused": false, "candidate": { "recommendation": { "status":"evaluated", "grade":"related", "reasons":["de_relevant"] } } }
 ```
 
 同一記事はリダイレクト後 URL と canonical でまとめる。別の発見 URL は `candidate_discoveries` に残す（情報源の種別。話題の分類列には混ぜない）。フィード由来は `feed:<sourceId>`、手動投入は `manual_url`。
