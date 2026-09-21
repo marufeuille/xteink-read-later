@@ -4,9 +4,26 @@ import { asArticleId, isArticleId, type ArticleId, type ArticleMeta, type HttpUr
 export const OPDS_CATALOG_TITLE = 'Xteink Read Later'
 export const OPDS_CATALOG_TYPE = 'application/atom+xml;profile=opds-catalog;kind=acquisition'
 export const OPDS_ACQUISITION_REL = 'http://opds-spec.org/acquisition'
+export const OPDS_CACHE_CONTROL = 'no-store'
 
 export function opdsDownloadPath(id: ArticleId): `/opds/download/${ArticleId}.epub` {
   return `/opds/download/${id}.epub`
+}
+
+export function opdsFilename(id: ArticleId): `${ArticleId}.epub` {
+  return `${id}.epub`
+}
+
+export function originBase(origin: HttpUrl): string {
+  return origin.endsWith('/') ? origin.slice(0, -1) : origin
+}
+
+export function opdsEntryHref(origin: HttpUrl, id: ArticleId): string {
+  return `${originBase(origin)}/articles/${id}`
+}
+
+export function opdsAcquisitionHref(origin: HttpUrl, id: ArticleId): string {
+  return `${originBase(origin)}${opdsDownloadPath(id)}`
 }
 
 export function parseOpdsDownloadFile(file: string): ArticleId | null {
@@ -15,10 +32,6 @@ export function parseOpdsDownloadFile(file: string): ArticleId | null {
   }
   const id = file.slice(0, -'.epub'.length)
   return isArticleId(id) ? asArticleId(id) : null
-}
-
-function originBase(origin: HttpUrl): string {
-  return origin.endsWith('/') ? origin.slice(0, -1) : origin
 }
 
 export function buildOpdsCatalog(articles: readonly ArticleMeta[], origin: HttpUrl): OpdsCatalog {
@@ -40,12 +53,12 @@ export function buildOpdsCatalog(articles: readonly ArticleMeta[], origin: HttpU
         : ''
     return `
   <entry>
-    <id>${xmlEscape(`${base}/articles/${article.id}`)}</id>
+    <id>${xmlEscape(opdsEntryHref(origin, article.id))}</id>
     <title>${xmlEscape(article.title)}</title>
     <updated>${xmlEscape(article.updatedAt)}</updated>${published}${author}
     <dc:language>ja</dc:language>
     <link rel="alternate" href="${xmlEscape(article.canonicalUrl)}" type="text/html"/>
-    <link rel="${OPDS_ACQUISITION_REL}" href="${xmlEscape(`${base}${opdsDownloadPath(article.id)}`)}" type="application/epub+zip"/>
+    <link rel="${OPDS_ACQUISITION_REL}" href="${xmlEscape(opdsAcquisitionHref(origin, article.id))}" type="application/epub+zip"/>
   </entry>`
   })
   const xml = `<?xml version="1.0" encoding="UTF-8"?>

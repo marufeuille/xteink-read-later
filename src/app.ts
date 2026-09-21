@@ -10,7 +10,7 @@ import { toErrorResponse } from './http/error-response'
 import { parsePurchasedBookForm } from './http/purchased-book'
 import { enqueueClipJob } from './job/enqueue'
 import { logOpdsDownload } from './log'
-import { buildOpdsCatalog, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
+import { buildOpdsCatalog, OPDS_CACHE_CONTROL, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
 import { createR2Store } from './store/r2'
 import type {
   AppEnv,
@@ -38,6 +38,7 @@ function epubFileResponse(id: ArticleId, epub: EpubBytes): Response {
     headers: {
       'content-type': 'application/epub+zip',
       'content-disposition': `attachment; filename="${id}.epub"`,
+      'cache-control': OPDS_CACHE_CONTROL,
     },
   })
 }
@@ -222,6 +223,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
       status: 200,
       headers: {
         'content-type': `${OPDS_CATALOG_TYPE};charset=utf-8`,
+        'cache-control': OPDS_CACHE_CONTROL,
       },
     })
   }

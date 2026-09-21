@@ -1,5 +1,5 @@
 import { zipSync, strToU8, type ZipOptions, type Zippable } from 'fflate'
-import type { BuildEpub, TranslatedArticle } from '../types'
+import type { EpubBytes, TranslatedArticle } from '../types'
 import { asEpubBytes } from '../types'
 import { CONTAINER_XML, EPUB_CSS } from './templates'
 import { htmlFragmentToXhtml, xmlEscape } from './xhtml'
@@ -146,9 +146,15 @@ function contentOpf(article: TranslatedArticle, bookId: string, modified: string
 `
 }
 
-export const buildEpub: BuildEpub = async (article) => {
+export async function buildEpub(
+  article: TranslatedArticle,
+  options: { readonly identifier?: string } = {},
+): Promise<EpubBytes> {
   const modified = isoNow()
-  const bookId = `urn:uuid:${crypto.randomUUID()}`
+  const bookId =
+    options.identifier !== undefined && options.identifier.length > 0
+      ? options.identifier
+      : `urn:uuid:${crypto.randomUUID()}`
   const converted = withHeadingIds(htmlFragmentToXhtml(article.contentHtml))
   const nav = navXhtml(article.title, converted.entries)
   const mimetype: [Uint8Array, ZipOptions] = [strToU8('application/epub+zip'), { level: 0 }]

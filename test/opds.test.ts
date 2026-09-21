@@ -135,6 +135,7 @@ describe('OPDS HTTP', () => {
     )
     expect(catalog.status).toBe(200)
     expect(catalog.headers.get('content-type')).toContain('application/atom+xml')
+    expect(catalog.headers.get('cache-control')).toBe('no-store')
     const xml = await catalog.text()
     expect(xml.indexOf('新しい記事')).toBeLessThan(xml.indexOf('古い記事'))
     expect(xml).toContain(`https://read.example.com/opds/download/${newer}.epub`)
@@ -154,6 +155,8 @@ describe('OPDS HTTP', () => {
     )
     expect(download.status).toBe(200)
     expect(download.headers.get('content-type')).toBe('application/epub+zip')
+    expect(download.headers.get('cache-control')).toBe('no-store')
+    expect(download.headers.get('content-disposition')).toBe(`attachment; filename="${newer}.epub"`)
     expect(new Uint8Array(await download.arrayBuffer())).toEqual(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]))
 
     const missing = await app.request(

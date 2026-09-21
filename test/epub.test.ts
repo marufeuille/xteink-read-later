@@ -180,6 +180,14 @@ describe('buildEpub', () => {
     expect(chapter).toContain('公開日: 2026-04-12T00:00:00.000Z')
   })
 
+  it('writes a caller-supplied EPUB identifier instead of a random UUID', async () => {
+    const article = translated({ title: 'まとめ 2026-09-21' })
+    const files = unzipSync(await buildEpub(article, { identifier: 'urn:xteink:daily:2026-09-21' }))
+    const opf = strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())
+    expect(opf).toContain('<dc:identifier id="bookid">urn:xteink:daily:2026-09-21</dc:identifier>')
+    expect(opf).not.toContain('urn:uuid:')
+  })
+
   it('strips NUL and remote img from chapter XHTML, keeping alt text', async () => {
     const article = translated({
       contentHtml:

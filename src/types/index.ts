@@ -1,5 +1,15 @@
 export type { AppEnv } from './app'
 export type {
+  DailyIdentityComparison,
+  DailyIssueIdentity,
+  DailyPublishResult,
+} from './daily'
+export {
+  DAILY_CANONICAL_PREFIX,
+  DAILY_IDENTITY_STRATEGY,
+  DAILY_TIMEZONE,
+} from './daily'
+export type {
   ArticleFields,
   ArticleMeta,
   ExtractedArticle,
