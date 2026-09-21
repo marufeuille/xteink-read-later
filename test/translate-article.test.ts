@@ -31,8 +31,8 @@ function article(overrides: Partial<ExtractedArticle> = {}): ExtractedArticle {
 }
 
 describe('translateArticle', () => {
-  it('uses gpt-4.1-mini rather than gpt-4o-mini', () => {
-    expect(OPENAI_MODEL).toBe('gpt-4.1-mini')
+  it('uses gpt-5.6-luna', () => {
+    expect(OPENAI_MODEL).toBe('gpt-5.6-luna')
   })
 
   it('does not call OpenAI for Japanese articles', async () => {
@@ -295,9 +295,17 @@ describe('translateArticle', () => {
       const raw = typeof init?.body === 'string' ? init.body : ''
       const body = JSON.parse(raw) as {
         model?: string
+        temperature?: unknown
+        reasoning_effort?: string
+        max_completion_tokens?: number
+        response_format?: unknown
         messages: Array<{ role: string; content: string }>
       }
       expect(body.model).toBe(OPENAI_MODEL)
+      expect(body.temperature).toBeUndefined()
+      expect(body.reasoning_effort).toBe('none')
+      expect(body.max_completion_tokens).toBe(16_000)
+      expect(body.response_format).toEqual({ type: 'json_object' })
       const user = JSON.parse(body.messages[1]?.content ?? '{}') as {
         content?: string
         contentHtml?: string

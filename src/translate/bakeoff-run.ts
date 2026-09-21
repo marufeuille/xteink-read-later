@@ -5,7 +5,13 @@ import { htmlToMarkdown } from '../extract/sanitize-html'
 import { parseHttpUrl, type HttpUrl } from '../types'
 import { loadBakeoffKeys } from './bakeoff-env'
 import { BAKEOFF_ARTICLES, type BakeoffArticle } from './bakeoff-corpus'
-import { OPENAI_CHAT_URL, TRANSLATE_SYSTEM_PROMPT, TRANSLATE_TIMEOUT_MS } from './constants'
+import {
+  OPENAI_CHAT_URL,
+  OPENAI_MAX_COMPLETION_TOKENS,
+  OPENAI_REASONING_EFFORT,
+  TRANSLATE_SYSTEM_PROMPT,
+  TRANSLATE_TIMEOUT_MS,
+} from './constants'
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..')
 const PLAMO_CHAT_URL = 'https://api.platform.preferredai.jp/v1/chat/completions'
@@ -278,8 +284,8 @@ function openaiBody(model: BakeoffModelId, title: string, markdown: string): str
   if (model === 'gpt-5.6-luna') {
     return JSON.stringify({
       model,
-      reasoning_effort: 'none',
-      max_completion_tokens: 16_000,
+      reasoning_effort: OPENAI_REASONING_EFFORT,
+      max_completion_tokens: OPENAI_MAX_COMPLETION_TOKENS,
       response_format: { type: 'json_object' },
       messages,
     })

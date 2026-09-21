@@ -360,7 +360,7 @@ token 比較は timing-safe。ログに token・記事全文を出さない。�
 | 同一 URL 再送 | canonical 単位で上書き |
 | 画像 | 埋め込まない |
 | 言語判定 | `html[lang]` + 仮名漢字比率。曖昧なら翻訳する |
-| OpenAI モデル | `gpt-4.1-mini`（MAR-44。プロンプトと JSON 契約は据え置き）
+| OpenAI モデル | `gpt-5.6-luna`（MAR-71。プロンプトと JSON 契約は据え置き。`temperature` は送らない）
 | 実行モデル | 同期 HTTP。破綻したら Workflows |
 | DB | なし。R2 のみ |
 | OPDS 認証 | HTTP Basic（CrossPoint JP 互換） |
@@ -372,7 +372,7 @@ token 比較は timing-safe。ログに token・記事全文を出さない。�
 
 MVP（抽出〜OPDS〜Android 共有〜購入 EPUB）は `main` に載っている。計画を覆す検討は別 Issue:
 
-- MAR-44: 翻訳モデル（読書向け整形は残し、OpenAI を `gpt-4.1-mini` に上げる。詳細は `docs/plan/mar-44-translate-models.md`）
+- MAR-44 / MAR-71: 翻訳モデル（読書向け整形は残し、OpenAI を `gpt-5.6-luna` に差し替える。詳細は `docs/plan/mar-44-translate-models.md`）
 - MAR-45: clip の非同期化
 
 MAR-45 は実装しない限り、Queue + OpenAI Markdown 往復が現行契約。
