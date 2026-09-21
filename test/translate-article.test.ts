@@ -59,6 +59,35 @@ describe('translateArticle', () => {
     }
   })
 
+  it('keeps nested Japanese emphasis instead of leaking private-use slot markers', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const input = article({
+        language: 'ja',
+        title: '自己修正ループ',
+        contentHtml:
+          '<p>これでは、AIを使っているようで、<strong>**人間がボトルネック**</strong>になっています。</p>' +
+          '<p>****自己修正ループ****</p>' +
+          '<p>しかも今回使うのは、<em><strong>Claude Codeだけ</strong></em>です。</p>',
+      })
+      const result = await translateArticle(input, { OPENAI_API_KEY: 'sk-test' })
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(result.ok).toBe(true)
+      if (!result.ok) {
+        return
+      }
+      expect(result.value.contentHtml).toContain('人間がボトルネック')
+      expect(result.value.contentHtml).toContain('自己修正ループ')
+      expect(result.value.contentHtml).toContain('Claude Codeだけ')
+      expect(result.value.contentHtml).not.toContain('\uE000')
+      expect(result.value.contentHtml).not.toContain('\uE001')
+      expect(result.value.contentHtml).not.toMatch(/\*\?0\?\*/)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('translates English HTML and keeps code fences from the model output', async () => {
     const payload = {
       choices: [
