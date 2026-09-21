@@ -8,6 +8,7 @@ import type {
   Result,
 } from '../types'
 import { err, ok, parseHttpUrl } from '../types'
+import { firstUsableHeading, pickArticleTitle } from './article-title'
 import { CONTENT_SELECTORS, MIN_CONTENT_CHARS, NOISE_SELECTOR, PARSE_HTML_OPTIONS } from './constants'
 import {
   isAdsLikeClass,
@@ -291,12 +292,11 @@ export const extractArticle: ExtractArticle = async (
   const jsonLd = jsonLdNodes(root)
   const jsonLdArticle = jsonLd[0]
 
-  const title = firstNonEmpty(
-    metaValue(root, ['og:title', 'twitter:title']),
-    typeof jsonLdArticle?.headline === 'string' ? jsonLdArticle.headline : null,
-    root.querySelector('title')?.text,
-    root.querySelector('h1')?.text,
-  )
+  const socialTitle = metaValue(root, ['og:title', 'twitter:title'])
+  const jsonLdHeadline = typeof jsonLdArticle?.headline === 'string' ? jsonLdArticle.headline : null
+  const documentTitle = root.querySelector('title')?.text ?? null
+  const ogDescription = metaValue(root, ['og:description'])
+  const pageHeadings = [...root.querySelectorAll('h1')].map((el) => el.text)
   const author = firstNonEmpty(
     authorFromUnknown(jsonLdArticle?.author),
     metaValue(root, ['author', 'article:author', 'og:article:author', 'twitter:creator']),
@@ -347,7 +347,14 @@ export const extractArticle: ExtractArticle = async (
     })
   }
 
-  const resolvedTitle = title ?? firstNonEmpty(contentNode.querySelector('h1')?.text)
+  const contentHeadings = [...contentNode.querySelectorAll('h1')].map((el) => el.text)
+  const resolvedTitle = pickArticleTitle({
+    socialTitle,
+    jsonLdHeadline,
+    documentTitle,
+    heading: firstUsableHeading(contentHeadings) ?? firstUsableHeading(pageHeadings),
+    ogDescription,
+  })
   if (resolvedTitle === null) {
     return err({
       kind: 'extract_failed',

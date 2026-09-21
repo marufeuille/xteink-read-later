@@ -421,7 +421,10 @@ describe('POST /clip', () => {
     expect(metaRes.status).toBe(200)
     const meta = (await metaRes.json()) as { translated: boolean; title: string }
     expect(meta.translated).toBe(true)
-    expect(meta.title.endsWith('（日本語）')).toBe(true)
+    expect(meta.title).toBe(
+      'Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)（日本語）',
+    )
+    expect(meta.title).not.toContain('Xユーザー')
   })
 
   it('returns 400 for an invalid URL', async () => {

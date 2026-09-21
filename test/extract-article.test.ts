@@ -234,6 +234,10 @@ describe('extractArticle', () => {
     if (!result.ok) {
       return
     }
+    expect(result.value.title).toBe(
+      'Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)',
+    )
+    expect(result.value.title).not.toContain('Xユーザー')
     expect(result.value.contentHtml).toContain('The Jevons Paradox is a rule')
     expect(result.value.contentHtml).toContain('standalone task router')
     expect(result.value.contentHtml).toContain('Goal: Compare three AI-agent tools')
@@ -245,5 +249,38 @@ describe('extractArticle', () => {
         contentHtml: result.value.contentHtml,
       }),
     ).toBe('non-ja')
+  })
+
+  it('uses og:description when an X page has only profile chrome and no article heading', async () => {
+    const source = page('/x-article', 'x-article-ja-ui.html')
+    const result = await extractArticle({
+      ...source,
+      html: source.html.replace(/<h1>[\s\S]*?<\/h1>/, ''),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.title).toBe(
+      'Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)',
+    )
+    expect(result.value.title).not.toContain('Xユーザー')
+  })
+
+  it('uses the article heading when an earlier h1 is the X profile name', async () => {
+    const source = page('/x-article', 'x-article-ja-ui.html')
+    const result = await extractArticle({
+      ...source,
+      html: source.html
+        .replace(/<meta\s+property="og:description"[\s\S]*?\/>/, '')
+        .replace('<body>', '<body><h1>Xユーザーのcodila（@0xCodila）さん</h1>'),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.title).toBe(
+      'Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)',
+    )
   })
 })
