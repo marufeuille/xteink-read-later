@@ -42,6 +42,7 @@ export type {
   InternalError,
   QueueFailedError,
   SourceDisabledError,
+  CandidateUnsendableError,
   TranslateFailedError,
   UnauthorizedError,
 } from './errors'
@@ -146,6 +147,8 @@ export type {
 export type { BuildOpdsCatalog, OpdsAcquisition, OpdsCatalog } from './opds'
 export type {
   CandidateArticle,
+  CandidateClipBody,
+  CandidateDeliveryState,
   CandidateDiscovery,
   CandidateExclusionReason,
   CandidateFeedSourceKind,
@@ -163,9 +166,11 @@ export type {
   CandidateRegisterResult,
   CandidateSourceKind,
   CandidateStore,
+  CandidateUnsendableReason,
   CreateCandidateStore,
 } from './candidate'
 export {
+  CANDIDATE_DELIVERY_STATES,
   CANDIDATE_EXCLUSION_REASONS,
   CANDIDATE_FETCH_STATUSES,
   CANDIDATE_FULL_TEXT_STATES,
@@ -174,6 +179,7 @@ export {
   CANDIDATE_LIST_TIMEZONE,
   CANDIDATE_SOURCE_KIND_FEED_PREFIX,
   CANDIDATE_SOURCE_KIND_MANUAL_URL,
+  CANDIDATE_UNSENDABLE_REASONS,
   candidateFeedSourceKind,
   isCandidateSourceKind,
 } from './candidate'

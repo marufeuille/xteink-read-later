@@ -2,7 +2,11 @@ import {
   asArticleId,
   asCandidateDiscoveryId,
   asCandidateId,
+  asClipJobId,
+  asClipRunId,
   isArticleId,
+  isClipJobId,
+  isClipRunId,
   isCandidateSourceKind,
   parseHttpUrl,
   type CandidateArticle,
@@ -54,6 +58,9 @@ type CandidateRow = {
   readonly exclusion_reason: string | null
   readonly full_text_state: string
   readonly completed_article_id: string | null
+  readonly clip_job_id: string | null
+  readonly clip_run_id: string | null
+  readonly selected_at: string | null
   readonly created_at: string
   readonly updated_at: string
 }
@@ -95,6 +102,11 @@ function parseCandidate(row: unknown): CandidateArticle | null {
     typeof row.completed_article_id === 'string' && isArticleId(row.completed_article_id)
       ? asArticleId(row.completed_article_id)
       : null
+  const clipJobId =
+    typeof row.clip_job_id === 'string' && isClipJobId(row.clip_job_id) ? asClipJobId(row.clip_job_id) : null
+  const clipRunId =
+    typeof row.clip_run_id === 'string' && isClipRunId(row.clip_run_id) ? asClipRunId(row.clip_run_id) : null
+  const selectedAt = typeof row.selected_at === 'string' ? row.selected_at : null
   const publishedAt = typeof row.published_at === 'string' ? row.published_at : null
   return {
     id: asCandidateId(row.id),
@@ -109,6 +121,9 @@ function parseCandidate(row: unknown): CandidateArticle | null {
     exclusionReason,
     fullTextState: row.full_text_state,
     completedArticleId: completed,
+    clipJobId,
+    clipRunId,
+    selectedAt,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -151,14 +166,21 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
         .first<CandidateRow>()
       return parseCandidate(row)
     },
+    async getByClipJobId(jobId) {
+      const row = await db
+        .prepare('SELECT * FROM candidate_articles WHERE clip_job_id = ? LIMIT 1')
+        .bind(jobId)
+        .first<CandidateRow>()
+      return parseCandidate(row)
+    },
     async put(candidate) {
       await db
         .prepare(
           `INSERT INTO candidate_articles (
             id, canonical_url, source_url, title, outlet, published_at, discovered_at,
             fetch_status, listing_state, exclusion_reason, full_text_state,
-            completed_article_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            completed_article_id, clip_job_id, clip_run_id, selected_at, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             canonical_url = excluded.canonical_url,
             source_url = excluded.source_url,
@@ -171,6 +193,9 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
             exclusion_reason = excluded.exclusion_reason,
             full_text_state = excluded.full_text_state,
             completed_article_id = excluded.completed_article_id,
+            clip_job_id = excluded.clip_job_id,
+            clip_run_id = excluded.clip_run_id,
+            selected_at = excluded.selected_at,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at`,
         )
@@ -187,6 +212,9 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
           candidate.exclusionReason,
           candidate.fullTextState,
           candidate.completedArticleId,
+          candidate.clipJobId,
+          candidate.clipRunId,
+          candidate.selectedAt,
           candidate.createdAt,
           candidate.updatedAt,
         )

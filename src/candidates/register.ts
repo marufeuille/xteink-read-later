@@ -28,7 +28,7 @@ function isoNow(now: () => Date): string {
 }
 
 function toPublicNotice(
-  kind: CandidateRegisterResult['notice']['kind'],
+  kind: 'registered' | 'duplicate' | 'paywalled' | 'fetch_failed',
 ): CandidateRegisterResult['notice'] {
   switch (kind) {
     case 'registered':
@@ -63,6 +63,18 @@ async function persist(
   })
 }
 
+function clipPointers(existing: CandidateArticle | null): Pick<
+  CandidateArticle,
+  'completedArticleId' | 'clipJobId' | 'clipRunId' | 'selectedAt'
+> {
+  return {
+    completedArticleId: existing?.completedArticleId ?? null,
+    clipJobId: existing?.clipJobId ?? null,
+    clipRunId: existing?.clipRunId ?? null,
+    selectedAt: existing?.selectedAt ?? null,
+  }
+}
+
 function savedCandidate(existing: CandidateArticle | null, incoming: CandidateArticle): CandidateArticle {
   if (existing === null) {
     return incoming
@@ -72,7 +84,7 @@ function savedCandidate(existing: CandidateArticle | null, incoming: CandidateAr
       ...incoming,
       discoveredAt: existing.discoveredAt,
       createdAt: existing.createdAt,
-      completedArticleId: existing.completedArticleId,
+      ...clipPointers(existing),
     }
   }
   return {
@@ -114,7 +126,7 @@ export async function registerCandidate(
       listingState: 'listed',
       exclusionReason: null,
       fullTextState: 'unconfirmed',
-      completedArticleId: existing?.completedArticleId ?? null,
+      ...clipPointers(existing),
       createdAt: existing?.createdAt ?? discoveredAt,
       updatedAt: discoveredAt,
     }
@@ -148,7 +160,7 @@ export async function registerCandidate(
     listingState,
     exclusionReason: metadata.paywalled ? 'paywalled' : null,
     fullTextState,
-    completedArticleId: existing?.completedArticleId ?? null,
+    ...clipPointers(existing),
     createdAt: existing?.createdAt ?? discoveredAt,
     updatedAt: discoveredAt,
   }

@@ -7,26 +7,12 @@ import {
   type CandidateListPage,
   type CandidatePublic,
 } from '../types'
+import { toCandidatePublic } from './delivery'
+
+export { toCandidatePublic } from './delivery'
 
 export const CANDIDATE_TIMEZONE_NOTE =
   '日付は Asia/Tokyo (UTC+9) の暦日で分けています。公開日が無い記事は「公開日不明」にします（発見日では代用しません）。'
-
-export function toCandidatePublic(candidate: CandidateArticle): CandidatePublic {
-  return {
-    id: candidate.id,
-    canonicalUrl: candidate.canonicalUrl,
-    sourceUrl: candidate.sourceUrl,
-    title: candidate.title,
-    outlet: candidate.outlet,
-    publishedAt: candidate.publishedAt,
-    discoveredAt: candidate.discoveredAt,
-    fetchStatus: candidate.fetchStatus,
-    listingState: candidate.listingState,
-    exclusionReason: candidate.exclusionReason,
-    fullTextState: candidate.fullTextState,
-    completedArticleId: candidate.completedArticleId,
-  }
-}
 
 export function calendarDateInTimeZone(iso: string, timeZone: string): string {
   const date = new Date(iso)
@@ -38,8 +24,8 @@ export function calendarDateInTimeZone(iso: string, timeZone: string): string {
   }).format(date)
 }
 
-export function groupCandidatesByPublishedDate(
-  items: readonly CandidateArticle[],
+export function groupPublicCandidatesByPublishedDate(
+  items: readonly CandidatePublic[],
   timeZone: string = CANDIDATE_LIST_TIMEZONE,
 ): readonly CandidateListGroup[] {
   const groups: CandidateListGroup[] = []
@@ -53,7 +39,7 @@ export function groupCandidatesByPublishedDate(
       groups.push({
         date,
         label: date === null ? '公開日不明' : date,
-        items: [toCandidatePublic(item)],
+        items: [item],
       })
       continue
     }
@@ -61,9 +47,19 @@ export function groupCandidatesByPublishedDate(
     if (group === undefined) {
       continue
     }
-    groups[existing] = { ...group, items: [...group.items, toCandidatePublic(item)] }
+    groups[existing] = { ...group, items: [...group.items, item] }
   }
   return groups
+}
+
+export function groupCandidatesByPublishedDate(
+  items: readonly CandidateArticle[],
+  timeZone: string = CANDIDATE_LIST_TIMEZONE,
+): readonly CandidateListGroup[] {
+  return groupPublicCandidatesByPublishedDate(
+    items.map((item) => toCandidatePublic(item)),
+    timeZone,
+  )
 }
 
 export function parseListPage(raw: string | undefined): number {
@@ -78,13 +74,22 @@ export function parseListPage(raw: string | undefined): number {
 }
 
 export function toCandidateListBody(page: CandidateListPage, pageNumber: number): CandidateListBody {
+  return toCandidateListBodyFromPublic(page.items.map((item) => toCandidatePublic(item)), page.total, page.limit, pageNumber)
+}
+
+export function toCandidateListBodyFromPublic(
+  items: readonly CandidatePublic[],
+  total: number,
+  pageSize: number,
+  pageNumber: number,
+): CandidateListBody {
   return {
     timezone: CANDIDATE_LIST_TIMEZONE,
     timezoneNote: CANDIDATE_TIMEZONE_NOTE,
     page: pageNumber,
-    pageSize: page.limit,
-    total: page.total,
-    groups: groupCandidatesByPublishedDate(page.items),
+    pageSize,
+    total,
+    groups: groupPublicCandidatesByPublishedDate(items),
   }
 }
 

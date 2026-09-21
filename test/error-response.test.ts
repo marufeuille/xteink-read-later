@@ -80,6 +80,9 @@ describe('error-response', () => {
       400,
     )
     expect(toErrorBody({ kind: 'source_disabled' }).error.status).toBe(409)
+    expect(
+      toErrorBody({ kind: 'candidate_unsendable', reason: 'paywalled' }).error.status,
+    ).toBe(409)
     expect(errorMessage({ kind: 'queue_failed', reason: 'queue unavailable' })).toContain('queue unavailable')
     expect(errorMessage({ kind: 'unauthorized' })).toBe('Unauthorized')
     expect(errorMessage({ kind: 'csrf_failed' })).toBe('CSRF token mismatch')

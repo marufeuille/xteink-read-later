@@ -6,10 +6,10 @@ import { mountSourceRoutes, type SourceHttpDeps } from './http/source-routes'
 import { toClipJobBody, toClipQueuedBody } from './http/clip-job'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { parseClipShareText } from './http/clip-request'
-import { errorMessage, toErrorResponse } from './http/error-response'
+import { toErrorResponse } from './http/error-response'
 import { parsePurchasedBookForm } from './http/purchased-book'
-import { isActiveClipJob } from './job/clip'
-import { logPipeline } from './log'
+import { enqueueClipJob } from './job/enqueue'
+import { logOpdsDownload } from './log'
 import { buildOpdsCatalog, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
 import { createR2Store } from './store/r2'
 import type {
@@ -17,7 +17,6 @@ import type {
   ArticleId,
   ArticleStore,
   ClipQueueMessage,
-  ClipQueuedJob,
   CreateArticleStore,
   EpubBytes,
   FeedQueueMessage,
@@ -27,10 +26,8 @@ import {
   articleEpubKey,
   articleIdFromBytes,
   asEpubBytes,
-  clipJobIdFromUrl,
   isArticleId,
   isClipJobId,
-  newClipRunId,
   parseHttpUrl,
   purchasedCanonicalUrl,
 } from './types'
@@ -65,10 +62,6 @@ function queueFor(env: Cloudflare.Env, deps: AppDeps): Queue<ClipQueueMessage> {
   return deps.queue ?? env.CLIP_QUEUE
 }
 
-function nowIso(): string {
-  return new Date().toISOString()
-}
-
 export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
@@ -93,50 +86,18 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     }
 
     const url = parsed.value
-    const jobId = await clipJobIdFromUrl(url)
-    const store = storeFor(c.env, deps)
-    const existing = await store.getJob(jobId)
-    if (isActiveClipJob(existing, Date.now())) {
-      c.header('Location', `/clip/jobs/${jobId}`)
-      return c.json(toClipQueuedBody(existing), 202)
+    const queued = await enqueueClipJob({
+      store: storeFor(c.env, deps),
+      queue: queueFor(c.env, deps),
+      url,
+      nowMs: Date.now(),
+      reuseReady: false,
+    })
+    if (!queued.ok) {
+      return toErrorResponse(queued.error)
     }
-
-    const queued: ClipQueuedJob = {
-      jobId,
-      runId: newClipRunId(),
-      sourceUrl: url,
-      status: 'queued',
-      articleId: null,
-      error: null,
-      attempt: 0,
-      createdAt: existing?.createdAt ?? nowIso(),
-      updatedAt: nowIso(),
-    }
-    await store.putJob(queued)
-    const started = Date.now()
-    const queueLog = { jobId, runId: queued.runId, attempt: 0 }
-    try {
-      await queueFor(c.env, deps).send({ jobId, runId: queued.runId, url })
-    } catch (cause) {
-      const error = {
-        kind: 'queue_failed' as const,
-        reason: cause instanceof Error ? cause.message : 'queue send failed',
-      }
-      await store.putJob({
-        ...queued,
-        status: 'failed',
-        error: { code: error.kind, message: errorMessage(error) },
-        updatedAt: nowIso(),
-      })
-      logPipeline(
-        { stage: 'queue', durationMs: Date.now() - started, errorKind: error.kind },
-        queueLog,
-      )
-      return toErrorResponse(error)
-    }
-    logPipeline({ stage: 'queue', durationMs: Date.now() - started }, queueLog)
-    c.header('Location', `/clip/jobs/${jobId}`)
-    return c.json(toClipQueuedBody(queued), 202)
+    c.header('Location', `/clip/jobs/${queued.job.jobId}`)
+    return c.json(toClipQueuedBody(queued.job), 202)
   }
 
   app.on('POST', ['/clip', '/clip/'], clip)
@@ -237,10 +198,12 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     if (!isArticleId(id)) {
       return toErrorResponse({ kind: 'not_found' })
     }
+    const started = Date.now()
     const epub = await storeFor(c.env, deps).getEpub(id)
     if (epub === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
+    logOpdsDownload({ articleId: id, durationMs: Date.now() - started })
     return epubFileResponse(id, epub)
   })
 
@@ -274,10 +237,12 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     if (id === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
+    const started = Date.now()
     const epub = await storeFor(c.env, deps).getEpub(id)
     if (epub === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
+    logOpdsDownload({ articleId: id, durationMs: Date.now() - started })
     return epubFileResponse(id, epub)
   })
 

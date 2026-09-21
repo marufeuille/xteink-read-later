@@ -8,6 +8,7 @@ import type {
   PipelineError,
   QueueFailedError,
   SourceDisabledError,
+  CandidateUnsendableError,
   TranslateFailedBody,
   TranslateFailedError,
   UnauthorizedError,
@@ -24,7 +25,8 @@ export function errorMessage(
     | InvalidFeedError
     | QueueFailedError
     | CsrfFailedError
-    | SourceDisabledError,
+    | SourceDisabledError
+    | CandidateUnsendableError,
 ): string {
   switch (error.kind) {
     case 'invalid_url':
@@ -55,6 +57,16 @@ export function errorMessage(
       return 'CSRF token mismatch'
     case 'source_disabled':
       return 'Source is stopped'
+    case 'candidate_unsendable':
+      switch (error.reason) {
+        case 'paywalled':
+        case 'excluded':
+          return 'This article is paywalled and cannot be sent for full text'
+        case 'unavailable':
+          return 'Free full text is not available for this article'
+        case 'fetch_failed':
+          return 'The article page could not be fetched'
+      }
   }
 }
 
@@ -67,7 +79,8 @@ export function toErrorBody(
     | InvalidFeedError
     | QueueFailedError
     | CsrfFailedError
-    | SourceDisabledError,
+    | SourceDisabledError
+    | CandidateUnsendableError,
 ): ErrorBody {
   const message = errorMessage(error)
   switch (error.kind) {
@@ -93,6 +106,8 @@ export function toErrorBody(
       return { error: { status: 403, code: 'csrf_failed', message } }
     case 'source_disabled':
       return { error: { status: 409, code: 'source_disabled', message } }
+    case 'candidate_unsendable':
+      return { error: { status: 409, code: 'candidate_unsendable', message } }
   }
 }
 
@@ -115,7 +130,8 @@ export function toErrorResponse(
     | InvalidFeedError
     | QueueFailedError
     | CsrfFailedError
-    | SourceDisabledError,
+    | SourceDisabledError
+    | CandidateUnsendableError,
 ): Response {
   if (error.kind === 'translate_failed') {
     return Response.json(toTranslateFailedBody(error), { status: 503 })

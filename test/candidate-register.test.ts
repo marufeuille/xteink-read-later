@@ -195,6 +195,9 @@ describe('published date grouping', () => {
       exclusionReason: null,
       fullTextState: 'unconfirmed' as const,
       completedArticleId: null,
+      clipJobId: null,
+      clipRunId: null,
+      selectedAt: null,
       createdAt: '2026-09-21T00:00:00.000Z',
       updatedAt: '2026-09-21T00:00:00.000Z',
     }
@@ -248,6 +251,9 @@ describe('published date grouping', () => {
         exclusionReason: null,
         fullTextState: 'unconfirmed',
         completedArticleId: null,
+        clipJobId: null,
+        clipRunId: null,
+        selectedAt: null,
         createdAt: now,
         updatedAt: now,
       })

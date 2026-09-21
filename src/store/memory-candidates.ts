@@ -4,6 +4,7 @@ import type {
   CandidateListPage,
   CandidateListQuery,
   CandidateStore,
+  ClipJobId,
   HttpUrl,
 } from '../types'
 
@@ -33,6 +34,14 @@ export function createMemoryCandidateStore(): CandidateStore {
     async getByCanonicalUrl(canonicalUrl: HttpUrl) {
       for (const article of articles.values()) {
         if (article.canonicalUrl === canonicalUrl) {
+          return article
+        }
+      }
+      return null
+    },
+    async getByClipJobId(jobId: ClipJobId) {
+      for (const article of articles.values()) {
+        if (article.clipJobId === jobId) {
           return article
         }
       }

@@ -72,6 +72,11 @@ export type SourceDisabledError = {
   readonly kind: 'source_disabled'
 }
 
+export type CandidateUnsendableError = {
+  readonly kind: 'candidate_unsendable'
+  readonly reason: 'paywalled' | 'unavailable' | 'fetch_failed' | 'excluded'
+}
+
 export type FetchError = PayloadTooLargeError | FetchFailedError
 
 export type ExtractError = InvalidUrlError | FetchError | ExtractFailedError
@@ -88,6 +93,7 @@ export const httpStatusByErrorKind = {
   csrf_failed: 403,
   not_found: 404,
   source_disabled: 409,
+  candidate_unsendable: 409,
   payload_too_large: 413,
   extract_failed: 422,
   epub_failed: 500,
@@ -101,6 +107,7 @@ export const httpStatusByErrorKind = {
   | CsrfFailedError['kind']
   | InvalidFeedError['kind']
   | SourceDisabledError['kind']
+  | CandidateUnsendableError['kind']
   | NotFoundError['kind']
   | InvalidEpubError['kind']
   | QueueFailedError['kind']

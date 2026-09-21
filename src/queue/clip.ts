@@ -4,12 +4,14 @@ import { errorMessage } from '../http/error-response'
 import { shouldProcessClipRun } from '../job/clip'
 import { logPipeline } from '../log'
 import { clipPipeline as defaultClipPipeline } from '../pipeline/clip'
+import { createD1CandidateStore } from '../store/d1-candidates'
 import { createR2Store } from '../store/r2'
 import type {
   ArticleClassification,
   ArticleId,
   ArticleStore,
   ArticleWrite,
+  CandidateStore,
   ClassifyArticle,
   ClipJobId,
   ClipJobRecord,
@@ -32,6 +34,8 @@ export type ClipQueueHandlerDeps = {
   readonly classifyArticle?: ClassifyArticle
   readonly store?: ArticleStore
   readonly createStore?: CreateArticleStore
+  readonly candidateStore?: CandidateStore
+  readonly createCandidateStore?: (env: Cloudflare.Env) => CandidateStore
 }
 
 function nowIso(): string {
@@ -44,6 +48,53 @@ function storeFor(env: Cloudflare.Env, deps: ClipQueueHandlerDeps): ArticleStore
   }
   const create = deps.createStore ?? createR2Store
   return create(env)
+}
+
+function candidateStoreFor(env: Cloudflare.Env, deps: ClipQueueHandlerDeps): CandidateStore | null {
+  if (deps.candidateStore !== undefined) {
+    return deps.candidateStore
+  }
+  if (deps.createCandidateStore !== undefined) {
+    return deps.createCandidateStore(env)
+  }
+  if (env.CANDIDATES === undefined) {
+    return null
+  }
+  return createD1CandidateStore(env)
+}
+
+async function attachCompletedCandidate(
+  env: Cloudflare.Env,
+  deps: ClipQueueHandlerDeps,
+  job: Extract<ClipJobRecord, { status: 'ready' }>,
+): Promise<void> {
+  const store = candidateStoreFor(env, deps)
+  if (store === null) {
+    return
+  }
+  try {
+    const mapped = await store.getByClipJobId(job.jobId)
+    const candidate = mapped ?? (await store.getByCanonicalUrl(job.sourceUrl))
+    if (candidate === null) {
+      return
+    }
+    if (
+      candidate.completedArticleId === job.articleId &&
+      candidate.clipJobId === job.jobId &&
+      candidate.clipRunId === job.runId
+    ) {
+      return
+    }
+    await store.put({
+      ...candidate,
+      completedArticleId: job.articleId,
+      clipJobId: job.jobId,
+      clipRunId: job.runId,
+      updatedAt: nowIso(),
+    })
+  } catch {
+    return
+  }
 }
 
 export function parseClipQueueMessage(body: unknown): ClipQueueMessage | null {
@@ -282,6 +333,13 @@ async function runClipQueueMessage(
     ) {
       return
     }
+    await attachCompletedCandidate(env, deps, {
+      ...fields,
+      status: 'ready',
+      articleId: id,
+      error: null,
+      updatedAt: nowIso(),
+    })
     logPipeline({ articleId: id, stage: 'queue', durationMs: Date.now() - started }, log)
     message.ack()
     return

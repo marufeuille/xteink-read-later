@@ -1,4 +1,5 @@
-import type { ArticleId, CandidateDiscoveryId, CandidateId, FeedSourceId, HttpUrl } from './id'
+import type { ArticleId, CandidateDiscoveryId, CandidateId, ClipJobId, ClipRunId, FeedSourceId, HttpUrl } from './id'
+import type { ClipJobError } from './job'
 
 export const CANDIDATE_SOURCE_KIND_MANUAL_URL = 'manual_url' as const
 export const CANDIDATE_SOURCE_KIND_FEED_PREFIX = 'feed:' as const
@@ -32,6 +33,12 @@ export type CandidateExclusionReason = (typeof CANDIDATE_EXCLUSION_REASONS)[numb
 export const CANDIDATE_FULL_TEXT_STATES = ['confirmed_free', 'unconfirmed', 'unavailable'] as const
 export type CandidateFullTextState = (typeof CANDIDATE_FULL_TEXT_STATES)[number]
 
+export const CANDIDATE_DELIVERY_STATES = ['unsent', 'preparing', 'available', 'failed'] as const
+export type CandidateDeliveryState = (typeof CANDIDATE_DELIVERY_STATES)[number]
+
+export const CANDIDATE_UNSENDABLE_REASONS = ['paywalled', 'unavailable', 'fetch_failed', 'excluded'] as const
+export type CandidateUnsendableReason = (typeof CANDIDATE_UNSENDABLE_REASONS)[number]
+
 export const CANDIDATE_LIST_TIMEZONE = 'Asia/Tokyo'
 export const CANDIDATE_LIST_PAGE_SIZE = 20
 
@@ -48,6 +55,9 @@ export type CandidateArticle = {
   readonly exclusionReason: CandidateExclusionReason | null
   readonly fullTextState: CandidateFullTextState
   readonly completedArticleId: ArticleId | null
+  readonly clipJobId: ClipJobId | null
+  readonly clipRunId: ClipRunId | null
+  readonly selectedAt: string | null
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -75,6 +85,7 @@ export type CandidateListPage = {
 export type CandidateStore = {
   readonly getById: (id: CandidateId) => Promise<CandidateArticle | null>
   readonly getByCanonicalUrl: (canonicalUrl: HttpUrl) => Promise<CandidateArticle | null>
+  readonly getByClipJobId: (jobId: ClipJobId) => Promise<CandidateArticle | null>
   readonly put: (candidate: CandidateArticle) => Promise<void>
   readonly addDiscovery: (discovery: CandidateDiscovery) => Promise<boolean>
   readonly listDiscoveries: (candidateId: CandidateId) => Promise<readonly CandidateDiscovery[]>
@@ -83,7 +94,15 @@ export type CandidateStore = {
 
 export type CreateCandidateStore = (deps: Pick<Cloudflare.Env, 'CANDIDATES'>) => CandidateStore
 
-export type CandidateNoticeKind = 'registered' | 'duplicate' | 'paywalled' | 'fetch_failed'
+export type CandidateNoticeKind =
+  | 'registered'
+  | 'duplicate'
+  | 'paywalled'
+  | 'fetch_failed'
+  | 'clipped'
+  | 'reused'
+  | 'unsendable'
+  | 'clip_failed'
 
 export type CandidateNotice = {
   readonly kind: CandidateNoticeKind
@@ -109,6 +128,23 @@ export type CandidatePublic = {
   readonly exclusionReason: CandidateExclusionReason | null
   readonly fullTextState: CandidateFullTextState
   readonly completedArticleId: ArticleId | null
+  readonly clipJobId: ClipJobId | null
+  readonly clipRunId: ClipRunId | null
+  readonly selectedAt: string | null
+  readonly deliveryState: CandidateDeliveryState
+  readonly deliveryError: ClipJobError | null
+  readonly availableInOpds: boolean
+}
+
+export type CandidateClipBody = {
+  readonly candidateId: CandidateId
+  readonly jobId: ClipJobId
+  readonly runId: ClipRunId | null
+  readonly status: 'queued' | 'ready' | 'failed'
+  readonly reused: boolean
+  readonly regenerated: boolean
+  readonly deliveryState: CandidateDeliveryState
+  readonly articleId: ArticleId | null
 }
 
 export type CandidateRegisterBody = {

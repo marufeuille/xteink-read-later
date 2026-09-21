@@ -129,13 +129,15 @@ npm run dev
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
-`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect` は Bearer `CLIP_TOKEN`。候補と情報源の Web 画面は同じトークンで `/candidates/login` し、HttpOnly Cookie を使う（HTML にトークンは出さない。フォーム POST は CSRF トークン必須）。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect` は Bearer `CLIP_TOKEN`。候補と情報源の Web 画面は同じトークンで `/candidates/login` し、HttpOnly Cookie を使う（HTML にトークンは出さない。フォーム POST は CSRF トークン必須）。`GET /opds`・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。`POST /clip` と `GET /opds` と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と `clip_job_id` / `clip_run_id` / `completed_article_id` / `selected_at` の対応だけ持つ。
 
 ### 読書候補（翻訳しない URL 投入）
 
 見つけた記事 URL を候補として残す。`POST /clip` の即時全文生成契約は変えない。
 
 ブラウザ: `{worker}/candidates/login` に `CLIP_TOKEN` を入れて入る。一覧はスマホ向け。公開日は **Asia/Tokyo (UTC+9)** の暦日で分ける。公開日が無い記事は「公開日不明」で、発見日を公開日の代わりにはしない。有料と判定した記事は一覧から外し、投入直後に理由を出す。無料全文を確認できない記事は「本文取得済み」と表示しない。
+
+一覧の「全文を送る」は既存のクリップ Queue に載せる。状態は未送信 / 準備中 / OPDSで取得可能 / 失敗。失敗は理由と再試行。完成済み EPUB は再利用し、明示の「再生成」だけ新しく作る。「OPDSで取得可能」はカタログ掲載であり、端末のダウンロード済みや読了ではない。選択日時と OPDS の EPUB 取得要求は JSON ログに残す（本文・token・URL は出さない）。読了とはみなさない。
 
 ```bash
 curl -sS "$WORKER/candidates" \
@@ -145,6 +147,10 @@ curl -sS "$WORKER/candidates" \
 # 201 { "id":"cand_…", "duplicate": false, "candidate": { "title":"…", "listingState":"listed", … }, "notice": { "kind":"registered", "message":"…" } }
 curl -sS "$WORKER/candidates.json" \
   -H "Authorization: Bearer $CLIP_TOKEN"
+curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/clip" \
+  -H 'content-type: application/json' \
+  -H "Authorization: Bearer $CLIP_TOKEN"
+# 202 { "candidateId":"cand_…", "jobId":"job_…", "runId":"run_…", "status":"queued", "deliveryState":"preparing", "reused": false }
 ```
 
 同一記事はリダイレクト後 URL と canonical でまとめる。別の発見 URL は `candidate_discoveries` に残す（情報源の種別。話題の分類列には混ぜない）。フィード由来は `feed:<sourceId>`、手動投入は `manual_url`。
@@ -214,7 +220,7 @@ npx wrangler tail --format json | CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run
 - **ライブログ:** `wrangler tail` の接続後に出た `event: pipeline` だけ見える。接続前の工程は **不明**（未実行や停止ではない）
 - **履歴:** 過去ログの検索・保存はしない。完了済み job に `--tail` しても工程は不明のまま
 - **状態:** job は `queued` / `running` / `ready` / `failed`。再試行待ちは `running` かつ直近ログに `errorKind` があるときだけ区別する。ログが無い `running` は **処理中（工程不明）**
-- ログに載せるのは stage / durationMs / errorKind / jobId / runId / attempt / articleId。token と記事全文は出さない
+- ログに載せるのは stage / durationMs / errorKind / jobId / runId / attempt / articleId と、候補の選択（candidateId / selectedAt / discoveredAt / publishedAt）および OPDS 取得要求（articleId）。token と記事全文と URL は出さない
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
@@ -226,14 +232,16 @@ curl -sS -H "Authorization: Bearer $CLIP_TOKEN" \
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
 ```
 
-ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。token と記事全文は出さない。英語記事は OpenAI `gpt-5.6-luna` で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。モデル選定のメモは `docs/plan/mar-44-translate-models.md`。
+ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。候補の選択は `event: candidate_clip`、OPDS の EPUB 取得要求は `event: opds_download`（読了ではない）。token と記事全文と URL は出さない。英語記事は OpenAI `gpt-5.6-luna` で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。モデル選定のメモは `docs/plan/mar-44-translate-models.md`。
 
 | 状態 | 意味 |
 | --- | --- |
 | 202 | `POST /clip` 受付（`queued`）。Shortcuts では成功 |
 | 400 | URL 不正、または購入 EPUB の multipart 不正（`invalid_epub`） |
 | 401 | CLIP_TOKEN または OPDS Basic が無い / 不一致 |
+| 403 | CSRF トークン不一致 |
 | 404 | 記事または job が無い |
+| 409 | 情報源が停止、または候補が全文送信不可（有料 / 取得失敗） |
 | 413 | 購入 EPUB が上限超過 |
 | 422 | （HTTP では出ない。job `extract_failed`） |
 | 500 | （HTTP の clip では出ない。job `epub_failed` / `internal_error`） |
