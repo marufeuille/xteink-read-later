@@ -485,13 +485,11 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
   }
 
   if (tag === 'strong' || tag === 'b') {
-    const inner = markdownChildren(node, ctx).trim()
-    return inner.length === 0 ? '' : `**${inner}**`
+    return wrapMarkdownEmphasis(markdownChildren(node, ctx).trim(), '**')
   }
 
   if (tag === 'em' || tag === 'i') {
-    const inner = markdownChildren(node, ctx).trim()
-    return inner.length === 0 ? '' : `*${inner}*`
+    return wrapMarkdownEmphasis(markdownChildren(node, ctx).trim(), '*')
   }
 
   if (tag === 'table' || tag === 'thead' || tag === 'tbody' || tag === 'tr' || tag === 'th' || tag === 'td') {
@@ -521,11 +519,61 @@ export function htmlToMarkdown(html: string, base: HttpUrl): string {
 
 const SLOT_OPEN = '\uE000'
 const SLOT_CLOSE = '\uE001'
+const SLOT_RE = /\uE000(\d+)\uE001/g
+
+function wrapMarkdownEmphasis(inner: string, marker: '**' | '*'): string {
+  if (inner.length === 0) {
+    return ''
+  }
+  if (marker === '**' && inner.startsWith('**') && inner.endsWith('**') && inner.length >= 4) {
+    return inner
+  }
+  if (marker === '*' && inner.startsWith('*') && inner.endsWith('*') && !inner.startsWith('**') && inner.length >= 2) {
+    return inner
+  }
+  return `${marker}${inner}${marker}`
+}
 
 function stashHtml(slots: string[], html: string): string {
   const index = slots.length
   slots.push(html)
   return `${SLOT_OPEN}${index}${SLOT_CLOSE}`
+}
+
+function replaceUntilStable(text: string, replace: (current: string) => string): string {
+  let current = text
+  let previous = ''
+  while (current !== previous) {
+    previous = current
+    current = replace(current)
+  }
+  return current
+}
+
+function restoreSlots(text: string, slots: readonly string[]): string {
+  let current = text
+  for (let pass = 0; pass <= slots.length; pass += 1) {
+    const next = current.replace(SLOT_RE, (_all, index: string) => slots[Number(index)] ?? '')
+    if (next === current) {
+      return current
+    }
+    current = next
+  }
+  return current
+}
+
+function stashEmphasis(slots: string[], tag: 'strong' | 'em', inner: string): string {
+  const body = restoreSlots(escapeText(inner), slots)
+  return stashHtml(slots, `<${tag}>${body}</${tag}>`)
+}
+
+function applyMarkdownEmphasis(text: string, slots: string[]): string {
+  const withStrong = replaceUntilStable(text, (current) => {
+    return current.replace(/\*\*([^*]+)\*\*/g, (_all, inner: string) => stashEmphasis(slots, 'strong', inner))
+  })
+  return replaceUntilStable(withStrong, (current) => {
+    return current.replace(/\*([^*]+)\*/g, (_all, inner: string) => stashEmphasis(slots, 'em', inner))
+  })
 }
 
 function hrefFromHtmlAttrs(attrs: string): string {
@@ -564,15 +612,8 @@ function inlineMarkdown(text: string, base: HttpUrl): string {
     }
     return stashHtml(slots, `<a href="${escapeAttr(resolved)}">${escapeText(label)}</a>`)
   })
-  current = current.replace(/\*\*([^*]+)\*\*/g, (_all, inner: string) => {
-    return stashHtml(slots, `<strong>${escapeText(inner)}</strong>`)
-  })
-  current = current.replace(/\*([^*]+)\*/g, (_all, inner: string) => {
-    return stashHtml(slots, `<em>${escapeText(inner)}</em>`)
-  })
-  return escapeText(current).replace(/\uE000(\d+)\uE001/g, (_all, index: string) => {
-    return slots[Number(index)] ?? ''
-  })
+  current = applyMarkdownEmphasis(current, slots)
+  return restoreSlots(escapeText(current), slots)
 }
 
 function isFenceOpen(line: string): string | null {

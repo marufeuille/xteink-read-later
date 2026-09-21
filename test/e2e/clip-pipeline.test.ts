@@ -107,6 +107,8 @@ describe('clip pipeline E2E (fixture network)', () => {
     const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
     expect(chapter).toContain('npx wrangler dev')
     expect(chapter).toMatch(/<pre[^>]*>\s*<code>npx wrangler dev<\/code>\s*<\/pre>/)
+    expect(chapter).not.toContain('\uE000')
+    expect(chapter).not.toContain('\uE001')
 
     const meta = await ctx.hono.request(
       `/articles/${job.id}`,
@@ -117,6 +119,40 @@ describe('clip pipeline E2E (fixture network)', () => {
     const stored = (await meta.json()) as { title: string; classification: { status: string } }
     expect(stored.title).toBe('Cloudflare Workers の CPU 制限')
     expect(stored.classification.status).toBe('skipped')
+  })
+
+  it('keeps nested emphasis readable instead of leaking *?0?* slot markers', async () => {
+    const pageUrl = 'https://example.com/ja/self-repair-loop'
+    const { fetchedUrls } = installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('emphasis-nested.html') } },
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(fetchedUrls).toEqual([pageUrl])
+
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(epubResponse.status).toBe(200)
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('人間がボトルネック')
+    expect(chapter).toContain('自己修正ループ')
+    expect(chapter).toContain('Claude Codeだけ')
+    expect(chapter).toContain('公式ドキュメント')
+    expect(chapter).toContain('/goal')
+    expect(chapter).toContain('<strong>')
+    expect(chapter).toContain('<em>')
+    expect(chapter).toContain('<code>/goal</code>')
+    expect(chapter).not.toContain('\uE000')
+    expect(chapter).not.toContain('\uE001')
+    expect(chapter).not.toMatch(/\*\?0\?\*/)
   })
 
   it('includes the clip jobId on pipeline stage logs', async () => {

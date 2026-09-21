@@ -45,6 +45,19 @@ describe('extractArticle', () => {
     expect(result.value.contentHtml).not.toContain('フッターの著作権表示')
   })
 
+  it('keeps nested emphasis phrases used by Japanese X articles', async () => {
+    const result = await extractArticle(page('/ja/self-repair-loop', 'emphasis-nested.html'))
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.title).toBe('自己修正ループ')
+    expect(result.value.contentHtml).toContain('人間がボトルネック')
+    expect(result.value.contentHtml).toContain('Claude Codeだけ')
+    expect(result.value.contentHtml).toContain('公式ドキュメント')
+    expect(result.value.contentHtml).toContain('/goal')
+  })
+
   it('extracts an English tech article', async () => {
     const result = await extractArticle(page('/en/compatibility-date', 'en-tech.html'))
     expect(result.ok).toBe(true)

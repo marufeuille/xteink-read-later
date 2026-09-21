@@ -106,6 +106,52 @@ describe('markdownToHtml', () => {
     expect(html).toContain('<pre><code class="language-json">{"compatibility_date":"2026-09-19"}</code></pre>')
     expect(html).not.toContain('window.ads')
   })
+
+  it('restores nested emphasis instead of leaking private-use slot markers', () => {
+    const cases = [
+      '****自己修正ループ****',
+      '***Claude Codeだけ***',
+      '*[公式ドキュメント](https://example.com/docs)*',
+      '**`/goal`**',
+      'これでは、AIを使っているようで、****人間がボトルネック****',
+      '****Builder**** ****Judge**** ****Manager****',
+    ]
+    for (const markdown of cases) {
+      const html = markdownToHtml(markdown, BASE)
+      expect(html, markdown).not.toContain('\uE000')
+      expect(html, markdown).not.toContain('\uE001')
+      expect(html, markdown).not.toMatch(/\*\?0\?\*/)
+    }
+    expect(markdownToHtml('****自己修正ループ****', BASE)).toContain('自己修正ループ')
+    expect(markdownToHtml('****自己修正ループ****', BASE)).toContain('<strong>')
+    expect(markdownToHtml('***Claude Codeだけ***', BASE)).toContain('Claude Codeだけ')
+    expect(markdownToHtml('*[公式ドキュメント](https://example.com/docs)*', BASE)).toBe(
+      '<p><em><a href="https://example.com/docs">公式ドキュメント</a></em></p>',
+    )
+    expect(markdownToHtml('**`/goal`**', BASE)).toBe('<p><strong><code>/goal</code></strong></p>')
+    expect(markdownToHtml('これでは、AIを使っているようで、****人間がボトルネック****', BASE)).toContain(
+      '人間がボトルネック',
+    )
+  })
+
+  it('does not hang when fenced-looking slot characters appear in code', () => {
+    const html = markdownToHtml('use `\uE0000\uE001` then ****自己修正ループ****', BASE)
+    expect(html).toContain('自己修正ループ')
+    expect(html).toContain('<code>')
+    expect(html).toContain('<strong>')
+  })
+
+  it('round-trips HTML strong that already contains markdown asterisks', () => {
+    const markdown = htmlToMarkdown('<p>これでは、AIを使っているようで、<strong>**人間がボトルネック**</strong></p>', BASE)
+    expect(markdown).toContain('人間がボトルネック')
+    expect(markdown).not.toContain('****')
+    const html = markdownToHtml(markdown, BASE)
+    expect(html).toContain('人間がボトルネック')
+    expect(html).toContain('<strong>')
+    expect(html).not.toContain('\uE000')
+    expect(html).not.toContain('\uE001')
+    expect(html).not.toMatch(/\*[^*]*\*/)
+  })
 })
 
 describe('sanitizeContentHtml', () => {
