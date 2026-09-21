@@ -5,7 +5,14 @@ function normalizePath(path: string): string {
 }
 
 function isAuthPath(path: string): boolean {
-  return path === 'src/http/auth.ts' || path === 'test/auth.test.ts'
+  return (
+    path === 'src/http/auth.ts' ||
+    path === 'src/http/clip-web-auth.ts' ||
+    path === 'src/http/access-identity.ts' ||
+    path === 'src/http/candidate-session.ts' ||
+    path === 'test/auth.test.ts' ||
+    path === 'test/access-identity.test.ts'
+  )
 }
 
 function isSecretsPath(path: string): boolean {

@@ -47,7 +47,7 @@
 
 | 理由 | パス |
 | --- | --- |
-| auth | `src/http/auth.ts`, `test/auth.test.ts` |
+| auth | `src/http/auth.ts`, `src/http/clip-web-auth.ts`, `src/http/access-identity.ts`, `src/http/candidate-session.ts`, `test/auth.test.ts`, `test/access-identity.test.ts` |
 | secrets | `.dev.vars*` / `.env*`（ディレクトリ内も含む）、`secret` / `credential` ファイル |
 | ci_deploy | `.github/**`, `wrangler.jsonc` |
 | judgment_rules | `AGENTS.md`, `docs/pr-risk.md`, `docs/github-merge-gates.md`, `src/pr-risk/**`, `src/types/pr-risk.ts`, `test/pr-risk*.test.ts` |

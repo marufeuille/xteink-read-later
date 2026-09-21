@@ -1,17 +1,15 @@
 import type { Context } from 'hono'
+import { accessRequiredHtml, htmlResponse } from '../candidates/html'
 import type { AppEnv } from '../types'
-import { clipTokenAuthorized, unauthorizedResponse } from './auth'
 import {
-  CANDIDATE_SESSION_COOKIE,
-  parseCandidateSession,
-  parseCookieHeader,
-  type CandidateSession,
-} from './candidate-session'
-import { htmlResponse, loginPageHtml } from '../candidates/html'
+  defaultGetAccessIdentity,
+  type GetAccessIdentity,
+} from './access-identity'
+import { clipTokenAuthorized, unauthorizedResponse } from './auth'
+import { accessCsrfToken, csrfTokensMatch } from './candidate-session'
+import { toErrorResponse } from './error-response'
 
-export function requestIsHttps(c: Context<AppEnv>): boolean {
-  return new URL(c.req.url).protocol === 'https:'
-}
+export const ACCESS_LOGOUT_PATH = '/cdn-cgi/access/logout'
 
 export function wantsJson(c: Context<AppEnv>): boolean {
   const path = new URL(c.req.url).pathname
@@ -26,32 +24,49 @@ export function wantsJson(c: Context<AppEnv>): boolean {
   return contentType === 'application/json'
 }
 
-export async function bearerOk(c: Context<AppEnv>): Promise<boolean> {
-  return clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN)
+export type ClipWebAuth = {
+  readonly via: 'bearer' | 'access'
+  readonly csrfToken: string
 }
 
-export async function sessionFrom(c: Context<AppEnv>): Promise<CandidateSession | null> {
-  const raw = parseCookieHeader(c.req.header('cookie'), CANDIDATE_SESSION_COOKIE)
-  return parseCandidateSession(raw, c.env.CLIP_TOKEN)
-}
-
-export type ClipWebAuth =
-  | { readonly via: 'bearer' }
-  | { readonly via: 'session'; readonly session: CandidateSession }
-
-export async function requireClipWebAuth(c: Context<AppEnv>): Promise<ClipWebAuth | Response> {
-  if (await bearerOk(c)) {
-    return { via: 'bearer' }
+export async function presentedCsrf(c: Context<AppEnv>, json: boolean): Promise<string> {
+  if (json) {
+    return c.req.header('x-csrf-token') ?? ''
   }
-  const session = await sessionFrom(c)
-  if (session !== null) {
-    return { via: 'session', session }
+  try {
+    const form = await c.req.parseBody()
+    return typeof form.csrf === 'string' ? form.csrf : ''
+  } catch {
+    return ''
+  }
+}
+
+export async function denyIfCsrfMismatch(
+  auth: ClipWebAuth,
+  presented: string | undefined,
+): Promise<Response | null> {
+  if (auth.via === 'access' && !(await csrfTokensMatch(presented, auth.csrfToken))) {
+    return toErrorResponse({ kind: 'csrf_failed' })
+  }
+  return null
+}
+
+export async function requireClipWebAuth(
+  c: Context<AppEnv>,
+  getAccessIdentity: GetAccessIdentity = defaultGetAccessIdentity,
+): Promise<ClipWebAuth | Response> {
+  if (await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN)) {
+    return { via: 'bearer', csrfToken: '' }
+  }
+  const identity = await getAccessIdentity(c)
+  if (identity !== null) {
+    return {
+      via: 'access',
+      csrfToken: await accessCsrfToken(identity.email, c.env.CLIP_TOKEN),
+    }
   }
   if (wantsJson(c)) {
     return unauthorizedResponse('bearer')
   }
-  if (c.req.method === 'GET') {
-    return c.redirect('/candidates/login', 302)
-  }
-  return htmlResponse('入る', loginPageHtml('認証が必要です'), 401)
+  return htmlResponse('Google アカウントで入る', accessRequiredHtml(), 401)
 }
