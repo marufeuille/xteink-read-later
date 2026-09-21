@@ -85,3 +85,38 @@ export type FeedScheduleLog = {
 export function logFeedSchedule(entry: Omit<FeedScheduleLog, 'event'>): void {
   console.log(JSON.stringify({ event: 'feed_schedule', ...entry } satisfies FeedScheduleLog))
 }
+
+export type DigestScheduleLog = {
+  readonly event: 'digest_schedule'
+  readonly cron: string
+  readonly date: string
+  readonly queued: number
+  readonly failed: number
+  readonly durationMs: number
+}
+
+export function logDigestSchedule(entry: Omit<DigestScheduleLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'digest_schedule', ...entry } satisfies DigestScheduleLog))
+}
+
+export type DailyDigestLog = {
+  readonly event: 'daily_digest'
+  readonly date: string
+  readonly status: 'published' | 'empty' | 'failed'
+  readonly selected: number
+  readonly summarized: number
+  readonly skipped: number
+  readonly durationMs: number
+  readonly articleId?: string
+}
+
+export function logDailyDigest(entry: Omit<DailyDigestLog, 'event'>): void {
+  const { articleId, ...rest } = entry
+  console.log(
+    JSON.stringify({
+      event: 'daily_digest',
+      ...rest,
+      ...(articleId === null || articleId === undefined ? {} : { articleId }),
+    } satisfies DailyDigestLog),
+  )
+}

@@ -4,6 +4,7 @@ import type { ClassifyErrorCode } from './classify'
 import type { ErrorKind, HttpStatusOf, TranslateFailedError } from './errors'
 import type { ArticleEpubKey, ArticleId, ClipJobId, EpubBytes, HttpUrl } from './id'
 import type { OpdsCatalog } from './opds'
+import type { DailyDigestQueuedBody } from './daily'
 import type { FeedCollectAllBody, FeedCollectBody, FeedSourceListBody, FeedSourceWriteBody } from './source'
 
 export type ClipRequestBody = {
@@ -156,6 +157,7 @@ export type ApiRoutes = {
   readonly postFeedSource: RouteSpec<'POST', '/sources', BearerAuth, FeedSourceWriteBody>
   readonly collectFeedSource: RouteSpec<'POST', '/sources/:id/collect', BearerAuth, FeedCollectBody>
   readonly collectFeedSources: RouteSpec<'POST', '/sources/collect', BearerAuth, FeedCollectAllBody>
+  readonly postDailyDigest: RouteSpec<'POST', '/digest', BearerAuth, DailyDigestQueuedBody>
 }
 
 export const PIPELINE_STAGES = ['queue', 'fetch', 'extract', 'translate', 'epub', 'store', 'classify'] as const

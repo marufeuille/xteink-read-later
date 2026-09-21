@@ -1,11 +1,12 @@
 import { createApp } from './app'
-import { runScheduledFeedCollection } from './feeds/schedule'
 import { clipPipeline } from './pipeline/clip'
 import { createClipQueueHandler } from './queue/clip'
+import { createDigestQueueHandler, DIGEST_QUEUE_NAME } from './queue/digest'
 import { createFeedQueueHandler, FEED_QUEUE_NAME } from './queue/feed'
+import { handleScheduled } from './schedule'
 import { createD1CandidateStore } from './store/d1-candidates'
 import { createR2Store } from './store/r2'
-import type { ClipQueueMessage, FeedQueueMessage } from './types'
+import type { ClipQueueMessage, DigestQueueMessage, FeedQueueMessage } from './types'
 
 const app = createApp({ createStore: createR2Store })
 
@@ -16,6 +17,10 @@ export default {
       await createFeedQueueHandler()(batch as MessageBatch<FeedQueueMessage>, env)
       return
     }
+    if (batch.queue === DIGEST_QUEUE_NAME) {
+      await createDigestQueueHandler()(batch as MessageBatch<DigestQueueMessage>, env)
+      return
+    }
     await createClipQueueHandler({
       clipPipeline,
       createStore: createR2Store,
@@ -23,6 +28,6 @@ export default {
     })(batch as MessageBatch<ClipQueueMessage>, env)
   },
   async scheduled(controller, env) {
-    await runScheduledFeedCollection(env, { cron: controller.cron })
+    await handleScheduled(controller, env)
   },
-} satisfies ExportedHandler<Cloudflare.Env, ClipQueueMessage | FeedQueueMessage>
+} satisfies ExportedHandler<Cloudflare.Env, ClipQueueMessage | FeedQueueMessage | DigestQueueMessage>

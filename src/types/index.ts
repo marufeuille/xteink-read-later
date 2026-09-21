@@ -1,13 +1,32 @@
 export type { AppEnv } from './app'
 export type {
+  CreateDigestStore,
+  DailyDigestQueuedBody,
   DailyIdentityComparison,
   DailyIssueIdentity,
   DailyPublishResult,
+  DigestBucket,
+  DigestBucketQuota,
+  DigestPreparedItem,
+  DigestPublishedItem,
+  DigestQueueMessage,
+  DigestRunResult,
+  DigestRunStatus,
+  DigestSkipReason,
+  DigestStore,
 } from './daily'
 export {
   DAILY_CANONICAL_PREFIX,
+  DAILY_DIGEST_CRON,
+  DAILY_DIGEST_TIMEZONE,
   DAILY_IDENTITY_STRATEGY,
   DAILY_TIMEZONE,
+  DIGEST_BUCKETS,
+  DIGEST_BUCKET_QUOTAS,
+  DIGEST_LIST_PAGE_SIZE,
+  DIGEST_MAX_JEV_CALLS,
+  DIGEST_SUMMARY_MAX_CHARS,
+  DIGEST_TARGET_READING_MINUTES,
 } from './daily'
 export type {
   ArticleFields,

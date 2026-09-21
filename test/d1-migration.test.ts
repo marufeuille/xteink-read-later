@@ -49,4 +49,12 @@ describe('D1 candidate migration', () => {
     expect(sql).toContain('enabled INTEGER NOT NULL DEFAULT 1')
     expect(sql).toContain('Collection is separate from clip Queue')
   })
+
+  it('stores digest publication history without article bodies', () => {
+    const sql = readFileSync(join(root, 'migrations/0005_daily_digest.sql'), 'utf8')
+    expect(sql).toContain('CREATE TABLE digest_published_items')
+    expect(sql).toContain('PRIMARY KEY (issue_date, canonical_url)')
+    expect(sql).toContain('avoid republishing')
+    expect(sql).not.toMatch(/content_html|summary_html|excerpt/)
+  })
 })
