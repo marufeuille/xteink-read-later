@@ -29,6 +29,17 @@ describe('D1 candidate migration', () => {
     expect(sql).not.toMatch(/ADD COLUMN \w*status/i)
   })
 
+  it('adds recommendation columns without mixing topic classification or a clip job status machine', () => {
+    const sql = readFileSync(join(root, 'migrations/0004_candidate_recommend.sql'), 'utf8')
+    expect(sql).toContain('ALTER TABLE candidate_articles ADD COLUMN recommend_status')
+    expect(sql).toContain('ADD COLUMN recommend_grade')
+    expect(sql).toContain('ADD COLUMN recommend_excerpt_hash')
+    expect(sql).toContain('ADD COLUMN recommend_version')
+    expect(sql).toContain('Separate from article classification')
+    expect(sql).toContain('Do not store article body or excerpt text')
+    expect(sql).not.toMatch(/ADD COLUMN topic/)
+  })
+
   it('creates feed source tables without mixing outlet type and article topics', () => {
     const sql = readFileSync(join(root, 'migrations/0002_feed_sources.sql'), 'utf8')
     expect(sql).toContain('CREATE TABLE feed_sources')

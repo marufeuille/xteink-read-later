@@ -3,9 +3,10 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
+import { unevaluatedRecommendation } from '../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import { createMemoryStore } from '../src/store/memory'
-import { CANDIDATE_LIST_PAGE_SIZE, asCandidateId, err, ok, parseHttpUrl, type FetchPage } from '../src/types'
+import { CANDIDATE_LIST_PAGE_SIZE, asCandidateId, err, ok, parseHttpUrl, type EvaluateSystemOne, type FetchPage } from '../src/types'
 import { bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
 import { createFakeQueue } from './fake-queue'
 
@@ -30,7 +31,7 @@ function fetchHtml(pages: Record<string, string>): FetchPage {
   }
 }
 
-function appWith(fetchPage: FetchPage = fetchHtml({})) {
+function appWith(fetchPage: FetchPage = fetchHtml({}), evaluateRecommend?: EvaluateSystemOne) {
   const candidateStore = createMemoryCandidateStore()
   const queue = createFakeQueue()
   const app = createApp({
@@ -38,8 +39,13 @@ function appWith(fetchPage: FetchPage = fetchHtml({})) {
     queue,
     candidateStore,
     fetchPage,
+    ...(evaluateRecommend === undefined ? {} : { evaluateRecommend }),
   })
-  const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+  const env = {
+    ...TEST_BINDINGS,
+    CLIP_QUEUE: queue,
+    ...(evaluateRecommend === undefined ? {} : { OPENROUTER_API_KEY: 'or-test' }),
+  } as Cloudflare.Env
   return { app, candidateStore, env }
 }
 
@@ -299,6 +305,7 @@ describe('candidate JSON API', () => {
         clipJobId: null,
         clipRunId: null,
         selectedAt: null,
+        recommendation: unevaluatedRecommendation(),
         createdAt: now,
         updatedAt: now,
       })
@@ -410,5 +417,144 @@ describe('candidate HTML form', () => {
     )
     expect(sent.status).toBe(303)
     expect(sent.headers.get('location')).toContain('notice=clipped')
+  })
+})
+
+describe('candidate recommendation HTTP', () => {
+  const evaluate: EvaluateSystemOne = async () => ({
+    ok: true,
+    value: {
+      model: 'jev-1.13.0',
+      answers: {
+        recommendation: { type: 'choice', choice: 'related', confidence: 0.88, probabilities: { related: 0.88 } },
+        de_relevant: { type: 'noul', noul: 0.7 },
+        has_concreteness: { type: 'noul', noul: 0.6 },
+        has_verification: { type: 'noul', noul: 0.1 },
+      },
+      usage: { inputTokens: 200, outputTokens: 12 },
+    },
+  })
+
+  it('shows recommendation on the list and keeps failed judgments visible', async () => {
+    const { app, env } = appWith(
+      fetchHtml({ 'https://example.com/ja/workers-cpu': html('ja-tech.html') }),
+      evaluate,
+    )
+    const created = await app.request(
+      '/candidates',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
+        body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
+      },
+      env,
+    )
+    expect(created.status).toBe(201)
+    const createdBody = (await created.json()) as {
+      candidate: { listingState: string; recommendation: { status: string; grade: string | null } }
+    }
+    expect(createdBody.candidate.listingState).toBe('listed')
+    expect(createdBody.candidate.recommendation).toEqual({
+      status: 'evaluated',
+      grade: 'related',
+      reasons: ['de_relevant', 'has_concreteness'],
+      evaluatedAt: expect.any(String),
+    })
+
+    const listed = await app.request('/candidates.json', { headers: { authorization: bearerAuthorization() } }, env)
+    const listBody = (await listed.json()) as {
+      groups: { items: { recommendation: { status: string; grade: string | null } }[] }[]
+    }
+    expect(listBody.groups[0]?.items[0]?.recommendation.grade).toBe('related')
+
+    const entered = await app.request(
+      '/candidates/login',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
+      },
+      env,
+    )
+    const listHtml = await app.request('/candidates', { headers: { cookie: sessionCookie(entered) } }, env)
+    const page = await listHtml.text()
+    expect(page).toContain('関連あり')
+    expect(page).toContain('DE関連')
+    expect(page).toContain('再判定')
+    expect(page).not.toContain(TEST_CLIP_TOKEN)
+  })
+
+  it('rejects unauthenticated recommend POSTs and CSRF mismatches', async () => {
+    const { app, env } = appWith(
+      fetchHtml({ 'https://example.com/ja/workers-cpu': html('ja-tech.html') }),
+      evaluate,
+    )
+    const created = await app.request(
+      '/candidates',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
+        body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
+      },
+      env,
+    )
+    const id = ((await created.json()) as { id: string }).id
+    const unauth = await app.request(
+      `/candidates/${id}/recommend`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' },
+      env,
+    )
+    expect(unauth.status).toBe(401)
+
+    const entered = await app.request(
+      '/candidates/login',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
+      },
+      env,
+    )
+    const cookie = sessionCookie(entered)
+    const denied = await app.request(
+      `/candidates/${id}/recommend`,
+      {
+        method: 'POST',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf: 'nope' }).toString(),
+      },
+      env,
+    )
+    expect(denied.status).toBe(403)
+  })
+
+  it('re-evaluates on POST /candidates/:id/recommend', async () => {
+    const { app, env } = appWith(
+      fetchHtml({ 'https://example.com/ja/workers-cpu': html('ja-tech.html') }),
+      evaluate,
+    )
+    const created = await app.request(
+      '/candidates',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
+        body: JSON.stringify({ url: 'https://example.com/ja/workers-cpu' }),
+      },
+      env,
+    )
+    const id = ((await created.json()) as { id: string }).id
+    const judged = await app.request(
+      `/candidates/${id}/recommend`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: bearerAuthorization() },
+        body: JSON.stringify({ force: true }),
+      },
+      env,
+    )
+    expect(judged.status).toBe(200)
+    const body = (await judged.json()) as { reused: boolean; candidate: { recommendation: { grade: string | null } } }
+    expect(body.reused).toBe(false)
+    expect(body.candidate.recommendation.grade).toBe('related')
   })
 })

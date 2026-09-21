@@ -13,6 +13,7 @@ import type {
   ClipRunId,
 } from '../types'
 import { articleIdFromCanonicalUrl, asCandidateId, clipJobIdFromUrl, isCandidateId } from '../types'
+import { toRecommendPublic } from '../recommend/taxonomy'
 
 export type CandidateDeliveryView = {
   readonly jobId: ClipJobId | null
@@ -180,6 +181,7 @@ export function toCandidatePublic(
     deliveryState: delivery.deliveryState,
     deliveryError: delivery.deliveryError,
     availableInOpds: delivery.availableInOpds,
+    recommendation: toRecommendPublic(candidate.recommendation),
   }
 }
 

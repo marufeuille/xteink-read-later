@@ -1,3 +1,4 @@
+import { parseCandidateRecommendation, recommendBindValues } from '../recommend/parse'
 import {
   asArticleId,
   asCandidateDiscoveryId,
@@ -124,6 +125,7 @@ function parseCandidate(row: unknown): CandidateArticle | null {
     clipJobId,
     clipRunId,
     selectedAt,
+    recommendation: parseCandidateRecommendation(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   }
@@ -179,8 +181,12 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
           `INSERT INTO candidate_articles (
             id, canonical_url, source_url, title, outlet, published_at, discovered_at,
             fetch_status, listing_state, exclusion_reason, full_text_state,
-            completed_article_id, clip_job_id, clip_run_id, selected_at, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            completed_article_id, clip_job_id, clip_run_id, selected_at,
+            recommend_status, recommend_grade, recommend_decided_grade, recommend_version,
+            recommend_model, recommend_evaluated_at, recommend_excerpt_hash, recommend_confidence,
+            recommend_relevant, recommend_concrete, recommend_verification, recommend_error_code,
+            recommend_input_tokens, recommend_duration_ms, created_at, updated_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             canonical_url = excluded.canonical_url,
             source_url = excluded.source_url,
@@ -196,6 +202,20 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
             clip_job_id = excluded.clip_job_id,
             clip_run_id = excluded.clip_run_id,
             selected_at = excluded.selected_at,
+            recommend_status = excluded.recommend_status,
+            recommend_grade = excluded.recommend_grade,
+            recommend_decided_grade = excluded.recommend_decided_grade,
+            recommend_version = excluded.recommend_version,
+            recommend_model = excluded.recommend_model,
+            recommend_evaluated_at = excluded.recommend_evaluated_at,
+            recommend_excerpt_hash = excluded.recommend_excerpt_hash,
+            recommend_confidence = excluded.recommend_confidence,
+            recommend_relevant = excluded.recommend_relevant,
+            recommend_concrete = excluded.recommend_concrete,
+            recommend_verification = excluded.recommend_verification,
+            recommend_error_code = excluded.recommend_error_code,
+            recommend_input_tokens = excluded.recommend_input_tokens,
+            recommend_duration_ms = excluded.recommend_duration_ms,
             created_at = excluded.created_at,
             updated_at = excluded.updated_at`,
         )
@@ -215,6 +235,7 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
           candidate.clipJobId,
           candidate.clipRunId,
           candidate.selectedAt,
+          ...recommendBindValues(candidate.recommendation),
           candidate.createdAt,
           candidate.updatedAt,
         )

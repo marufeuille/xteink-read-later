@@ -1,4 +1,5 @@
 import { registerCandidate } from '../candidates/register'
+import { RECOMMEND_MAX_CALLS_PER_FEED_ITEM } from '../recommend/taxonomy'
 import {
   candidateFeedSourceKind,
   COLLECT_TIME_BUDGET_MS,
@@ -88,6 +89,7 @@ export async function collectFeed(
       fetchPage: deps.fetchPage,
       now,
       sourceKind,
+      maxJevCalls: RECOMMEND_MAX_CALLS_PER_FEED_ITEM,
     })
     if (!registered.ok) {
       itemsSkipped += 1

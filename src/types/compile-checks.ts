@@ -45,12 +45,26 @@ import {
   type ClipJobKey,
 } from './id'
 import type { ClipQueueMessage } from './job'
-import type { CandidateClipLog, OpdsDownloadLog } from '../log'
+import type { CandidateClipLog, CandidateRecommendLog, OpdsDownloadLog } from '../log'
 import type { ClipPipeline, ClipResult, ExtractPipeline, ExtractResult } from './pipeline'
 import type { Result } from './result'
 import type { ArticleStore, ArticleWrite } from './store'
 import type { JevFailedError } from './jev'
 import type { PrRiskBlocker, PrRiskJudgment, PrRiskRoute, PrRiskTrialAction } from './pr-risk'
+import {
+  RECOMMEND_ERROR_CODES,
+  RECOMMEND_GRADES,
+  RECOMMEND_STATUSES,
+} from './recommend'
+import type {
+  CandidateRecommendPublic,
+  EvaluatedRecommendation,
+  LowConfidenceRecommendation,
+  RecommendErrorCode,
+  RecommendGrade,
+  RecommendStatus,
+  RecommendVersion,
+} from './recommend'
 import { CLASSIFICATION_STATUSES, CLASSIFY_ERROR_CODES } from '../classify/taxonomy'
 
 type Equals<A, B> =
@@ -348,6 +362,27 @@ type _prRiskBlockers = Assert<
 >
 type _prRiskRuleVersionPinned = Assert<Equals<PrRiskJudgment['ruleVersion'], 'pr-risk-v1'>>
 
+type _recommendVersionPinned = Assert<Equals<RecommendVersion, 'de-recommend-v1'>>
+type _recommendStatusesExhaustive = Assert<
+  Equals<RecommendStatus, (typeof RECOMMEND_STATUSES)[number]>
+>
+type _recommendErrorCodesExhaustive = Assert<
+  Equals<RecommendErrorCode, (typeof RECOMMEND_ERROR_CODES)[number]>
+>
+type _recommendGradesExhaustive = Assert<Equals<RecommendGrade, (typeof RECOMMEND_GRADES)[number]>>
+type _evaluatedHasVisibleGrade = Assert<Equals<EvaluatedRecommendation['grade'], RecommendGrade>>
+type _lowConfidenceHidesGrade = Assert<Equals<LowConfidenceRecommendation['grade'], null>>
+type _recommendPublicHasNoConfidence = Assert<
+  'confidence' extends keyof CandidateRecommendPublic ? false : true
+>
+type _postCandidateRecommendUsesBearer = Assert<
+  ApiRoutes['postCandidateRecommend']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
+type _candidateRecommendLogHasNoUrl = Assert<'url' extends keyof CandidateRecommendLog ? false : true>
+type _candidateRecommendLogHasNoBody = Assert<
+  'contentHtml' extends keyof CandidateRecommendLog ? false : true
+>
+
 export type CompileChecks = {
   readonly languageIsBinary: _languageIsBinary
   readonly storedLanguageIsJa: _storedLanguageIsJa
@@ -416,4 +451,14 @@ export type CompileChecks = {
   readonly prRiskRouteHasNoMerge: _prRiskRouteHasNoMerge
   readonly prRiskBlockers: _prRiskBlockers
   readonly prRiskRuleVersionPinned: _prRiskRuleVersionPinned
+  readonly recommendVersionPinned: _recommendVersionPinned
+  readonly recommendStatusesExhaustive: _recommendStatusesExhaustive
+  readonly recommendErrorCodesExhaustive: _recommendErrorCodesExhaustive
+  readonly recommendGradesExhaustive: _recommendGradesExhaustive
+  readonly evaluatedHasVisibleGrade: _evaluatedHasVisibleGrade
+  readonly lowConfidenceHidesGrade: _lowConfidenceHidesGrade
+  readonly recommendPublicHasNoConfidence: _recommendPublicHasNoConfidence
+  readonly postCandidateRecommendUsesBearer: _postCandidateRecommendUsesBearer
+  readonly candidateRecommendLogHasNoUrl: _candidateRecommendLogHasNoUrl
+  readonly candidateRecommendLogHasNoBody: _candidateRecommendLogHasNoBody
 }
