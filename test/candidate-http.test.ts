@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
-import { unevaluatedRecommendation } from '../src/recommend/taxonomy'
+import { evaluatedRecommendation, unevaluatedRecommendation } from '../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import { createMemoryStore } from '../src/store/memory'
 import { CANDIDATE_LIST_PAGE_SIZE, asCandidateId, err, ok, parseHttpUrl, type EvaluateSystemOne, type FetchPage } from '../src/types'
@@ -284,7 +284,8 @@ describe('candidate JSON API', () => {
   it('pages the JSON list', async () => {
     const { app, candidateStore, env } = appWith()
     const now = '2026-09-21T00:00:00.000Z'
-    for (let i = 0; i < 21; i += 1) {
+    const listedCount = CANDIDATE_LIST_PAGE_SIZE + 1
+    for (let i = 0; i < listedCount; i += 1) {
       const url = parseHttpUrl(`https://example.com/p/${i}`)
       if (url === null) {
         throw new Error('url')
@@ -320,12 +321,97 @@ describe('candidate JSON API', () => {
       { headers: { authorization: bearerAuthorization() } },
       env,
     )
-    const first = (await page1.json()) as { total: number; groups: { items: unknown[] }[] }
+    const first = (await page1.json()) as {
+      total: number
+      pageSize: number
+      filters: { title: string; grade: string; outlet: string }
+      outlets: string[]
+      groups: { items: unknown[] }[]
+    }
     const second = (await page2.json()) as { page: number; groups: { items: unknown[] }[] }
-    expect(first.total).toBe(21)
-    expect(first.groups.reduce((sum, group) => sum + group.items.length, 0)).toBe(20)
+    expect(first.pageSize).toBe(CANDIDATE_LIST_PAGE_SIZE)
+    expect(first.total).toBe(listedCount)
+    expect(first.filters).toEqual({ title: '', grade: '', outlet: '' })
+    expect(first.outlets).toEqual(['Example'])
+    expect(first.groups.reduce((sum, group) => sum + group.items.length, 0)).toBe(CANDIDATE_LIST_PAGE_SIZE)
     expect(second.page).toBe(2)
     expect(second.groups.reduce((sum, group) => sum + group.items.length, 0)).toBe(1)
+  })
+
+  it('filters the JSON list by title, grade, and outlet', async () => {
+    const { app, candidateStore, env } = appWith()
+    const now = '2026-09-21T00:00:00.000Z'
+    const put = async (
+      index: number,
+      title: string,
+      outlet: string,
+      recommendation: ReturnType<typeof unevaluatedRecommendation> | ReturnType<typeof evaluatedRecommendation>,
+    ) => {
+      const url = parseHttpUrl(`https://example.com/p/${index}`)
+      if (url === null) {
+        throw new Error('url')
+      }
+      await candidateStore.put({
+        id: asCandidateId(`cand_${index.toString().padStart(32, '0')}`),
+        canonicalUrl: url,
+        sourceUrl: url,
+        title,
+        outlet,
+        publishedAt: now,
+        discoveredAt: now,
+        fetchStatus: 'fetched',
+        listingState: 'listed',
+        exclusionReason: null,
+        fullTextState: 'unconfirmed',
+        completedArticleId: null,
+        clipJobId: null,
+        clipRunId: null,
+        selectedAt: null,
+        recommendation,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+    await put(1, 'Cloudflare Workers', 'Example', unevaluatedRecommendation())
+    await put(
+      2,
+      'データ基盤の設計',
+      'Zenn',
+      evaluatedRecommendation({
+        grade: 'recommended',
+        confidence: 0.91,
+        model: 'jev-test',
+        excerptHash: 'h',
+        evaluatedAt: now,
+        relevant: true,
+        concrete: true,
+        verification: false,
+        inputTokens: 8,
+        durationMs: 4,
+      }),
+    )
+    const headers = { authorization: bearerAuthorization() }
+    const byTitle = await app.request('/candidates.json?title=Workers', { headers }, env)
+    const titleBody = (await byTitle.json()) as {
+      total: number
+      filters: { title: string }
+      groups: { items: { title: string }[] }[]
+    }
+    expect(titleBody.total).toBe(1)
+    expect(titleBody.filters.title).toBe('Workers')
+    expect(titleBody.groups.flatMap((group) => group.items.map((item) => item.title))).toEqual(['Cloudflare Workers'])
+
+    const byGrade = await app.request('/candidates.json?grade=recommended', { headers }, env)
+    const gradeBody = (await byGrade.json()) as { total: number; groups: { items: { outlet: string }[] }[] }
+    expect(gradeBody.total).toBe(1)
+    expect(gradeBody.groups.flatMap((group) => group.items.map((item) => item.outlet))).toEqual(['Zenn'])
+
+    const byOutlet = await app.request('/candidates.json?outlet=Example', { headers }, env)
+    const outletBody = (await byOutlet.json()) as { total: number }
+    expect(outletBody.total).toBe(1)
+
+    const none = await app.request('/candidates.json?title=Workers&outlet=Zenn', { headers }, env)
+    expect(((await none.json()) as { total: number }).total).toBe(0)
   })
 })
 
@@ -361,6 +447,9 @@ describe('candidate HTML form', () => {
       env,
     )
     const listedHtml = await listed.text()
+    expect(listedHtml).toContain('<table')
+    expect(listedHtml).toContain('ソース')
+    expect(listedHtml).toContain('絞り込む')
     expect(listedHtml).toContain('取得失敗')
     expect(listedHtml).not.toContain('本文取得済み')
     expect(listedHtml).not.toContain(TEST_CLIP_TOKEN)
@@ -404,19 +493,99 @@ describe('candidate HTML form', () => {
     )
     expect(denied.status).toBe(403)
 
-    const formPage = await app.request('/candidates', { headers: { cookie } }, env)
-    const csrf = csrfFrom(await formPage.text())
+    const formPage = await app.request('/candidates?title=CPU', { headers: { cookie } }, env)
+    const formHtml = await formPage.text()
+    expect(formHtml).toContain('<table')
+    expect(formHtml).toContain('name="return_to" value="title=CPU"')
+    const csrf = csrfFrom(formHtml)
     const sent = await app.request(
       `/candidates/${id}/clip`,
       {
         method: 'POST',
         headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ csrf }).toString(),
+        body: new URLSearchParams({ csrf, return_to: 'title=CPU' }).toString(),
       },
       env,
     )
     expect(sent.status).toBe(303)
-    expect(sent.headers.get('location')).toContain('notice=clipped')
+    expect(sent.headers.get('location')).toBe('/candidates?title=CPU&notice=clipped')
+  })
+
+  it('keeps HTML filters selected and in paging links', async () => {
+    const { app, candidateStore, env } = appWith()
+    const now = '2026-09-21T00:00:00.000Z'
+    const put = async (index: number, outlet: string, recommendation: ReturnType<typeof unevaluatedRecommendation> | ReturnType<typeof evaluatedRecommendation>) => {
+      const url = parseHttpUrl(`https://example.com/p/${index}`)
+      if (url === null) {
+        throw new Error('url')
+      }
+      await candidateStore.put({
+        id: asCandidateId(`cand_${index.toString().padStart(32, '0')}`),
+        canonicalUrl: url,
+        sourceUrl: url,
+        title: `Article ${index}`,
+        outlet,
+        publishedAt: now,
+        discoveredAt: now,
+        fetchStatus: 'fetched',
+        listingState: 'listed',
+        exclusionReason: null,
+        fullTextState: 'unconfirmed',
+        completedArticleId: null,
+        clipJobId: null,
+        clipRunId: null,
+        selectedAt: null,
+        recommendation,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+    for (let i = 0; i < CANDIDATE_LIST_PAGE_SIZE + 1; i += 1) {
+      await put(i, 'Example', unevaluatedRecommendation())
+    }
+    await put(
+      99,
+      'Zenn',
+      evaluatedRecommendation({
+        grade: 'recommended',
+        confidence: 0.9,
+        model: 'jev-test',
+        excerptHash: 'h',
+        evaluatedAt: now,
+        relevant: true,
+        concrete: false,
+        verification: false,
+        inputTokens: 8,
+        durationMs: 3,
+      }),
+    )
+    const entered = await app.request(
+      '/candidates/login',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ token: TEST_CLIP_TOKEN }).toString(),
+      },
+      env,
+    )
+    const cookie = sessionCookie(entered)
+    const pending = await app.request(
+      '/candidates?title=Article&grade=pending&outlet=Example',
+      { headers: { cookie } },
+      env,
+    )
+    const pendingHtml = await pending.text()
+    expect(pendingHtml).toContain('value="pending" selected')
+    expect(pendingHtml).toContain('value="Example" selected')
+    expect(pendingHtml).toContain('value="Article"')
+    expect(pendingHtml).toContain('href="/candidates?title=Article&amp;grade=pending&amp;outlet=Example&amp;page=2"')
+    expect(pendingHtml).not.toContain('Article 99')
+
+    const recommended = await app.request('/candidates?grade=recommended', { headers: { cookie } }, env)
+    const recommendedHtml = await recommended.text()
+    expect(recommendedHtml).toContain('value="recommended" selected')
+    expect(recommendedHtml).toContain('Article 99')
+    expect(recommendedHtml).not.toContain('Article 1')
   })
 })
 

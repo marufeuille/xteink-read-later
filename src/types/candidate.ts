@@ -41,7 +41,26 @@ export const CANDIDATE_UNSENDABLE_REASONS = ['paywalled', 'unavailable', 'fetch_
 export type CandidateUnsendableReason = (typeof CANDIDATE_UNSENDABLE_REASONS)[number]
 
 export const CANDIDATE_LIST_TIMEZONE = 'Asia/Tokyo'
-export const CANDIDATE_LIST_PAGE_SIZE = 20
+export const CANDIDATE_LIST_PAGE_SIZE = 30
+export const CANDIDATE_LIST_FILTER_MAX_LENGTH = 200
+export const CANDIDATE_LIST_GRADE_FILTERS = ['recommended', 'related', 'low_priority', 'pending'] as const
+export type CandidateListGradeFilter = (typeof CANDIDATE_LIST_GRADE_FILTERS)[number]
+
+export function isCandidateListGradeFilter(value: string): value is CandidateListGradeFilter {
+  return (CANDIDATE_LIST_GRADE_FILTERS as readonly string[]).includes(value)
+}
+
+export type CandidateListFilters = {
+  readonly title: string
+  readonly grade: CandidateListGradeFilter | ''
+  readonly outlet: string
+}
+
+export const EMPTY_CANDIDATE_LIST_FILTERS: CandidateListFilters = {
+  title: '',
+  grade: '',
+  outlet: '',
+}
 
 export type CandidateArticle = {
   readonly id: CandidateId
@@ -75,13 +94,14 @@ export type CandidateDiscovery = {
 export type CandidateListQuery = {
   readonly limit: number
   readonly offset: number
-}
+} & Partial<CandidateListFilters>
 
 export type CandidateListPage = {
   readonly items: readonly CandidateArticle[]
   readonly total: number
   readonly limit: number
   readonly offset: number
+  readonly outlets: readonly string[]
 }
 
 export type CandidateStore = {
@@ -177,4 +197,6 @@ export type CandidateListBody = {
   readonly pageSize: number
   readonly total: number
   readonly groups: readonly CandidateListGroup[]
+  readonly filters: CandidateListFilters
+  readonly outlets: readonly string[]
 }

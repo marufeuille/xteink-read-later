@@ -1,7 +1,8 @@
 import type { Context, Hono } from 'hono'
 import { sendCandidateClip } from '../candidates/clip'
 import { enrichCandidatePublic, syncCandidateCompletion, candidateIdParam } from '../candidates/delivery'
-import { listOffset, parseListPage, toCandidateListBodyFromPublic, toCandidatePublic } from '../candidates/list'
+import { listOffset, toCandidateListBodyFromPublic, toCandidatePublic } from '../candidates/list'
+import { candidatesLocation, parseCandidateListFilters, parseListPage } from '../candidates/list-filter'
 import { candidatesPageHtml, htmlResponse, loginPageHtml, toRegisterJson } from '../candidates/html'
 import { reevaluateCandidate } from '../candidates/recommend'
 import { registerCandidate } from '../candidates/register'
@@ -13,6 +14,7 @@ import {
   CANDIDATE_LIST_PAGE_SIZE,
   type AppEnv,
   type ArticleStore,
+  type CandidateListFilters,
   type CandidateNotice,
   type CandidateNoticeKind,
   type CandidateStore,
@@ -97,6 +99,7 @@ async function listedBody(
   env: Cloudflare.Env,
   deps: CandidateHttpDeps,
   pageNumber: number,
+  filters: CandidateListFilters,
   now: () => Date,
 ) {
   const candidates = candidateStoreFor(env, deps)
@@ -104,6 +107,9 @@ async function listedBody(
   const listed = await candidates.listListed({
     limit: CANDIDATE_LIST_PAGE_SIZE,
     offset: listOffset(pageNumber),
+    title: filters.title,
+    grade: filters.grade,
+    outlet: filters.outlet,
   })
   const nowMs = now().getTime()
   const publics = await Promise.all(
@@ -118,14 +124,26 @@ async function listedBody(
       return syncCandidateCompletion(item, publicItem, candidates, now())
     }),
   )
-  return toCandidateListBodyFromPublic(publics, listed.total, listed.limit, pageNumber)
+  return toCandidateListBodyFromPublic(publics, listed.total, listed.limit, pageNumber, filters, listed.outlets)
+}
+
+function htmlListLocation(
+  c: Context<AppEnv>,
+  notice: CandidateNoticeKind,
+  returnTo?: string,
+): string {
+  return candidatesLocation({
+    returnTo,
+    referer: c.req.header('referer'),
+    notice,
+  })
 }
 
 async function readActionFlag(
   c: Context<AppEnv>,
   json: boolean,
   field: 'force' | 'regenerate',
-): Promise<{ flag: boolean; csrf: string } | Response> {
+): Promise<{ flag: boolean; csrf: string; returnTo: string } | Response> {
   if (json) {
     let flag = false
     const raw = await c.req.text().catch(() => '')
@@ -139,13 +157,14 @@ async function readActionFlag(
         flag = false
       }
     }
-    return { flag, csrf: c.req.header('x-csrf-token') ?? '' }
+    return { flag, csrf: c.req.header('x-csrf-token') ?? '', returnTo: '' }
   }
   try {
     const form = await c.req.parseBody()
     return {
       flag: form[field] === '1' || form[field] === 'true',
       csrf: typeof form.csrf === 'string' ? form.csrf : '',
+      returnTo: typeof form.return_to === 'string' ? form.return_to : '',
     }
   } catch {
     return htmlResponse('読書候補', '<p>入力を読み取れませんでした</p>', 400)
@@ -209,8 +228,10 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     if (auth instanceof Response) {
       return auth
     }
-    const pageNumber = parseListPage(c.req.query('page'))
-    const body = await listedBody(c.env, deps, pageNumber, now)
+    const query = c.req.query()
+    const pageNumber = parseListPage(query.page)
+    const filters = parseCandidateListFilters(query)
+    const body = await listedBody(c.env, deps, pageNumber, filters, now)
     if (wantsJson(c)) {
       return c.json(body, 200)
     }
@@ -262,7 +283,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
         return htmlResponse('読書候補', '<p>候補が見つかりません</p>', 404)
       }
       return htmlResponse('読書候補', '<p>送信できませんでした</p>', 303, {
-        location: `/candidates?notice=${notice}`,
+        location: htmlListLocation(c, notice, parsed.returnTo),
       })
     }
     if (json) {
@@ -271,7 +292,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     }
     const notice = sent.value.reused && sent.value.body.deliveryState === 'available' ? 'reused' : 'clipped'
     return htmlResponse('読書候補', '<p>送信しました</p>', 303, {
-      location: `/candidates?notice=${notice}`,
+      location: htmlListLocation(c, notice, parsed.returnTo),
     })
   })
 
@@ -323,7 +344,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
       )
     }
     return htmlResponse('読書候補', '<p>判定しました</p>', 303, {
-      location: '/candidates?notice=rejudged',
+      location: htmlListLocation(c, 'rejudged', parsed.returnTo),
     })
   })
 
@@ -335,6 +356,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     const json = wantsJson(c)
     let rawUrl = ''
     let csrf = ''
+    let returnTo = ''
     if (json) {
       let raw: string
       try {
@@ -355,6 +377,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
         const form = await c.req.parseBody()
         rawUrl = typeof form.url === 'string' ? form.url : ''
         csrf = typeof form.csrf === 'string' ? form.csrf : ''
+        returnTo = typeof form.return_to === 'string' ? form.return_to : ''
       } catch {
         return htmlResponse('読書候補', '<p>URL を入力してください</p>', 400)
       }
@@ -392,7 +415,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
       )
     }
     return htmlResponse('読書候補', '<p>登録しました</p>', 303, {
-      location: `/candidates?notice=${registered.value.notice.kind}`,
+      location: htmlListLocation(c, registered.value.notice.kind, returnTo),
     })
   })
 }

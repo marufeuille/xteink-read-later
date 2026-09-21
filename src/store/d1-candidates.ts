@@ -1,3 +1,4 @@
+import { listedFilterSql, parseCandidateListFilters } from '../candidates/list-filter'
 import { parseCandidateRecommendation, recommendBindValues } from '../recommend/parse'
 import {
   asArticleId,
@@ -272,35 +273,49 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
       return result.results.map(parseDiscovery).filter((row): row is CandidateDiscovery => row !== null)
     },
     async listListed(query) {
+      const filters = parseCandidateListFilters(query)
+      const { where, binds } = listedFilterSql(filters)
       const results = await db.batch([
-        db.prepare('SELECT COUNT(*) AS total FROM candidate_articles WHERE listing_state = ?').bind('listed'),
+        db.prepare(`SELECT COUNT(*) AS total FROM candidate_articles WHERE ${where}`).bind(...binds),
         db
           .prepare(
             `SELECT * FROM candidate_articles
-             WHERE listing_state = ?
+             WHERE ${where}
              ORDER BY CASE WHEN published_at IS NULL THEN 1 ELSE 0 END ASC,
                published_at DESC,
                discovered_at DESC,
                id DESC
              LIMIT ? OFFSET ?`,
           )
-          .bind('listed', query.limit, query.offset),
+          .bind(...binds, query.limit, query.offset),
+        db
+          .prepare(
+            `SELECT DISTINCT outlet FROM candidate_articles
+             WHERE listing_state = ?
+             ORDER BY outlet COLLATE NOCASE`,
+          )
+          .bind('listed'),
       ])
       const countRow = results[0]
       const list = results[1]
-      if (countRow === undefined || list === undefined) {
-        return { items: [], total: 0, limit: query.limit, offset: query.offset }
+      const outletRows = results[2]
+      if (countRow === undefined || list === undefined || outletRows === undefined) {
+        return { items: [], total: 0, limit: query.limit, offset: query.offset, outlets: [] }
       }
       const totalRaw = (countRow.results[0] as { total?: unknown } | undefined)?.total
       const total = typeof totalRaw === 'number' ? totalRaw : Number(totalRaw ?? 0)
       const items = (list.results as CandidateRow[])
         .map(parseCandidate)
         .filter((row): row is CandidateArticle => row !== null)
+      const outlets = outletRows.results
+        .map((row) => (isRecord(row) && typeof row.outlet === 'string' ? row.outlet : null))
+        .filter((row): row is string => row !== null && row !== '')
       return {
         items,
         total,
         limit: query.limit,
         offset: query.offset,
+        outlets,
       }
     },
   }
