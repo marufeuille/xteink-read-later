@@ -111,6 +111,31 @@ describe('candidate fixture e2e', () => {
     expect(JSON.stringify(listBody)).not.toContain('Members only essay')
     expect(JSON.stringify(listBody)).not.toContain(TEST_CLIP_TOKEN)
 
+    const filtered = await ctx.hono.request(
+      '/candidates.json?title=Workers',
+      { headers: { authorization: bearerAuthorization() } },
+      ctx.env,
+    )
+    const filteredBody = (await filtered.json()) as {
+      total: number
+      pageSize: number
+      filters: { title: string }
+      groups: { items: { title: string }[] }[]
+    }
+    expect(filteredBody.pageSize).toBe(30)
+    expect(filteredBody.total).toBe(1)
+    expect(filteredBody.filters.title).toBe('Workers')
+    expect(filteredBody.groups.flatMap((group) => group.items.map((item) => item.title))).toEqual([
+      'Cloudflare Workers の CPU 制限',
+    ])
+
+    const htmlList = await ctx.hono.request('/candidates', { headers: { authorization: bearerAuthorization() } }, ctx.env)
+    const htmlBody = await htmlList.text()
+    expect(htmlBody).toContain('<table')
+    expect(htmlBody).toContain('ソース')
+    expect(htmlBody).toContain('絞り込む')
+    expect(htmlBody).toContain('Cloudflare Workers の CPU 制限')
+
     const unauth = await ctx.hono.request('/candidates.json', { headers: { accept: 'application/json' } }, ctx.env)
     expect(unauth.status).toBe(401)
 

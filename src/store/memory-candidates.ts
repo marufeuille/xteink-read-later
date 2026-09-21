@@ -1,3 +1,8 @@
+import {
+  candidateMatchesListFilters,
+  parseCandidateListFilters,
+  uniqueListedOutlets,
+} from '../candidates/list-filter'
 import type {
   CandidateArticle,
   CandidateDiscovery,
@@ -67,13 +72,16 @@ export function createMemoryCandidateStore(): CandidateStore {
       return discoveries.get(candidateId) ?? []
     },
     async listListed(query: CandidateListQuery): Promise<CandidateListPage> {
-      const listed = [...articles.values()].filter((article) => article.listingState === 'listed')
-      listed.sort(compareListed)
+      const all = [...articles.values()]
+      const filters = parseCandidateListFilters(query)
+      const matched = all.filter((article) => candidateMatchesListFilters(article, filters))
+      matched.sort(compareListed)
       return {
-        items: listed.slice(query.offset, query.offset + query.limit),
-        total: listed.length,
+        items: matched.slice(query.offset, query.offset + query.limit),
+        total: matched.length,
         limit: query.limit,
         offset: query.offset,
+        outlets: uniqueListedOutlets(all),
       }
     },
   }

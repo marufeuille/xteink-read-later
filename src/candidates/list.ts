@@ -1,8 +1,10 @@
 import {
   CANDIDATE_LIST_PAGE_SIZE,
   CANDIDATE_LIST_TIMEZONE,
+  EMPTY_CANDIDATE_LIST_FILTERS,
   type CandidateArticle,
   type CandidateListBody,
+  type CandidateListFilters,
   type CandidateListGroup,
   type CandidateListPage,
   type CandidatePublic,
@@ -12,7 +14,7 @@ import { toCandidatePublic } from './delivery'
 export { toCandidatePublic } from './delivery'
 
 export const CANDIDATE_TIMEZONE_NOTE =
-  '日付は Asia/Tokyo (UTC+9) の暦日で分けています。公開日が無い記事は「公開日不明」にします（発見日では代用しません）。'
+  '日付は Asia/Tokyo (UTC+9) の暦日です。公開日が無い記事は「公開日不明」にします（発見日では代用しません）。'
 
 export function calendarDateInTimeZone(iso: string, timeZone: string): string {
   const date = new Date(iso)
@@ -62,19 +64,19 @@ export function groupCandidatesByPublishedDate(
   )
 }
 
-export function parseListPage(raw: string | undefined): number {
-  if (raw === undefined || raw.trim() === '') {
-    return 1
-  }
-  const parsed = Number.parseInt(raw, 10)
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    return 1
-  }
-  return parsed
-}
-
-export function toCandidateListBody(page: CandidateListPage, pageNumber: number): CandidateListBody {
-  return toCandidateListBodyFromPublic(page.items.map((item) => toCandidatePublic(item)), page.total, page.limit, pageNumber)
+export function toCandidateListBody(
+  page: CandidateListPage,
+  pageNumber: number,
+  filters: CandidateListFilters = EMPTY_CANDIDATE_LIST_FILTERS,
+): CandidateListBody {
+  return toCandidateListBodyFromPublic(
+    page.items.map((item) => toCandidatePublic(item)),
+    page.total,
+    page.limit,
+    pageNumber,
+    filters,
+    page.outlets,
+  )
 }
 
 export function toCandidateListBodyFromPublic(
@@ -82,6 +84,8 @@ export function toCandidateListBodyFromPublic(
   total: number,
   pageSize: number,
   pageNumber: number,
+  filters: CandidateListFilters = EMPTY_CANDIDATE_LIST_FILTERS,
+  outlets: readonly string[] = [],
 ): CandidateListBody {
   return {
     timezone: CANDIDATE_LIST_TIMEZONE,
@@ -90,6 +94,8 @@ export function toCandidateListBodyFromPublic(
     pageSize,
     total,
     groups: groupPublicCandidatesByPublishedDate(items),
+    filters,
+    outlets,
   }
 }
 

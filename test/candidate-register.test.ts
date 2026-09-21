@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { assertFetchableCandidateUrl } from '../src/candidates/fetch-policy'
 import { calendarDateInTimeZone, groupCandidatesByPublishedDate } from '../src/candidates/list'
 import { registerCandidate } from '../src/candidates/register'
-import { unevaluatedRecommendation } from '../src/recommend/taxonomy'
+import { evaluatedRecommendation, unevaluatedRecommendation } from '../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import {
   asCandidateId,
@@ -266,5 +266,68 @@ describe('published date grouping', () => {
     expect(first.total).toBe(21)
     expect(first.items).toHaveLength(20)
     expect(second.items).toHaveLength(1)
+    expect(first.outlets).toEqual(['Example'])
+  })
+
+  it('filters listed candidates by title, outlet, and recommendation grade', async () => {
+    const store = createMemoryCandidateStore()
+    const now = '2026-09-21T00:00:00.000Z'
+    const put = async (
+      index: number,
+      title: string,
+      outlet: string,
+      recommendation: CandidateArticle['recommendation'],
+    ) => {
+      const url = mustUrl(`https://example.com/p/${index}`)
+      await store.put({
+        id: asCandidateId(`cand_${index.toString().padStart(32, '0')}`),
+        canonicalUrl: url,
+        sourceUrl: url,
+        title,
+        outlet,
+        publishedAt: now,
+        discoveredAt: now,
+        fetchStatus: 'fetched',
+        listingState: 'listed',
+        exclusionReason: null,
+        fullTextState: 'unconfirmed',
+        completedArticleId: null,
+        clipJobId: null,
+        clipRunId: null,
+        selectedAt: null,
+        recommendation,
+        createdAt: now,
+        updatedAt: now,
+      })
+    }
+    await put(1, 'Cloudflare Workers', 'Example', unevaluatedRecommendation())
+    await put(
+      2,
+      'データ基盤',
+      'Zenn',
+      evaluatedRecommendation({
+        grade: 'recommended',
+        confidence: 0.92,
+        model: 'jev-test',
+        excerptHash: 'h',
+        evaluatedAt: now,
+        relevant: true,
+        concrete: true,
+        verification: false,
+        inputTokens: 8,
+        durationMs: 3,
+      }),
+    )
+    const byTitle = await store.listListed({ limit: 10, offset: 0, title: 'workers' })
+    expect(byTitle.total).toBe(1)
+    expect(byTitle.items[0]?.title).toBe('Cloudflare Workers')
+    const byOutlet = await store.listListed({ limit: 10, offset: 0, outlet: 'Zenn' })
+    expect(byOutlet.items.map((item) => item.outlet)).toEqual(['Zenn'])
+    const byGrade = await store.listListed({ limit: 10, offset: 0, grade: 'recommended' })
+    expect(byGrade.items).toHaveLength(1)
+    expect(byGrade.items[0]?.title).toBe('データ基盤')
+    const pending = await store.listListed({ limit: 10, offset: 0, grade: 'pending' })
+    expect(pending.items.map((item) => item.title)).toEqual(['Cloudflare Workers'])
+    expect(byTitle.outlets).toEqual(['Example', 'Zenn'])
   })
 })
