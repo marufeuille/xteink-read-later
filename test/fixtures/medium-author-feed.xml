@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Stories by Ada on Medium</title>
+    <item>
+      <title><![CDATA[別の記事]]></title>
+      <link>https://medium.com/@Ada/other-post-aaaaaaaaaaaa</link>
+      <content:encoded><![CDATA[<p>これは別の記事です。フィードの先頭が目的の記事でなくても、記事 ID で照合する。</p><p>二段落目で全文扱いにする。</p>]]></content:encoded>
+    </item>
+    <item>
+      <title><![CDATA[エージェントデータスタック]]></title>
+      <link>https://medium.com/@Ada/agentic-stack-98fbaee9ad10?source=rss-bee6fe64f701------2</link>
+      <guid isPermaLink="false">https://medium.com/p/98fbaee9ad10</guid>
+      <dc:creator><![CDATA[Ada]]></dc:creator>
+      <pubDate>Tue, 16 Sep 2026 00:00:00 GMT</pubDate>
+      <content:encoded><![CDATA[<p>四年前にメトリクスストアとセマンティックレイヤーの記事を書いた。当時はウェアハウスの容量が主な論点だった。</p><h3>柱 1: Git で管理する定義</h3><p>指標の定義はベンダーの中に置かず、リポジトリの宣言ファイルとして扱う。</p><pre><code>metric: revenue</code></pre>]]></content:encoded>
+    </item>
+  </channel>
+</rss>

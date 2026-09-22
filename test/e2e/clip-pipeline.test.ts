@@ -393,4 +393,71 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(job.status).toBe('failed')
     expect(job.error?.code).toBe('payload_too_large')
   })
+
+  it('clips a Medium article from the author feed when the page is blocked', async () => {
+    const pageUrl = 'https://medium.com/@Ada/agentic-stack-98fbaee9ad10'
+    const { fetchedUrls } = installNetworkMock({
+      pages: {
+        [pageUrl]: { html: '<html><title>Attention Required! | Cloudflare</title></html>', status: 403 },
+        'https://medium.com/feed/@Ada': {
+          html: fixtureHtml('medium-author-feed.xml'),
+          contentType: 'text/xml; charset=utf-8',
+        },
+      },
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(fetchedUrls).toEqual([pageUrl, 'https://medium.com/feed/@Ada'])
+
+    const meta = await ctx.hono.request(
+      `/articles/${job.id}`,
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(meta.status).toBe(200)
+    const stored = (await meta.json()) as { title: string; author: string | null }
+    expect(stored.title).toBe('エージェントデータスタック')
+    expect(stored.author).toBe('Ada')
+
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(epubResponse.status).toBe(200)
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('指標の定義はベンダー')
+    expect(chapter).toContain('柱 1: Git で管理する定義')
+    expect(chapter).toContain('metric: revenue')
+  })
+
+  it('does not retry a Medium page when the author feed has no full article', async () => {
+    const pageUrl = 'https://medium.com/@Ada/agentic-stack-98fbaee9ad10'
+    const truncated = fixtureHtml('medium-author-feed.xml').replace(
+      '指標の定義はベンダーの中に置かず、リポジトリの宣言ファイルとして扱う。',
+      'Read the full story on Medium.',
+    )
+    const { fetchedUrls } = installNetworkMock({
+      pages: {
+        [pageUrl]: { html: 'blocked', status: 403 },
+        'https://medium.com/feed/@Ada': {
+          html: truncated,
+          contentType: 'text/xml; charset=utf-8',
+        },
+      },
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('fetch_failed')
+    expect(job.error?.message).toContain('Medium feed did not include the full article')
+    expect(fetchedUrls).toEqual([pageUrl, 'https://medium.com/feed/@Ada'])
+  })
 })

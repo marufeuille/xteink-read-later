@@ -124,14 +124,21 @@ export function shouldRetryClipAttempt(attempts: number): boolean {
   return attempts <= CLIP_QUEUE_MAX_RETRIES
 }
 
-export function shouldRetryClipError(kind: PipelineError['kind'], attempts: number): boolean {
+export function shouldRetryClipError(
+  error: {
+    readonly kind: PipelineError['kind']
+    readonly terminal?: boolean
+  },
+  attempts: number,
+): boolean {
   if (!shouldRetryClipAttempt(attempts)) {
     return false
   }
-  switch (kind) {
+  switch (error.kind) {
     case 'translate_failed':
-    case 'fetch_failed':
       return true
+    case 'fetch_failed':
+      return error.terminal !== true
     case 'epub_failed':
       return attempts === 1
     case 'extract_failed':
@@ -350,7 +357,7 @@ async function runClipQueueMessage(
       { stage: 'queue', durationMs: Date.now() - started, errorKind: result.error.kind },
       log,
     )
-  if (shouldRetryClipError(result.error.kind, message.attempts)) {
+  if (shouldRetryClipError(result.error, message.attempts)) {
     logQueueError()
     message.retry()
     return
