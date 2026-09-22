@@ -28,6 +28,7 @@ type ClipJson = {
   translated?: boolean
   status?: string
   epubPath?: string
+  stages?: { stage: string; errorKind?: string }[]
   error?: { code: string; message: string; extracted?: { contentHtml?: string; language?: string } }
 }
 
@@ -92,6 +93,17 @@ describe('clip pipeline E2E (fixture network)', () => {
     const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
     expect(job.status).toBe('ready')
     expect(job.epubPath).toMatch(/^\/articles\/art_[a-f0-9]{32}\/book\.epub$/)
+    expect(job.stages?.map((stage) => stage.stage)).toEqual([
+      'queue',
+      'fetch',
+      'extract',
+      'translate',
+      'epub',
+      'classify',
+      'queue',
+    ])
+    expect(JSON.stringify(job.stages)).not.toContain('example.com')
+    expect(JSON.stringify(job.stages)).not.toContain('wrangler')
     expect(fetchedUrls).toEqual([pageUrl])
 
     const epubResponse = await ctx.hono.request(

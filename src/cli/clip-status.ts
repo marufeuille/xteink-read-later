@@ -22,19 +22,29 @@ type ClipJobViewBase = {
   readonly sourceUrl: string
 }
 
+export type ClipJobStageView = {
+  readonly stage: PipelineStage
+  readonly durationMs: number
+  readonly attempt: number
+  readonly errorKind?: string
+}
+
 export type ClipJobView =
   | (ClipJobViewBase & {
       readonly status: 'queued' | 'running'
       readonly attempt: number
+      readonly stages?: readonly ClipJobStageView[]
     })
   | (ClipJobViewBase & {
       readonly status: 'ready'
       readonly id: string
       readonly epubPath: string
+      readonly stages?: readonly ClipJobStageView[]
     })
   | (ClipJobViewBase & {
       readonly status: 'failed'
       readonly error: { readonly code: string; readonly message: string }
+      readonly stages?: readonly ClipJobStageView[]
     })
 
 export type ClipJobSnapshot =
@@ -59,8 +69,8 @@ export const CLIP_STATUS_USAGE = `使い方: npm run clip:status -- [--tail | --
 --tail    本番の wrangler tail を読み、工程ログを整形する
 --stdin   wrangler tail --format json の出力を標準入力から読む
 
-ライブログは接続後だけ見える。接続前の工程は「不明」（未実行や停止とは限らない）。
-過去ログの検索・保存、管理画面、Workflows は使わない。最終状態は job API で補う。`
+工程は job に保存する。clip:status は保存済みの工程を出し、未実行は「不明」。
+--tail / --stdin のライブログは接続後の追加分だけ。管理画面と Workflows は使わない。`
 
 const STAGE_SET: ReadonlySet<string> = new Set(PIPELINE_STAGES)
 
@@ -204,11 +214,41 @@ export function eventsForJob(
   return events.filter((event) => event.jobId === jobId)
 }
 
+function parseStageViews(value: unknown): readonly ClipJobStageView[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+  const stages: ClipJobStageView[] = []
+  for (const item of value) {
+    if (!isRecord(item) || !isPipelineStage(item.stage) || !isFiniteNumber(item.durationMs)) {
+      continue
+    }
+    if (typeof item.attempt !== 'number' || !Number.isInteger(item.attempt) || item.attempt < 0) {
+      continue
+    }
+    if (item.errorKind !== undefined && typeof item.errorKind !== 'string') {
+      continue
+    }
+    stages.push({
+      stage: item.stage,
+      durationMs: item.durationMs,
+      attempt: item.attempt,
+      ...(typeof item.errorKind === 'string' && item.errorKind.length > 0 ? { errorKind: item.errorKind } : {}),
+    })
+  }
+  return stages
+}
+
 function parseClipJobView(value: unknown): ClipJobView | null {
   if (!isRecord(value) || typeof value.jobId !== 'string' || typeof value.sourceUrl !== 'string') {
     return null
   }
-  const base = { jobId: value.jobId, sourceUrl: value.sourceUrl }
+  const stages = parseStageViews(value.stages)
+  const base = {
+    jobId: value.jobId,
+    sourceUrl: value.sourceUrl,
+    ...(stages === undefined ? {} : { stages }),
+  }
   if (
     (value.status === 'queued' || value.status === 'running') &&
     typeof value.attempt === 'number'
@@ -299,6 +339,31 @@ function attemptLabel(event: PipelineLogEvent): string {
   return event.attempt === undefined ? '-' : String(event.attempt)
 }
 
+function savedStageEvents(job: ClipJobSnapshot, jobId: string): PipelineLogEvent[] {
+  if (job.kind !== 'job' || job.body.stages === undefined) {
+    return []
+  }
+  return job.body.stages.map((stage) => ({
+    jobId,
+    stage: stage.stage,
+    durationMs: stage.durationMs,
+    attempt: stage.attempt,
+    ...(stage.errorKind === undefined ? {} : { errorKind: stage.errorKind }),
+  }))
+}
+
+function stageEventKey(event: PipelineLogEvent): string {
+  return `${event.stage}\t${event.attempt ?? ''}\t${event.durationMs}\t${event.errorKind ?? ''}`
+}
+
+export function combineStageEvents(
+  saved: readonly PipelineLogEvent[],
+  live: readonly PipelineLogEvent[],
+): PipelineLogEvent[] {
+  const seen = new Set(saved.map(stageEventKey))
+  return [...saved, ...live.filter((event) => !seen.has(stageEventKey(event)))]
+}
+
 function latestByStage(
   events: readonly PipelineLogEvent[],
 ): Map<PipelineStage, PipelineLogEvent> {
@@ -334,7 +399,9 @@ export function formatClipStatus(input: {
   readonly job: ClipJobSnapshot
   readonly events: readonly PipelineLogEvent[]
 }): string {
-  const matched = eventsForJob(input.events, input.jobId)
+  const saved = savedStageEvents(input.job, input.jobId)
+  const live = eventsForJob(input.events, input.jobId)
+  const matched = combineStageEvents(saved, live)
   const body = input.job.kind === 'job' ? input.job.body : undefined
   const lines = [
     `jobId    ${input.jobId}`,
@@ -358,7 +425,9 @@ export function formatClipStatus(input: {
   }
   lines.push(
     '',
-    'ライブログに無い工程は「不明」です。未実行や停止とは限りません。過去ログは保存しません。',
+    saved.length > 0
+      ? 'job に保存した工程を表示しています。未実行の工程は「不明」です。'
+      : 'ライブログに無い工程は「不明」です。未実行や停止とは限りません。過去ログは保存しません。',
   )
   return lines.join('\n')
 }
@@ -542,7 +611,7 @@ export async function runClipStatus(io: ClipStatusIo): Promise<number> {
   if (jobIsTerminal(job)) {
     printReport()
     io.stderr.write(
-      'すでに完了または失敗しているので wrangler tail は起動しない（過去ログは取れない）\n',
+      'すでに完了または失敗しているので wrangler tail は起動しない。工程は job に保存した分を表示する\n',
     )
     return 0
   }

@@ -88,6 +88,7 @@ export type {
   ClipJobFailedBody,
   ClipJobQueuedOrRunningBody,
   ClipJobReadyBody,
+  ClipJobStageBody,
   ClipQueuedBody,
   ClipReadyBody,
   ClipRequestBody,
@@ -172,6 +173,7 @@ export type {
   ClipQueuedJob,
   ClipReadyJob,
   ClipRunningJob,
+  ClipStageRecord,
   PipelineLogContext,
 } from './job'
 export type {

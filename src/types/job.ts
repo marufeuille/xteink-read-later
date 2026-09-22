@@ -1,4 +1,5 @@
 import type { ErrorKind } from './errors'
+import type { PipelineStage } from './http'
 import type { ArticleId, ClipJobId, ClipRunId, HttpUrl } from './id'
 
 export type ClipJobStatus = 'queued' | 'running' | 'ready' | 'failed'
@@ -8,11 +9,20 @@ export type ClipJobError = {
   readonly message: string
 }
 
+/** One pipeline stage kept on the job. No URL, body, or token. */
+export type ClipStageRecord = {
+  readonly stage: PipelineStage
+  readonly durationMs: number
+  readonly attempt: number
+  readonly errorKind?: string
+}
+
 type ClipJobBase = {
   readonly jobId: ClipJobId
   readonly runId: ClipRunId
   readonly sourceUrl: HttpUrl
   readonly attempt: number
+  readonly stages: readonly ClipStageRecord[]
   readonly createdAt: string
   readonly updatedAt: string
 }
@@ -53,4 +63,6 @@ export type PipelineLogContext = {
   readonly jobId: ClipJobId
   readonly runId?: ClipRunId
   readonly attempt?: number
+  /** Mutable log for this attempt. `logPipeline` appends here; the job stores a copy. */
+  readonly stages?: ClipStageRecord[]
 }

@@ -14,6 +14,14 @@ export function pipelineLogFields(
 }
 
 export function logPipeline(entry: PipelineLog, ctx?: PipelineLogContext): void {
+  if (ctx?.stages !== undefined) {
+    ctx.stages.push({
+      stage: entry.stage,
+      durationMs: entry.durationMs,
+      attempt: ctx.attempt ?? 0,
+      ...(entry.errorKind === undefined ? {} : { errorKind: entry.errorKind }),
+    })
+  }
   console.log(JSON.stringify({ event: 'pipeline', ...pipelineLogFields(ctx), ...entry }))
 }
 

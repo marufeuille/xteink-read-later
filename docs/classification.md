@@ -54,7 +54,7 @@ OPDS の棚は topic ではなく日付にする。Web 記事は `clip`、購入
 - キー未設定は `skipped`。購入 EPUB は Jev を呼ばず `skipped`。
 - Queue の `attempt` は使わない。分類は run ごとに最大1回。
 - EPUB と `skipped` の meta を先に保存してから分類する。分類結果は meta だけ更新する。isolate が分類中に死んでも掲載は残る。
-- `clip:status` の工程一覧は `store` の次に `classify`。未接続なら「不明」。分類失敗は `classify` 行が「失敗」になり、clip は `ready` のまま。
+- `clip:status` の工程一覧は `store` の次に `classify`。job にその工程が無いときだけ「不明」。分類失敗は `classify` 行が「失敗」になり、clip は `ready` のまま。
 - 再分類の最小手段は同じ URL の `POST /clip`（新しい `runId`）。管理画面は作らない。
 
 ## まだやらないこと

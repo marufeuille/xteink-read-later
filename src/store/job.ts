@@ -4,10 +4,13 @@ import {
   isClipJobId,
   isClipRunId,
   parseHttpUrl,
+  PIPELINE_STAGES,
   type ClipJobError,
   type ClipJobRecord,
   type ClipJobStatus,
+  type ClipStageRecord,
   type ErrorKind,
+  type PipelineStage,
 } from '../types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -20,6 +23,40 @@ function isClipJobStatus(value: unknown): value is ClipJobStatus {
 
 function isErrorKind(value: unknown): value is ErrorKind {
   return typeof value === 'string' && value in httpStatusByErrorKind
+}
+
+const STAGE_SET: ReadonlySet<string> = new Set(PIPELINE_STAGES)
+
+function isPipelineStage(value: unknown): value is PipelineStage {
+  return typeof value === 'string' && STAGE_SET.has(value)
+}
+
+function parseStages(value: unknown): ClipStageRecord[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  const stages: ClipStageRecord[] = []
+  for (const item of value) {
+    if (!isRecord(item) || !isPipelineStage(item.stage)) {
+      continue
+    }
+    if (typeof item.durationMs !== 'number' || !Number.isFinite(item.durationMs) || item.durationMs < 0) {
+      continue
+    }
+    if (typeof item.attempt !== 'number' || !Number.isInteger(item.attempt) || item.attempt < 0) {
+      continue
+    }
+    if (item.errorKind !== undefined && typeof item.errorKind !== 'string') {
+      continue
+    }
+    stages.push({
+      stage: item.stage,
+      durationMs: item.durationMs,
+      attempt: item.attempt,
+      ...(typeof item.errorKind === 'string' && item.errorKind.length > 0 ? { errorKind: item.errorKind } : {}),
+    })
+  }
+  return stages
 }
 
 function parseClipJobError(value: unknown): ClipJobError | null {
@@ -57,6 +94,7 @@ export function parseClipJobRecord(value: unknown): ClipJobRecord | null {
     runId: value.runId,
     sourceUrl,
     attempt: value.attempt,
+    stages: parseStages(value.stages),
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
   }
