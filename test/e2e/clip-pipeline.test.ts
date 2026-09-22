@@ -244,7 +244,12 @@ describe('clip pipeline E2E (fixture network)', () => {
       ctx.env,
     )
     expect(meta.status).toBe(200)
-    expect(((await meta.json()) as { translated: boolean }).translated).toBe(true)
+    const articleMeta = (await meta.json()) as { translated: boolean; title: string }
+    expect(articleMeta.translated).toBe(true)
+    expect(articleMeta.title).toBe(
+      'Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)',
+    )
+    expect(articleMeta.title).not.toContain('Xユーザー')
 
     const epubResponse = await ctx.hono.request(
       job.epubPath ?? '',
@@ -252,6 +257,11 @@ describe('clip pipeline E2E (fixture network)', () => {
       ctx.env,
     )
     const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const opf = strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())
+    expect(opf).toContain(
+      'Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)',
+    )
+    expect(opf).not.toContain('Xユーザー')
     const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
     expect(chapter).toContain('ジェボンズのパラドックス')
     expect(chapter).toContain('Goal: Compare three AI-agent tools')
@@ -302,7 +312,7 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(((await meta.json()) as { title: string }).title).toBe(extractTitle)
 
     const catalog = await ctx.hono.request(
-      '/opds',
+      '/opds/clip/2026-04-12',
       { headers: { authorization: basicAuthorization() } },
       ctx.env,
     )

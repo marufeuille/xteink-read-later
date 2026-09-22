@@ -45,17 +45,29 @@ import {
   type ClipJobKey,
 } from './id'
 import type { ClipQueueMessage } from './job'
-import type { CandidateClipLog, CandidateRecommendLog, OpdsDownloadLog } from '../log'
+import type {
+  CandidateClipLog,
+  CandidateRecommendLog,
+  DailyDigestLog,
+  DigestConfirmLog,
+  DigestScheduleLog,
+  FeedScheduleLog,
+  OpdsDownloadLog,
+} from '../log'
 import type { ClipPipeline, ClipResult, ExtractPipeline, ExtractResult } from './pipeline'
 import type { Result } from './result'
 import type { ArticleStore, ArticleWrite } from './store'
 import type { JevFailedError } from './jev'
 import type { PrRiskBlocker, PrRiskJudgment, PrRiskRoute, PrRiskTrialAction } from './pr-risk'
 import {
+  DAILY_DIGEST_CRON,
+  DAILY_DIGEST_TIMEZONE,
   DAILY_IDENTITY_STRATEGY,
   DAILY_TIMEZONE,
+  DIGEST_QR_TTL_DAYS,
   type DailyIssueIdentity,
 } from './daily'
+import { FEED_COLLECT_CRON, FEED_COLLECT_TIMEZONE } from './source'
 import {
   RECOMMEND_ERROR_CODES,
   RECOMMEND_GRADES,
@@ -259,6 +271,22 @@ type _opdsDownloadUsesBasic = Assert<
     : false
 >
 
+type _opdsClipUsesBasic = Assert<
+  ApiRoutes['opdsClip']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
+type _opdsEbookUsesBasic = Assert<
+  ApiRoutes['opdsEbook']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
+type _opdsClipDateUsesBasic = Assert<
+  ApiRoutes['opdsClipDate']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
+type _opdsEbookDateUsesBasic = Assert<
+  ApiRoutes['opdsEbookDate']['auth'] extends { readonly scheme: 'basic' } ? true : false
+>
+
 type _getArticleUsesBasic = Assert<
   ApiRoutes['getArticle']['auth'] extends { readonly scheme: 'basic' } ? true : false
 >
@@ -339,12 +367,14 @@ type _envHasSecretsAndBucket = Assert<
     ARTICLES: R2Bucket
     CLIP_QUEUE: Queue
     FEED_QUEUE: Queue
+    DIGEST_QUEUE: Queue
     CANDIDATES: D1Database
     OPENAI_API_KEY: string
     OPENROUTER_API_KEY: string
     CLIP_TOKEN: string
     OPDS_USERNAME: string
     OPDS_PASSWORD: string
+    PUBLIC_ORIGIN: string
   }
     ? true
     : false
@@ -390,6 +420,20 @@ type _candidateRecommendLogHasNoBody = Assert<
 
 type _dailyStrategyIsNewIdPerDay = Assert<Equals<typeof DAILY_IDENTITY_STRATEGY, 'new-id-per-jst-day'>>
 type _dailyTimezoneIsTokyo = Assert<Equals<typeof DAILY_TIMEZONE, 'Asia/Tokyo'>>
+type _feedCollectCronIsUtc1900 = Assert<Equals<typeof FEED_COLLECT_CRON, '0 19 * * *'>>
+type _feedCollectTimezoneIsTokyo = Assert<Equals<typeof FEED_COLLECT_TIMEZONE, 'Asia/Tokyo'>>
+type _feedScheduleLogHasNoUrl = Assert<'url' extends keyof FeedScheduleLog ? false : true>
+type _dailyDigestCronIsUtc2100 = Assert<Equals<typeof DAILY_DIGEST_CRON, '0 21 * * *'>>
+type _dailyDigestTimezoneIsTokyo = Assert<Equals<typeof DAILY_DIGEST_TIMEZONE, 'Asia/Tokyo'>>
+type _digestScheduleLogHasNoUrl = Assert<'url' extends keyof DigestScheduleLog ? false : true>
+type _dailyDigestLogHasNoUrl = Assert<'url' extends keyof DailyDigestLog ? false : true>
+type _dailyDigestLogHasNoBody = Assert<'contentHtml' extends keyof DailyDigestLog ? false : true>
+type _digestQrTtlIs14Days = Assert<Equals<typeof DIGEST_QR_TTL_DAYS, 14>>
+type _digestConfirmLogHasNoToken = Assert<'token' extends keyof DigestConfirmLog ? false : true>
+type _digestConfirmLogHasNoUrl = Assert<'url' extends keyof DigestConfirmLog ? false : true>
+type _postDailyDigestUsesBearer = Assert<
+  ApiRoutes['postDailyDigest']['auth'] extends { readonly scheme: 'bearer' } ? true : false
+>
 type _dailyIdentityHasCatalogFields = Assert<
   DailyIssueIdentity extends {
     readonly opdsEntryId: string
@@ -482,4 +526,16 @@ export type CompileChecks = {
   readonly dailyStrategyIsNewIdPerDay: _dailyStrategyIsNewIdPerDay
   readonly dailyTimezoneIsTokyo: _dailyTimezoneIsTokyo
   readonly dailyIdentityHasCatalogFields: _dailyIdentityHasCatalogFields
+  readonly feedCollectCronIsUtc1900: _feedCollectCronIsUtc1900
+  readonly feedCollectTimezoneIsTokyo: _feedCollectTimezoneIsTokyo
+  readonly feedScheduleLogHasNoUrl: _feedScheduleLogHasNoUrl
+  readonly dailyDigestCronIsUtc2100: _dailyDigestCronIsUtc2100
+  readonly dailyDigestTimezoneIsTokyo: _dailyDigestTimezoneIsTokyo
+  readonly digestScheduleLogHasNoUrl: _digestScheduleLogHasNoUrl
+  readonly dailyDigestLogHasNoUrl: _dailyDigestLogHasNoUrl
+  readonly dailyDigestLogHasNoBody: _dailyDigestLogHasNoBody
+  readonly digestQrTtlIs14Days: _digestQrTtlIs14Days
+  readonly digestConfirmLogHasNoToken: _digestConfirmLogHasNoToken
+  readonly digestConfirmLogHasNoUrl: _digestConfirmLogHasNoUrl
+  readonly postDailyDigestUsesBearer: _postDailyDigestUsesBearer
 }

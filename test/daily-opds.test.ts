@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { compareDailyIdentities, dailyDateFromInstant, dailyIssueIdentity, isDailyCanonicalUrl, parseDailyDate } from '../src/daily/identity'
 import { buildDummyDailyWrite } from '../src/daily/issue'
 import { publishLatestDaily } from '../src/daily/publish'
-import { buildOpdsCatalog, OPDS_CACHE_CONTROL } from '../src/opds/catalog'
+import { buildOpdsCatalog, OPDS_CACHE_CONTROL, opdsCalendarDate } from '../src/opds/catalog'
 import { createApp } from '../src/app'
 import { createMemoryStore } from '../src/store/memory'
 import { unavailableClassification } from '../src/classify/taxonomy'
@@ -151,12 +151,24 @@ describe('dummy daily EPUBs', () => {
     await store.put(clipArticle('通常記事'))
     await new Promise((resolve) => setTimeout(resolve, 5))
     const publishedFirst = await publishLatestDaily(store, first.write)
-    const firstCatalog = buildOpdsCatalog(await store.listMeta(), ORIGIN)
-    const firstEntries = parseOpdsEntries(firstCatalog.xml)
+    const listedFirst = await store.listMeta()
+    const firstCatalog = buildOpdsCatalog(listedFirst, ORIGIN, { kind: 'root' })
+    const firstEntries = parseOpdsEntries(firstCatalog?.xml ?? '')
     const firstDaily = firstEntries.find((entry) => entry.title === 'まとめ 2026-09-20')
-    expect(firstEntries.map((entry) => entry.title).sort()).toEqual(['まとめ 2026-09-20', '通常記事'])
+    expect(firstEntries.map((entry) => entry.title).sort()).toEqual(['clip', 'まとめ 2026-09-20'])
     expect(firstDaily?.id).toBe(first.identity.opdsEntryId)
     expect(firstDaily?.acquisition).toBe(first.identity.acquisitionUrl)
+    expect(firstCatalog?.xml).not.toContain('通常記事')
+    const clipMeta = listedFirst.find((item) => item.title === '通常記事')
+    const clipDate = clipMeta === undefined ? null : opdsCalendarDate(clipMeta)
+    expect(clipDate).not.toBeNull()
+    const clipCatalog = buildOpdsCatalog(listedFirst, ORIGIN, {
+      kind: 'date',
+      shelf: 'clip',
+      date: clipDate ?? '',
+    })
+    expect(clipCatalog?.xml).toContain('通常記事')
+    expect(buildOpdsCatalog(listedFirst, ORIGIN, { kind: 'shelf', shelf: 'ebook' })).toBeNull()
 
     await new Promise((resolve) => setTimeout(resolve, 5))
     const publishedSecond = await publishLatestDaily(store, second.write)
@@ -165,15 +177,19 @@ describe('dummy daily EPUBs', () => {
     expect(listed.map((item) => item.title).sort()).toEqual(['まとめ 2026-09-21', '通常記事'])
     expect(listed.some((item) => item.id === first.identity.articleId)).toBe(false)
 
-    const secondCatalog = buildOpdsCatalog(listed, ORIGIN)
-    const secondEntries = parseOpdsEntries(secondCatalog.xml)
+    const secondCatalog = buildOpdsCatalog(listed, ORIGIN, { kind: 'root' })
+    const secondEntries = parseOpdsEntries(secondCatalog?.xml ?? '')
     const secondDaily = secondEntries.find((entry) => entry.title === 'まとめ 2026-09-21')
     expect(secondEntries).toHaveLength(2)
     expect(secondDaily?.id).toBe(second.identity.opdsEntryId)
     expect(secondDaily?.acquisition).toBe(second.identity.acquisitionUrl)
     expect(secondDaily?.updated).not.toBe(firstDaily?.updated)
-    expect(secondCatalog.xml).not.toContain(first.identity.opdsEntryId)
-    expect(secondCatalog.xml).not.toContain(first.identity.filename)
+    expect(secondCatalog?.xml).not.toContain(first.identity.opdsEntryId)
+    expect(secondCatalog?.xml).not.toContain(first.identity.filename)
+    expect(secondCatalog?.xml).not.toContain('通常記事')
+    expect(
+      buildOpdsCatalog(listed, ORIGIN, { kind: 'date', shelf: 'clip', date: clipDate ?? '' })?.xml,
+    ).toContain('通常記事')
   })
 
   it('overwrites the same JST day instead of duplicating it', async () => {

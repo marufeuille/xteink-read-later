@@ -6,6 +6,20 @@ import { htmlFragmentToXhtml, xmlEscape } from './xhtml'
 
 type HeadingEntry = { href: string; label: string }
 
+const IMAGE_HREF = /^images\/[A-Za-z0-9][A-Za-z0-9._-]*\.png$/
+
+export type EpubImage = {
+  readonly id: string
+  readonly href: string
+  readonly bytes: Uint8Array
+}
+
+function assertImageHref(href: string): void {
+  if (!IMAGE_HREF.test(href) || href.includes('..')) {
+    throw new TypeError('Unsafe EPUB image path')
+  }
+}
+
 function isoNow(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z')
 }
@@ -114,7 +128,12 @@ function chapterXhtml(article: TranslatedArticle, body: string): string {
 `
 }
 
-function contentOpf(article: TranslatedArticle, bookId: string, modified: string): string {
+function contentOpf(
+  article: TranslatedArticle,
+  bookId: string,
+  modified: string,
+  images: readonly EpubImage[],
+): string {
   const creator =
     article.author !== null
       ? `<dc:creator>${xmlEscape(article.author)}</dc:creator>`
@@ -138,6 +157,12 @@ function contentOpf(article: TranslatedArticle, bookId: string, modified: string
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
     <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
     <item id="css" href="style.css" media-type="text/css"/>
+    ${images
+      .map(
+        (image) =>
+          `<item id="${xmlEscape(image.id)}" href="${xmlEscape(image.href)}" media-type="image/png"/>`,
+      )
+      .join('\n    ')}
   </manifest>
   <spine>
     <itemref idref="chapter"/>
@@ -148,23 +173,36 @@ function contentOpf(article: TranslatedArticle, bookId: string, modified: string
 
 export async function buildEpub(
   article: TranslatedArticle,
-  options: { readonly identifier?: string } = {},
+  options: { readonly identifier?: string; readonly images?: readonly EpubImage[] } = {},
 ): Promise<EpubBytes> {
   const modified = isoNow()
   const bookId =
     options.identifier !== undefined && options.identifier.length > 0
       ? options.identifier
       : `urn:uuid:${crypto.randomUUID()}`
-  const converted = withHeadingIds(htmlFragmentToXhtml(article.contentHtml))
+  const images = options.images ?? []
+  for (const image of images) {
+    assertImageHref(image.href)
+  }
+  const preserveImageSrcs = new Set(images.map((image) => image.href))
+  const converted = withHeadingIds(
+    htmlFragmentToXhtml(
+      article.contentHtml,
+      preserveImageSrcs.size > 0 ? { preserveImageSrcs } : {},
+    ),
+  )
   const nav = navXhtml(article.title, converted.entries)
   const mimetype: [Uint8Array, ZipOptions] = [strToU8('application/epub+zip'), { level: 0 }]
   const files: Zippable = {
     mimetype,
     'META-INF/container.xml': strToU8(CONTAINER_XML),
-    'OEBPS/content.opf': strToU8(contentOpf(article, bookId, modified)),
+    'OEBPS/content.opf': strToU8(contentOpf(article, bookId, modified, images)),
     'OEBPS/nav.xhtml': strToU8(nav),
     'OEBPS/chapter.xhtml': strToU8(chapterXhtml(article, converted.xhtml)),
     'OEBPS/style.css': strToU8(EPUB_CSS),
+  }
+  for (const image of images) {
+    files[`OEBPS/${image.href}`] = image.bytes
   }
   return asEpubBytes(zipSync(files))
 }

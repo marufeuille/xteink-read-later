@@ -1,6 +1,6 @@
 # 記事分類（MAR-57）
 
-clip した記事に、Jev で話題と種類を付ける。この段階では OPDS の棚は増やさない。`GET /opds` の全件フィードはそのまま。分類に失敗しても記事は隠さない。
+clip した記事に、Jev で話題と種類を付ける。OPDS の棚は話題ではなく日付にする（[MAR-84](https://linear.app/marufeuille/issue/MAR-84)）。`GET /opds` は `clip` と `ebook` の入口で、その下は Asia/Tokyo の暦日。分類に失敗しても記事は隠さない。
 
 ## プロバイダ
 
@@ -40,7 +40,7 @@ Secret は `OPENROUTER_API_KEY`。未設定・空なら Jev は呼ばず `status
 | `essay` | エッセイ、意見、体験談、コラム |
 | `uncategorized` | 同上 |
 
-初期の棚は topic を主にする想定。kind は Atom の category か二段目の棚にするかは、実機で辿ってから決める。
+OPDS の棚は topic ではなく日付にする。Web 記事は `clip`、購入本は `ebook` で、見返しが少ないので topic / kind の棚は作らない。topic と kind は記事メタに残す。
 
 ## 分岐
 
@@ -59,7 +59,7 @@ Secret は `OPENROUTER_API_KEY`。未設定・空なら Jev は呼ばず `status
 
 ## まだやらないこと
 
-- OPDS navigation の棚。CrossPoint / Xteink で辿れるかは次の PR で実機確認する。
+- topic / kind による OPDS の棚。日付棚（`clip` / `ebook`）は入っている（[MAR-84](https://linear.app/marufeuille/issue/MAR-84)）。CrossPoint で棚を辿って EPUB を取る実機確認は未実施。
 - 抽出検品と自動修復。判定の記録から始める。
 - 翻訳品質の検品。
 - 原文を別冊にすること。

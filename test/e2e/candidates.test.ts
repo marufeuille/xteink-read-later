@@ -195,7 +195,11 @@ describe('candidate fixture e2e', () => {
     expect(item?.availableInOpds).toBe(true)
     expect(item?.completedArticleId).toMatch(/^art_/)
 
-    const catalog = await hono.request('/opds', { headers: { authorization: basicAuthorization() } }, env)
+    const catalog = await hono.request(
+      '/opds/clip/2026-03-01',
+      { headers: { authorization: basicAuthorization() } },
+      env,
+    )
     expect(catalog.status).toBe(200)
     const xml = await catalog.text()
     expect(xml).toContain('Cloudflare Workers の CPU 制限')

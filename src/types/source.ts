@@ -15,6 +15,9 @@ export const COLLECT_TIME_BUDGET_MS = 20_000
 export const FEED_COLLECTION_STALE_MS = 15 * 60 * 1000
 export const MAX_FEED_TOPIC_TAGS = 8
 export const MAX_FEED_TOPIC_TAG_LENGTH = 32
+/** UTC 19:00 = 04:00 Asia/Tokyo. Change this and wrangler.jsonc together. */
+export const FEED_COLLECT_CRON = '0 19 * * *'
+export const FEED_COLLECT_TIMEZONE = 'Asia/Tokyo'
 
 export type FetchedFeed = {
   readonly requestedUrl: HttpUrl

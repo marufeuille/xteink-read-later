@@ -56,6 +56,29 @@ export function logOpdsDownload(entry: Omit<OpdsDownloadLog, 'event'>): void {
   console.log(JSON.stringify({ event: 'opds_download', ...entry } satisfies OpdsDownloadLog))
 }
 
+export type DigestConfirmResult = 'view' | 'rejected' | 'unsendable' | 'reused' | 'queued' | 'failed'
+
+export type DigestConfirmReason =
+  | 'invalid'
+  | 'expired'
+  | 'not_found'
+  | 'paywalled'
+  | 'excluded'
+  | 'unavailable'
+  | 'fetch_failed'
+  | 'queue_failed'
+
+export type DigestConfirmLog = {
+  readonly event: 'digest_confirm'
+  readonly result: DigestConfirmResult
+  readonly candidateId?: CandidateId
+  readonly reason?: DigestConfirmReason
+}
+
+export function logDigestConfirm(entry: Omit<DigestConfirmLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'digest_confirm', ...entry } satisfies DigestConfirmLog))
+}
+
 export type CandidateRecommendLog = {
   readonly event: 'candidate_recommend'
   readonly candidateId: CandidateId
@@ -83,4 +106,52 @@ export type FeedLog = {
 
 export function logFeed(entry: FeedLog): void {
   console.log(JSON.stringify({ event: 'feed', ...entry }))
+}
+
+export type FeedScheduleLog = {
+  readonly event: 'feed_schedule'
+  readonly cron: string
+  readonly queued: number
+  readonly failed: number
+  readonly durationMs: number
+}
+
+export function logFeedSchedule(entry: Omit<FeedScheduleLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'feed_schedule', ...entry } satisfies FeedScheduleLog))
+}
+
+export type DigestScheduleLog = {
+  readonly event: 'digest_schedule'
+  readonly cron: string
+  readonly date: string
+  readonly queued: number
+  readonly failed: number
+  readonly durationMs: number
+}
+
+export function logDigestSchedule(entry: Omit<DigestScheduleLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'digest_schedule', ...entry } satisfies DigestScheduleLog))
+}
+
+export type DailyDigestLog = {
+  readonly event: 'daily_digest'
+  readonly date: string
+  readonly status: 'published' | 'empty' | 'failed'
+  readonly selected: number
+  readonly summarized: number
+  readonly skipped: number
+  readonly durationMs: number
+  readonly articleId?: string
+  readonly qrCount: number
+}
+
+export function logDailyDigest(entry: Omit<DailyDigestLog, 'event'>): void {
+  const { articleId, ...rest } = entry
+  console.log(
+    JSON.stringify({
+      event: 'daily_digest',
+      ...rest,
+      ...(articleId === null || articleId === undefined ? {} : { articleId }),
+    } satisfies DailyDigestLog),
+  )
 }

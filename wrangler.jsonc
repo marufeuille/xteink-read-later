@@ -13,6 +13,11 @@
     "cpu_ms": 30000
   },
   "workers_dev": true,
+  // Public origin baked into digest QR codes. Not a secret. Cron has no request URL.
+  // Remove this var and redeploy to publish digests without QR links.
+  "vars": {
+    "PUBLIC_ORIGIN": "https://xteink-read-later.marufeuille.workers.dev"
+  },
   // wrangler dev だけ。本番の管理画面は Zero Trust のパス単位 Access（Google）で保護する。
   // Worker 全体には掛けない（OPDS / POST /clip を壊す）。
   "access": {
@@ -48,6 +53,10 @@
       {
         "binding": "FEED_QUEUE",
         "queue": "xteink-read-later-feed"
+      },
+      {
+        "binding": "DIGEST_QUEUE",
+        "queue": "xteink-read-later-digest"
       }
     ],
     "consumers": [
@@ -64,7 +73,19 @@
         "max_batch_timeout": 1,
         // No DLQ; recover failed collections with POST /sources/:id/collect.
         "max_retries": 3
+      },
+      {
+        "queue": "xteink-read-later-digest",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        // No DLQ; recover failed digests with POST /digest.
+        "max_retries": 3
       }
     ]
+  },
+  "triggers": {
+    // Daily feed collection at 04:00 Asia/Tokyo (UTC 19:00). Keep in sync with FEED_COLLECT_CRON.
+    // Daily digest at 06:00 Asia/Tokyo (UTC 21:00). Keep in sync with DAILY_DIGEST_CRON.
+    "crons": ["0 19 * * *", "0 21 * * *"]
   }
 }

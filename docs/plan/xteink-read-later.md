@@ -2,18 +2,26 @@
 
 対象: [Linear project Xteink Read Later](https://linear.app/marufeuille/project/xteink-read-later-b91329ef0ae8)
 
-## 現状（コードと一致させる）
+操作手順の正本は [README](../../README.md)。このファイルは着手時（MAR-30 〜 MAR-40）の計画記録。第 5 節以降の API・データ・実行モデルは当時の契約で、本番の契約ではない。
 
-`main` に Worker ソースがある。GitHub Actions が PR / `main` で typecheck・単体・fixture E2E を回し、緑の `main` だけ `wrangler deploy` する。入口は **Android 共有シート + HTTP Shortcuts**（iOS Shortcut ではない）。読む側は CrossPoint JP / Xteink の OPDS。購入 EPUB は `POST /books` で手元ファイルを載せる（書店からは取らない）。
+## いまの実装（2026-09-22）
 
-認証:
+着手時からの差分。手順と秘密値の置き場所は README。
 
-- `POST /clip` / `POST /books` / `DELETE /articles/:id` → Bearer `CLIP_TOKEN`
-- `GET /opds` / 記事メタ / EPUB 取得 → HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`。空パスワード不可）
+| 当時 | いま |
+| --- | --- |
+| `POST /clip` が同一リクエストで抽出〜EPUB まで終わって 200 `ready` | URL を検証して Queue に載せ、**202** `queued`。完成は consumer |
+| R2 のみ。D1 は置かない | R2 が記事・購入 EPUB・`jobs/{jobId}.json`。D1 が候補・発見元・情報源・おすすめ判定・まとめ掲載履歴 |
+| Queue / Workflows は同期が破綻してから | Queue が 3 本（clip / feed / digest）。Workflows は使わない（[MAR-56](mar-56-pipeline-workflows.md)） |
+| 翻訳モデルは未決。調査時点は `gpt-4o-mini` | 本番は OpenAI `gpt-5.6-luna`（[MAR-44 / MAR-71](mar-44-translate-models.md)） |
+| OPDS は日付の無い一覧 | `clip` と `ebook` の下に Asia/Tokyo の暦日。まとめは最新 1 冊だけルート |
+| 入口は Android の HTTP Shortcuts だけ | それに加え、Access 付きの PC クリップ、候補一覧、RSS/Atom 巡回、朝のまとめ |
+| 分類なし | clip 後に Jev で topic / kind（[classification.md](../classification.md)）。失敗しても掲載は残す |
+| 候補のおすすめなし | 候補ごとに de-recommend（[de-recommend.md](../de-recommend.md)）。まとめの枠分けに使う |
 
-日常の手順（平易版）は README の「日常の流れ」。秘密値と記事本文はドキュメントに出さない。
+CI は PR と `main` で typecheck・単体・fixture E2E を回し、緑の `main` だけ `wrangler deploy` する。読む側は CrossPoint JP / Xteink の OPDS。購入 EPUB は `POST /books` で手元ファイルを載せる（書店からは取らない）。CrossPoint で棚を辿って EPUB を取る実機確認は未実施。
 
-以下のフェーズ表は着手当時の順。実装済み。残課題の検討は MAR-44（翻訳モデル）と MAR-45（非同期 clip）で、この計画の MVP 範囲外。
+以下のフェーズ表は着手当時の順。MVP としては実装済み。第 5 節以降を現行仕様として読まない。
 
 ## 1. 何を作るか
 
@@ -34,7 +42,7 @@
 | 配送 | OPDS フィード |
 | 入口 | Android 共有シート + HTTP Shortcuts |
 
-進め方はプロジェクト記載どおり、**先にローカルで URL → EPUB を通し、その後 Workers / R2 / OPDS / Android 共有に載せる**。
+進め方はプロジェクト記載どおり、**先にローカルで URL → EPUB を通し、その後 Workers / R2 / OPDS / Android 共有に載せる**。この表は着手時のもの。現行は Queue 3 本、D1、OpenRouter（Jev）が加わる。翻訳の本番モデルは `gpt-5.6-luna`。
 
 ## 3. Linear Issue の読み方
 
@@ -91,7 +99,9 @@ Workers Free の CPU 10ms では本文抽出と EPUB 生成が落ちる想定。
 | --- | --- | --- |
 | 8 | [MAR-40](https://linear.app/marufeuille/issue/MAR-40) | Android 共有シート → HTTP Shortcuts → `POST /clip`。成功/失敗が端末で分かる。その後 OPDS から読める |
 
-## 5. API（ふるまい契約）
+> 第 5〜12 節は着手時の契約。`POST /clip` の同期 200、D1 なし、同期実行は現行ではない。現行は README と冒頭の表。
+
+## 5. API（着手時の契約）
 
 ライブラリ選定は実装時に委ねる。契約は HTTP と成果物で固定する。
 
@@ -136,7 +146,7 @@ Content-Type: application/json
 }
 ```
 
-Phase 1 の途中（MAR-30 完了時点）では `contentHtml` を返し、`epubPath` はまだなくてよい。MAR-33 完了時点で上の形に揃える。現行の成功レスポンスは `status: "ready"` と `epubPath` で、HTML 本文は返さない。
+Phase 1 の途中（MAR-30 完了時点）では `contentHtml` を返し、`epubPath` はまだなくてよい。MAR-33 完了時点で上の形に揃える、としていた。同期の 200 `ready` は現行ではない。いまの `POST /clip` は 202 `queued` で、HTML 本文は返さない。
 
 失敗:
 
@@ -166,7 +176,7 @@ Bearer 必須。R2 上の当該記事を削除。MAR-35 の手動削除。
 
 ### `GET /opds`
 
-OPDS 1.2 相当の Atom カタログ。新しい記事が上。各 entry に acquisition link（EPUB）。`GET /opds` と `GET /opds/` は同じルート。
+OPDS の入り口。`GET /opds` と `GET /opds/` は同じナビゲーションで、中身があるときだけ `clip` と `ebook` に入る。その下は Asia/Tokyo の暦日（`/opds/clip/YYYY-MM-DD`、`/opds/ebook/YYYY-MM-DD`）の取得フィードで、その日の本だけ、新しいものが上。本が無い日と空の棚は出さない。まとめは最新 1 冊だけルートの取得エントリで、日付棚には入らない。取得 URL は `/opds/download/:id.epub` のまま。
 
 CrossPoint 登録の注意: 本番は https、カタログ URL は `/opds`（origin だけや `/opds/` は端末に入れない）、HTTP Basic のみ（`CLIP_TOKEN` は使わない）、空パスワード不可。
 
@@ -182,7 +192,7 @@ OPDS は CrossPoint JP が **HTTP Basic** のみサポートするため、`Auth
 
 ## 6. データ
 
-個人利用なので D1 は置かない。R2 だけにする。
+着手時は D1 を置かず R2 だけにする。現行は候補・情報源・まとめ履歴に D1 を使う。完成 EPUB と job は R2 のまま。
 
 ```
 articles/{id}/meta.json
@@ -239,7 +249,7 @@ URL
 
 JS レンダリング必須のサイトは対象外。失敗は `422`。
 
-同期実行を MVP の既定にする。OpenAI 待ちは CPU に入らない。抽出と ZIP が重い場合のみ `limits.cpu_ms` を上げる。Workflows / Queues は同期が実測で破綻してから。
+着手時の既定は同期実行。OpenAI 待ちは CPU に入らない。抽出と ZIP が重い場合のみ `limits.cpu_ms` を上げる。Workflows / Queues は同期が実測で破綻してから、としていた。現行の clip は Queue（202）で、Workflows は使わない。
 
 ## 8. 設定と秘密
 
@@ -360,19 +370,21 @@ token 比較は timing-safe。ログに token・記事全文を出さない。�
 | 同一 URL 再送 | canonical 単位で上書き |
 | 画像 | 埋め込まない |
 | 言語判定 | `html[lang]` + 仮名漢字比率。曖昧なら翻訳する |
-| OpenAI モデル | `gpt-5.6-luna`（MAR-71。プロンプトと JSON 契約は据え置き。`temperature` は送らない）
-| 実行モデル | 同期 HTTP。破綻したら Workflows |
-| DB | なし。R2 のみ |
+| OpenAI モデル | `gpt-5.6-luna`（MAR-71。プロンプトと JSON 契約は据え置き。`temperature` は送らない） |
+| 実行モデル | 着手時は同期 HTTP。現行は clip / feed / digest の Queue。Workflows は使わない |
+| DB | 着手時は R2 のみ。現行は R2 に加え、候補・情報源・まとめ履歴の D1 |
 | OPDS 認証 | HTTP Basic（CrossPoint JP 互換） |
 | clip 認証 | Bearer `CLIP_TOKEN` |
 | カスタムドメイン | 最初は `*.workers.dev`。実機 HTTPS で問題が出たら付ける |
 | 代表記事 3 本 | 実装時に日本語技術ブログ / 英語技術ブログ / 英語ニュースを固定 fixture にする |
 
-## 13. 残っている検討
+## 13. 計画のあとに入ったもの
 
-MVP（抽出〜OPDS〜Android 共有〜購入 EPUB）は `main` に載っている。計画を覆す検討は別 Issue:
+MVP（抽出〜OPDS〜Android 共有〜購入 EPUB）のあとに入ったもの。契約の正本は README。
 
-- MAR-44 / MAR-71: 翻訳モデル（読書向け整形は残し、OpenAI を `gpt-5.6-luna` に差し替える。詳細は `docs/plan/mar-44-translate-models.md`）
-- MAR-45: clip の非同期化
-
-MAR-45 は実装しない限り、Queue + OpenAI Markdown 往復が現行契約。
+- MAR-44 / MAR-71: 翻訳は `gpt-5.6-luna`。メモは `mar-44-translate-models.md`
+- MAR-45: clip は Queue。`POST /clip` は 202。Workflows には移さない（`mar-56-pipeline-workflows.md`）
+- MAR-57: 記事分類。`docs/classification.md`
+- MAR-73: 読書候補。MAR-74: RSS/Atom。MAR-75: 候補から clip へのポインタ。MAR-76: おすすめ度（`docs/de-recommend.md`）
+- MAR-77: まとめ EPUB の日付別 identity（`docs/daily-opds.md`）。朝のまとめは `DIGEST_QUEUE` と 06:00 Asia/Tokyo の Cron
+- MAR-84: OPDS を `clip` / `ebook` と Asia/Tokyo の暦日に分ける

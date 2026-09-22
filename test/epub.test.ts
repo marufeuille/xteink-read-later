@@ -213,10 +213,13 @@ describe('buildEpub', () => {
 
     const files = unzipSync(await buildEpub(article))
     const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    const opf = strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())
     expect(chapter.includes('\u0000')).toBe(false)
     expect(chapter).not.toMatch(/<img\b/i)
     expect(chapter).toContain('SVG chart caption')
     expect(chapter).toContain('Dummy body.')
+    expect(opf).not.toContain('image/png')
+    expect(Object.keys(files).filter((name) => name.endsWith('.png'))).toEqual([])
   })
 
   it('strips page CLI warn tokens from chapter XHTML and keeps dct render', async () => {

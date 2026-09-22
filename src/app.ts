@@ -1,16 +1,24 @@
 import { Hono, type Context } from 'hono'
-import { unavailableClassification } from './classify/taxonomy'
 import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
+import { mountBookRoutes } from './http/book-routes'
 import { mountCandidateRoutes, type CandidateHttpDeps } from './http/candidate-routes'
+import { mountClipWebRoutes } from './http/clip-web-routes'
+import { mountDigestConfirmRoutes } from './http/digest-confirm-routes'
+import { mountDigestRoutes, type DigestHttpDeps } from './http/digest-routes'
 import { mountSourceRoutes, type SourceHttpDeps } from './http/source-routes'
 import { toClipJobBody, toClipQueuedBody } from './http/clip-job'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { parseClipShareText } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
-import { parsePurchasedBookForm } from './http/purchased-book'
 import { enqueueClipJob } from './job/enqueue'
 import { logOpdsDownload } from './log'
-import { buildOpdsCatalog, OPDS_CACHE_CONTROL, OPDS_CATALOG_TYPE, parseOpdsDownloadFile } from './opds/catalog'
+import {
+  buildOpdsCatalog,
+  OPDS_CACHE_CONTROL,
+  opdsCatalogContentType,
+  parseOpdsCatalogPath,
+  parseOpdsDownloadFile,
+} from './opds/catalog'
 import { createR2Store } from './store/r2'
 import type {
   AppEnv,
@@ -20,16 +28,13 @@ import type {
   CreateArticleStore,
   EpubBytes,
   FeedQueueMessage,
-  PurchasedBookBody,
+  DigestQueueMessage,
 } from './types'
 import {
   articleEpubKey,
-  articleIdFromBytes,
-  asEpubBytes,
   isArticleId,
   isClipJobId,
   parseHttpUrl,
-  purchasedCanonicalUrl,
 } from './types'
 
 function epubFileResponse(id: ArticleId, epub: EpubBytes): Response {
@@ -48,8 +53,10 @@ export type AppDeps = {
   readonly createStore?: CreateArticleStore
   readonly queue?: Queue<ClipQueueMessage>
   readonly feedQueue?: Queue<FeedQueueMessage>
+  readonly digestQueue?: Queue<DigestQueueMessage>
 } & CandidateHttpDeps &
-  SourceHttpDeps
+  SourceHttpDeps &
+  DigestHttpDeps
 
 function storeFor(env: Cloudflare.Env, deps: AppDeps): ArticleStore {
   if (deps.store !== undefined) {
@@ -102,6 +109,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   }
 
   app.on('POST', ['/clip', '/clip/'], clip)
+  mountClipWebRoutes(app, deps)
 
   const getClipJob = async (c: Context<AppEnv>) => {
     if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
@@ -119,53 +127,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   }
 
   app.on('GET', ['/clip/jobs/:jobId', '/clip/jobs/:jobId/'], getClipJob)
-
-  const uploadBook = async (c: Context<AppEnv>) => {
-    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
-      return unauthorizedResponse('bearer')
-    }
-    let form: FormData
-    try {
-      form = await c.req.formData()
-    } catch {
-      return toErrorResponse({ kind: 'invalid_epub', reason: 'Request body must be multipart form data' })
-    }
-    const parsed = await parsePurchasedBookForm(form)
-    if (!parsed.ok) {
-      return toErrorResponse(parsed.error)
-    }
-
-    const id = await articleIdFromBytes(parsed.value.epub)
-    const canonicalUrl = purchasedCanonicalUrl(id)
-    await storeFor(c.env, deps).put({
-      id,
-      title: parsed.value.title,
-      author: parsed.value.author,
-      publishedAt: parsed.value.publishedAt,
-      sourceUrl: canonicalUrl,
-      canonicalUrl,
-      language: 'ja',
-      translated: false,
-      classification: unavailableClassification('skipped'),
-      epub: asEpubBytes(parsed.value.epub),
-    })
-
-    const response: PurchasedBookBody = {
-      id,
-      title: parsed.value.title,
-      author: parsed.value.author,
-      publishedAt: parsed.value.publishedAt,
-      sourceUrl: canonicalUrl,
-      canonicalUrl,
-      language: 'ja',
-      translated: false,
-      status: 'ready',
-      epubPath: `/${articleEpubKey(id)}`,
-    }
-    return c.json(response, 200)
-  }
-
-  app.on('POST', ['/books', '/books/'], uploadBook)
+  mountBookRoutes(app, deps)
 
   const requireOpdsBasic = async (c: Context<AppEnv>) => {
     if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
@@ -213,22 +175,45 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     if (denied !== null) {
       return denied
     }
-    const origin = parseHttpUrl(new URL(c.req.url).origin)
+    const requestUrl = new URL(c.req.url)
+    const location = parseOpdsCatalogPath(requestUrl.pathname)
+    if (location === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    const origin = parseHttpUrl(requestUrl.origin)
     if (origin === null) {
-      return toErrorResponse({ kind: 'invalid_url', url: new URL(c.req.url).origin })
+      return toErrorResponse({ kind: 'invalid_url', url: requestUrl.origin })
     }
     const articles = await storeFor(c.env, deps).listMeta()
-    const catalog = buildOpdsCatalog(articles, origin)
+    const catalog = buildOpdsCatalog(articles, origin, location)
+    if (catalog === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
     return new Response(catalog.xml, {
       status: 200,
       headers: {
-        'content-type': `${OPDS_CATALOG_TYPE};charset=utf-8`,
+        'content-type': opdsCatalogContentType(catalog.feedKind),
         'cache-control': OPDS_CACHE_CONTROL,
       },
     })
   }
 
-  app.on('GET', ['/opds', '/opds/'], opdsCatalog)
+  app.on(
+    'GET',
+    [
+      '/opds',
+      '/opds/',
+      '/opds/clip',
+      '/opds/clip/',
+      '/opds/ebook',
+      '/opds/ebook/',
+      '/opds/clip/:date',
+      '/opds/clip/:date/',
+      '/opds/ebook/:date',
+      '/opds/ebook/:date/',
+    ],
+    opdsCatalog,
+  )
 
   app.get('/opds/download/:file', async (c) => {
     const denied = await requireOpdsBasic(c)
@@ -265,6 +250,8 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
 
   mountCandidateRoutes(app, deps)
   mountSourceRoutes(app, deps)
+  mountDigestRoutes(app, deps)
+  mountDigestConfirmRoutes(app, deps)
 
   return app
 }

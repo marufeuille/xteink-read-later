@@ -63,6 +63,8 @@ describe('POST /books', () => {
       BINDINGS,
     )
     expect(response.status).toBe(401)
+    expect(response.headers.get('www-authenticate')).toBe('Bearer')
+    expect(response.headers.get('content-type')).toContain('application/json')
     expect(await response.text()).not.toContain(TEST_CLIP_TOKEN)
   })
 
@@ -98,8 +100,21 @@ describe('POST /books', () => {
       )
       expect(catalog.status).toBe(200)
       const xml = await catalog.text()
-      expect(xml).toContain('Dummy purchased title')
-      expect(xml).toContain(`opds/download/${body.id}.epub`)
+      expect(xml).toContain('https://read.example.com/opds/ebook')
+      expect(xml).not.toContain('Dummy purchased title')
+      const shelf = await app.request(
+        'https://read.example.com/opds/ebook',
+        { headers: { authorization: basicAuthorization() } },
+        BINDINGS,
+      )
+      const dateHref = /href="(https:\/\/read\.example\.com\/opds\/ebook\/\d{4}-\d{2}-\d{2})"/.exec(
+        await shelf.text(),
+      )?.[1]
+      expect(dateHref).toBeDefined()
+      const day = await app.request(dateHref ?? '', { headers: { authorization: basicAuthorization() } }, BINDINGS)
+      const dayXml = await day.text()
+      expect(dayXml).toContain('Dummy purchased title')
+      expect(dayXml).toContain(`opds/download/${body.id}.epub`)
 
       const metaRes = await app.request(
         `https://read.example.com/articles/${body.id}`,
@@ -155,6 +170,24 @@ describe('POST /books', () => {
     })
     expect(notZip.status).toBe(400)
     expect(((await notZip.json()) as { error: { code: string } }).error.code).toBe('invalid_epub')
+  })
+
+  it('keeps a missing author empty even when the package has dc:creator', async () => {
+    const { app } = appWithStore()
+    const bytes = zipSync({
+      mimetype: [strToU8('application/epub+zip'), { level: 0 }],
+      'META-INF/container.xml': strToU8(
+        '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
+      ),
+      'OEBPS/content.opf': strToU8(
+        '<package xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata><dc:title>From the package</dc:title><dc:creator>Package author</dc:creator></metadata></package>',
+      ),
+    })
+    const response = await upload(app, { title: 'API title', epub: new Blob([bytes]) })
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { title: string; author: string | null }
+    expect(body.title).toBe('API title')
+    expect(body.author).toBeNull()
   })
 
   it('returns 413 when the EPUB exceeds the size cap', async () => {

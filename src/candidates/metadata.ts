@@ -1,4 +1,5 @@
 import { parse, type HTMLElement } from 'node-html-parser'
+import { firstUsableHeading, pickArticleTitle } from '../extract/article-title'
 import { PARSE_HTML_OPTIONS } from '../extract/constants'
 import { parseHttpUrl, type FetchedPage, type HttpUrl } from '../types'
 
@@ -169,12 +170,13 @@ export function extractCandidateMetadata(page: FetchedPage): CandidatePageMetada
     root.querySelector('time[datetime]')?.getAttribute('datetime'),
   )
   const title =
-    firstNonEmpty(
-      metaValue(root, ['og:title', 'twitter:title']),
-      typeof jsonLdArticle?.headline === 'string' ? jsonLdArticle.headline : null,
-      root.querySelector('title')?.text,
-      root.querySelector('h1')?.text,
-    ) ?? new URL(canonicalUrl).hostname
+    pickArticleTitle({
+      socialTitle: metaValue(root, ['og:title', 'twitter:title']),
+      jsonLdHeadline: typeof jsonLdArticle?.headline === 'string' ? jsonLdArticle.headline : null,
+      documentTitle: root.querySelector('title')?.text ?? null,
+      heading: firstUsableHeading([...root.querySelectorAll('h1')].map((el) => el.text)),
+      ogDescription: metaValue(root, ['og:description']),
+    }) ?? new URL(canonicalUrl).hostname
   const contentTier = (metaValue(root, ['article:content_tier']) ?? '').toLowerCase()
   const paywalled =
     jsonLd.some((node) => jsonLdAccessibleForFreeFalse(node)) ||
