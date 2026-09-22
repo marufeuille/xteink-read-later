@@ -262,6 +262,34 @@ describe('clip-status CLI', () => {
     })
   })
 
+  it('shows stages saved on the job without a live tail', () => {
+    const text = formatClipStatus({
+      jobId: JOB_ID,
+      job: {
+        kind: 'job',
+        body: {
+          jobId: JOB_ID,
+          status: 'ready',
+          sourceUrl: 'https://example.com/article',
+          id: 'art_cccccccccccccccccccccccccccccccc',
+          epubPath: '/articles/art_cccccccccccccccccccccccccccccccc/book.epub',
+          stages: [
+            { stage: 'fetch', durationMs: 11, attempt: 1 },
+            { stage: 'epub', durationMs: 8, attempt: 2, errorKind: 'epub_failed' },
+            { stage: 'epub', durationMs: 9, attempt: 2 },
+          ],
+        },
+      },
+      events: [],
+    })
+    expect(text).toContain('状態     完了')
+    expect(text).toContain('fetch     完了')
+    expect(text).toMatch(/epub\s+完了/)
+    expect(text).toContain('extract   不明')
+    expect(text).toContain('job に保存した工程を表示しています')
+    expect(text).not.toContain('https://example.com/secret')
+  })
+
   it('prints GET-only status without live stages', async () => {
     const stdout: string[] = []
     const stderr: string[] = []

@@ -57,6 +57,7 @@ type ClipJson = {
   attempt?: number
   epubPath?: string
   timingsMs?: { fetch: number; extract: number; translate: number; epub: number }
+  stages?: { stage: string; durationMs: number; attempt: number; errorKind?: string }[]
   error?: { code: string; message: string; extracted?: { contentHtml?: string; language?: string } }
 }
 
@@ -183,6 +184,18 @@ describe('POST /clip', () => {
     expect(ready.status).toBe('ready')
     expect(ready.id).toMatch(/^art_[a-f0-9]{32}$/)
     expect(ready.epubPath).toBe(`/articles/${ready.id}/book.epub`)
+    expect(ready.stages?.map((stage) => stage.stage)).toEqual([
+      'queue',
+      'fetch',
+      'extract',
+      'translate',
+      'epub',
+      'store',
+      'classify',
+      'queue',
+    ])
+    expect(JSON.stringify(ready.stages)).not.toContain('example.com')
+    expect(JSON.stringify(ready.stages)).not.toContain('<p>')
 
     const metaRes = await opdsGet(app, `/articles/${ready.id}`, env)
     expect(metaRes.status).toBe(200)
@@ -450,6 +463,18 @@ describe('POST /clip', () => {
     expect(job.status).toBe('failed')
     expect(job.error?.code).toBe('fetch_failed')
     expect(job.error?.extracted).toBeUndefined()
+    const fetches = (job.stages ?? []).filter(
+      (stage) => stage.stage === 'fetch' && stage.errorKind === 'fetch_failed',
+    )
+    expect(fetches).toHaveLength(4)
+    expect(fetches.map((stage) => stage.attempt)).toEqual([1, 2, 3, 4])
+    expect(JSON.stringify(job.stages)).not.toContain('example.com')
+
+    const again = await clip(ctx.app, 'https://example.com/missing', ctx.env)
+    const againBody = await readJson(again)
+    const reset = await readJson(await getJob(ctx.app, againBody.jobId ?? '', ctx.env))
+    expect(reset.stages?.map((stage) => stage.stage)).toEqual(['queue'])
+    expect(reset.stages?.[0]?.errorKind).toBeUndefined()
   })
 
   it('records extract_failed on the job without extracted HTML', async () => {

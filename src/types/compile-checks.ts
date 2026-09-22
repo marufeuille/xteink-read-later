@@ -44,7 +44,7 @@ import {
   type ClipJobId,
   type ClipJobKey,
 } from './id'
-import type { ClipQueueMessage } from './job'
+import type { ClipQueueMessage, ClipStageRecord } from './job'
 import type {
   CandidateClipLog,
   CandidateRecommendLog,
@@ -230,6 +230,8 @@ type _failedJobHasNoExtracted = Assert<
 type _queueMessageKeys = Assert<Equals<keyof ClipQueueMessage, 'jobId' | 'runId' | 'url'>>
 
 type _pipelineLogHasNoUrl = Assert<'url' extends keyof PipelineLog ? false : true>
+
+type _stageRecordHasNoUrl = Assert<'url' extends keyof ClipStageRecord ? false : true>
 
 type _pipelineLogHasNoExtracted = Assert<'extracted' extends keyof PipelineLog ? false : true>
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { logPipeline } from '../src/log'
-import { asArticleId } from '../src/types'
+import { asArticleId, asClipJobId, type ClipStageRecord } from '../src/types'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -32,5 +32,18 @@ describe('logPipeline', () => {
     })
     expect(line).not.toContain('<p>')
     expect(line).not.toContain('chapter')
+  })
+
+  it('keeps a stage record on the job context and off the console line', () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const stages: ClipStageRecord[] = []
+    logPipeline(
+      { stage: 'fetch', durationMs: 3, errorKind: 'fetch_failed' },
+      { jobId: asClipJobId('job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'), attempt: 2, stages },
+    )
+    expect(stages).toEqual([{ stage: 'fetch', durationMs: 3, attempt: 2, errorKind: 'fetch_failed' }])
+    const line = String(spy.mock.calls[0]?.[0])
+    expect(line).not.toContain('"stages"')
+    expect(line).not.toContain('https://')
   })
 })

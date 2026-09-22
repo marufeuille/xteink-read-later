@@ -35,6 +35,7 @@ const base = {
   runId: runA,
   sourceUrl: url(),
   attempt: 0,
+  stages: [],
   createdAt: '2026-09-20T00:00:00.000Z',
   updatedAt: '2026-09-20T00:00:00.000Z',
 }
@@ -107,5 +108,21 @@ describe('clip job state', () => {
     expect(parseClipJobRecord(valid)).toEqual(valid)
     expect(parseClipJobRecord({ ...valid, runId: 'run_not_valid' })).toBeNull()
     expect(parseClipJobRecord({ ...valid, runId: undefined })).toBeNull()
+  })
+
+  it('reads jobs saved before stages existed as an empty stage list', () => {
+    const { stages, ...legacy } = queued()
+    expect(stages).toEqual([])
+    expect(parseClipJobRecord(legacy)).toEqual(queued())
+    expect(
+      parseClipJobRecord({
+        ...queued(),
+        stages: [
+          { stage: 'fetch', durationMs: 12, attempt: 1, errorKind: 'fetch_failed' },
+          { stage: 'nope', durationMs: 1, attempt: 1 },
+          { stage: 'extract', durationMs: -1, attempt: 1 },
+        ],
+      })?.stages,
+    ).toEqual([{ stage: 'fetch', durationMs: 12, attempt: 1, errorKind: 'fetch_failed' }])
   })
 })

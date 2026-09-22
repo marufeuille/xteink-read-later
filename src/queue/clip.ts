@@ -18,6 +18,7 @@ import type {
   ClipPipeline,
   ClipQueueMessage,
   ClipRunId,
+  ClipStageRecord,
   CreateArticleStore,
   EpubBytes,
   PipelineError,
@@ -148,6 +149,17 @@ export function shouldRetryClipError(
   }
 }
 
+function copyStages(stages: readonly ClipStageRecord[]): ClipStageRecord[] {
+  return stages.map((stage) => ({ ...stage }))
+}
+
+function stagesForRun(existing: ClipJobRecord | null, runId: ClipRunId): ClipStageRecord[] {
+  if (existing !== null && existing.runId === runId) {
+    return copyStages(existing.stages)
+  }
+  return []
+}
+
 function jobFields(
   message: ClipQueueMessage,
   existing: ClipJobRecord | null,
@@ -254,21 +266,33 @@ async function processMessage(
     return
   }
 
+  const stages: ClipStageRecord[] = []
   try {
-    await runClipQueueMessage(message, parsed, env, deps)
+    await runClipQueueMessage(message, parsed, env, deps, stages)
   } catch {
     const store = storeFor(env, deps)
     const existing = await store.getJob(parsed.jobId)
-    logPipeline(
-      { stage: 'queue', durationMs: 0, errorKind: 'internal_error' },
-      { jobId: parsed.jobId, runId: parsed.runId, attempt: message.attempts },
-    )
+    if (stages.length === 0) {
+      stages.push(...stagesForRun(existing, parsed.runId))
+    }
+    const log = { jobId: parsed.jobId, runId: parsed.runId, attempt: message.attempts, stages }
+    logPipeline({ stage: 'queue', durationMs: 0, errorKind: 'internal_error' }, log)
+    const fields = jobFields(parsed, existing, message.attempts)
     if (shouldRetryClipAttempt(message.attempts)) {
+      await putJobIfCurrentRun(store, {
+        ...fields,
+        stages: copyStages(stages),
+        status: 'running',
+        articleId: null,
+        error: null,
+        updatedAt: nowIso(),
+      })
       message.retry()
       return
     }
     await putJobIfCurrentRun(store, {
-      ...jobFields(parsed, existing, message.attempts),
+      ...fields,
+      stages: copyStages(stages),
       status: 'failed',
       articleId: null,
       error: {
@@ -286,6 +310,7 @@ async function runClipQueueMessage(
   parsed: ClipQueueMessage,
   env: Cloudflare.Env,
   deps: ClipQueueHandlerDeps,
+  stages: ClipStageRecord[],
 ): Promise<void> {
   const { jobId, runId, url } = parsed
   const store = storeFor(env, deps)
@@ -298,11 +323,13 @@ async function runClipQueueMessage(
   }
 
   const fields = jobFields(parsed, existing, message.attempts)
-  const log = { jobId, runId, attempt: message.attempts }
+  stages.push(...stagesForRun(existing, runId))
+  const log: PipelineLogContext = { jobId, runId, attempt: message.attempts, stages }
   const started = Date.now()
   if (
     !(await putCurrentRunOrAck(store, message, {
       ...fields,
+      stages: copyStages(stages),
       status: 'running',
       articleId: null,
       error: null,
@@ -329,25 +356,19 @@ async function runClipQueueMessage(
     if (classification.status !== 'skipped') {
       await store.putClassification(id, classification)
     }
-    if (
-      !(await putCurrentRunOrAck(store, message, {
-        ...fields,
-        status: 'ready',
-        articleId: id,
-        error: null,
-        updatedAt: nowIso(),
-      }))
-    ) {
-      return
-    }
-    await attachCompletedCandidate(env, deps, {
+    logPipeline({ articleId: id, stage: 'queue', durationMs: Date.now() - started }, log)
+    const readyJob = {
       ...fields,
-      status: 'ready',
+      stages: copyStages(stages),
+      status: 'ready' as const,
       articleId: id,
       error: null,
       updatedAt: nowIso(),
-    })
-    logPipeline({ articleId: id, stage: 'queue', durationMs: Date.now() - started }, log)
+    }
+    if (!(await putCurrentRunOrAck(store, message, readyJob))) {
+      return
+    }
+    await attachCompletedCandidate(env, deps, readyJob)
     message.ack()
     return
   }
@@ -359,12 +380,22 @@ async function runClipQueueMessage(
     )
   if (shouldRetryClipError(result.error, message.attempts)) {
     logQueueError()
+    await putJobIfCurrentRun(store, {
+      ...fields,
+      stages: copyStages(stages),
+      status: 'running',
+      articleId: null,
+      error: null,
+      updatedAt: nowIso(),
+    })
     message.retry()
     return
   }
 
+  logQueueError()
   await putJobIfCurrentRun(store, {
     ...fields,
+    stages: copyStages(stages),
     status: 'failed',
     articleId: null,
     error: {
@@ -373,7 +404,6 @@ async function runClipQueueMessage(
     },
     updatedAt: nowIso(),
   })
-  logQueueError()
   message.ack()
 }
 

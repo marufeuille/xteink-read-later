@@ -260,20 +260,20 @@ npx wrangler d1 migrations apply xteink-read-later-candidates --local
 - `queued` / `running` のまま 15 分以上 `updatedAt` が動かない（実行中断や Queue 再試行の打ち切り）ときは、同じ URL の再 POST で新しい実行になる
 - 15 分以内の `queued` / `running` は 202 のまま再投入しない
 - `GET /clip/jobs/:jobId` で `status` と `error.code` を見る
-- 工程ごとの所要時間は下記の `clip:status`（ライブログ）で見る
+- 工程ごとの所要時間は job に残る。下記の `clip:status` で、tail を繋いでいなくても見られる
 
 DLQ は使わない。失敗は job レコードに残る。
 
 ### ジョブの進捗・失敗を見る
 
-専用の管理画面や履歴 DB、Workflows は使わない。構造化ログを整形し、最終状態だけ既存の job API で補う。
+専用の管理画面や履歴 DB、Workflows は使わない。各工程は job レコード（`stages`）に残し、`clip:status` と `GET /clip/jobs/:jobId` で後から見る。コンソールログはこれまでどおり。
 
 ```bash
-# 最終状態（工程内訳はライブ未接続なので不明）
+# 保存済みの工程と最終状態
 CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run clip:status -- job_…
 CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run clip:status -- 'https://example.com/article'
 
-# 1コマンド: job API + 本番ライブログ
+# job の工程に、接続後のライブログを足す
 CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run clip:status -- --tail job_…
 
 # パイプでも可
@@ -281,10 +281,10 @@ npx wrangler tail --format json | CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run
 ```
 
 - **認証:** `CLIP_TOKEN` は `GET /clip/jobs/:jobId` の Bearer。CLI 引数・URL クエリ・ログには載せない。`--tail` はそれに加えて `npx wrangler login`（Workers のライブログ）
-- **ライブログ:** `wrangler tail` の接続後に出た `event: pipeline` だけ見える。接続前の工程は **不明**（未実行や停止ではない）
-- **履歴:** 過去ログの検索・保存はしない。完了済み job に `--tail` しても工程は不明のまま
-- **状態:** job は `queued` / `running` / `ready` / `failed`。再試行待ちは `running` かつ直近ログに `errorKind` があるときだけ区別する。ログが無い `running` は **処理中（工程不明）**
-- ログに載せるのは stage / durationMs / errorKind / jobId / runId / attempt / articleId と、候補の選択（candidateId / selectedAt / discoveredAt / publishedAt）および OPDS 取得要求（articleId）。token と記事全文と URL は出さない
+- **保存:** 工程は `stage` / `durationMs` / `attempt` / `errorKind` だけ。URL、本文、token は job に残さない。同じ run の再試行は追記する。新しい run は工程を空にして始める。`stages` の無い古い job は空として読む
+- **ライブログ:** `wrangler tail` は接続後の追加分だけ。保存が無い工程は **不明**（未実行や停止ではない）
+- **状態:** job は `queued` / `running` / `ready` / `failed`。再試行待ちは `running` かつ直近の工程に `errorKind` があるとき。工程が無い `running` は **処理中（工程不明）**
+- コンソールログに載せるのは stage / durationMs / errorKind / jobId / runId / attempt / articleId と、候補の選択（candidateId / selectedAt / discoveredAt / publishedAt）および OPDS 取得要求（articleId）。token と記事全文と URL は出さない
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \

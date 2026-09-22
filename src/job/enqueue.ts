@@ -7,6 +7,7 @@ import type {
   ClipJobRecord,
   ClipQueueMessage,
   ClipQueuedJob,
+  ClipStageRecord,
   HttpUrl,
   QueueFailedError,
 } from '../types'
@@ -39,6 +40,7 @@ export async function enqueueClipJob(input: {
     }
   }
 
+  const stages: ClipStageRecord[] = []
   const queued: ClipQueuedJob = {
     jobId,
     runId: newClipRunId(),
@@ -47,12 +49,13 @@ export async function enqueueClipJob(input: {
     articleId: null,
     error: null,
     attempt: 0,
+    stages: [],
     createdAt: existing?.createdAt ?? nowIso(input.nowMs),
     updatedAt: nowIso(input.nowMs),
   }
   await input.store.putJob(queued)
   const started = Date.now()
-  const queueLog = { jobId, runId: queued.runId, attempt: 0 }
+  const queueLog = { jobId, runId: queued.runId, attempt: 0, stages }
   try {
     await input.queue.send({ jobId, runId: queued.runId, url: input.url })
   } catch (cause) {
@@ -60,16 +63,19 @@ export async function enqueueClipJob(input: {
       kind: 'queue_failed',
       reason: cause instanceof Error ? cause.message : 'queue send failed',
     }
+    logPipeline({ stage: 'queue', durationMs: Date.now() - started, errorKind: error.kind }, queueLog)
     const failed: ClipFailedJob = {
       ...queued,
       status: 'failed',
+      stages: [...stages],
       error: { code: error.kind, message: errorMessage(error) },
       updatedAt: nowIso(Date.now()),
     }
     await input.store.putJob(failed)
-    logPipeline({ stage: 'queue', durationMs: Date.now() - started, errorKind: error.kind }, queueLog)
     return { ok: false, kind: 'queue_failed', job: failed, error }
   }
   logPipeline({ stage: 'queue', durationMs: Date.now() - started }, queueLog)
-  return { ok: true, kind: 'queued', job: queued }
+  const recorded: ClipQueuedJob = { ...queued, stages: [...stages] }
+  await input.store.putJob(recorded)
+  return { ok: true, kind: 'queued', job: recorded }
 }

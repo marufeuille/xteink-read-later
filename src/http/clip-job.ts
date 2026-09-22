@@ -1,5 +1,14 @@
-import type { ClipJobBody, ClipJobRecord, ClipQueuedBody } from '../types'
+import type { ClipJobBody, ClipJobRecord, ClipJobStageBody, ClipQueuedBody } from '../types'
 import { articleEpubKey } from '../types'
+
+function stageBodies(job: ClipJobRecord): readonly ClipJobStageBody[] {
+  return job.stages.map((stage) => ({
+    stage: stage.stage,
+    durationMs: stage.durationMs,
+    attempt: stage.attempt,
+    ...(stage.errorKind === undefined ? {} : { errorKind: stage.errorKind }),
+  }))
+}
 
 export function toClipQueuedBody(job: ClipJobRecord): ClipQueuedBody {
   return {
@@ -10,6 +19,7 @@ export function toClipQueuedBody(job: ClipJobRecord): ClipQueuedBody {
 }
 
 export function toClipJobBody(job: ClipJobRecord): ClipJobBody {
+  const stages = stageBodies(job)
   if (job.status === 'ready') {
     return {
       jobId: job.jobId,
@@ -17,6 +27,7 @@ export function toClipJobBody(job: ClipJobRecord): ClipJobBody {
       sourceUrl: job.sourceUrl,
       id: job.articleId,
       epubPath: `/${articleEpubKey(job.articleId)}`,
+      stages,
     }
   }
   if (job.status === 'failed') {
@@ -28,6 +39,7 @@ export function toClipJobBody(job: ClipJobRecord): ClipJobBody {
         code: job.error.code,
         message: job.error.message,
       },
+      stages,
     }
   }
   return {
@@ -35,5 +47,6 @@ export function toClipJobBody(job: ClipJobRecord): ClipJobBody {
     status: job.status,
     sourceUrl: job.sourceUrl,
     attempt: job.attempt,
+    stages,
   }
 }

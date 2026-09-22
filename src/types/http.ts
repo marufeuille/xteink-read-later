@@ -47,11 +47,19 @@ export type ClipQueuedBody = {
   readonly sourceUrl: HttpUrl
 }
 
+export type ClipJobStageBody = {
+  readonly stage: PipelineStage
+  readonly durationMs: number
+  readonly attempt: number
+  readonly errorKind?: string
+}
+
 export type ClipJobQueuedOrRunningBody = {
   readonly jobId: ClipJobId
   readonly status: 'queued' | 'running'
   readonly sourceUrl: HttpUrl
   readonly attempt: number
+  readonly stages: readonly ClipJobStageBody[]
 }
 
 export type ClipJobReadyBody = {
@@ -60,6 +68,7 @@ export type ClipJobReadyBody = {
   readonly sourceUrl: HttpUrl
   readonly id: ArticleId
   readonly epubPath: `/${ArticleEpubKey}`
+  readonly stages: readonly ClipJobStageBody[]
 }
 
 export type ClipJobFailedBody = {
@@ -70,6 +79,7 @@ export type ClipJobFailedBody = {
     readonly code: ErrorKind
     readonly message: string
   }
+  readonly stages: readonly ClipJobStageBody[]
 }
 
 export type ClipJobBody = ClipJobQueuedOrRunningBody | ClipJobReadyBody | ClipJobFailedBody
