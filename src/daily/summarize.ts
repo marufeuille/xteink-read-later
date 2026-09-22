@@ -41,8 +41,15 @@ export type DigestArticleSkip = {
 
 export type SummarizeDigestArticle = (
   candidate: CandidateArticle,
-  deps: TranslateDeps & { readonly fetchPage: FetchPage },
+  deps: TranslateDeps & { readonly fetchPage: FetchPage; readonly maxChars?: number },
 ) => Promise<Result<DigestPreparedItem, DigestArticleSkip>>
+
+function summaryCharLimit(maxChars: number | undefined): number {
+  if (maxChars === undefined || !Number.isInteger(maxChars) || maxChars < 1) {
+    return DIGEST_SUMMARY_MAX_CHARS
+  }
+  return Math.min(DIGEST_SUMMARY_MAX_CHARS, maxChars)
+}
 
 function openaiApiKey(deps: TranslateDeps): string | null {
   const key = deps.OPENAI_API_KEY
@@ -155,6 +162,7 @@ async function requestSummaryMarkdown(
   candidate: CandidateArticle,
   source: string,
   deps: TranslateDeps,
+  maxChars: number,
 ): Promise<string | null> {
   const apiKey = openaiApiKey(deps)
   if (apiKey === null) {
@@ -183,7 +191,7 @@ async function requestSummaryMarkdown(
               content: JSON.stringify({
                 mode: 'digest-summary',
                 title: candidate.title,
-                maxChars: DIGEST_SUMMARY_MAX_CHARS,
+                maxChars,
                 content: source.slice(0, DIGEST_SUMMARY_MAX_INPUT_CHARS),
               }),
             },
@@ -210,11 +218,12 @@ export const summarizeDigestArticle: SummarizeDigestArticle = async (candidate, 
   if (!source.ok) {
     return skip(source.error)
   }
-  const markdown = await requestSummaryMarkdown(candidate, source.value, deps)
+  const maxChars = summaryCharLimit(deps.maxChars)
+  const markdown = await requestSummaryMarkdown(candidate, source.value, deps, maxChars)
   if (markdown === null) {
     return skip('summarize_failed')
   }
-  const summaryHtml = markdownToHtml(markdown.slice(0, DIGEST_SUMMARY_MAX_CHARS * 2), candidate.canonicalUrl)
+  const summaryHtml = markdownToHtml(markdown.slice(0, maxChars * 2), candidate.canonicalUrl)
   if (summaryHtml.length === 0) {
     return skip('summarize_failed')
   }

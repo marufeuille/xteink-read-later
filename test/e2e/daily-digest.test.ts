@@ -130,7 +130,12 @@ describe('daily digest fixture e2e', () => {
         [todayUrl]: { html: articleHtml(todayUrl, 'パイプラインの深い話') },
         [secondUrl]: { html: articleHtml(secondUrl, '関連する実装メモ') },
       },
-      openai: async () => openaiMessageResponse('unused', '日本語の要約です。設計と運用の要点だけを残します。'),
+      openai: async (request) => {
+        const body = (await request.json()) as { messages?: { content?: string }[] }
+        const user = JSON.parse(body.messages?.[1]?.content ?? '{}') as { maxChars?: number }
+        expect(user.maxChars).toBe(400)
+        return openaiMessageResponse('unused', '日本語の要約です。設計と運用の要点だけを残します。')
+      },
     })
     const store = createMemoryStore()
     const candidateStore = createMemoryCandidateStore()
