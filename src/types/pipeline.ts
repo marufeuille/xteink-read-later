@@ -67,8 +67,19 @@ export type ExtractPipeline = (
   log?: PipelineLogContext,
 ) => Promise<Result<ExtractResult, ExtractError>>
 
+export type ClipResume = {
+  readonly id: ArticleId
+  readonly article: TranslatedArticle
+}
+
+export type ClipPipelineHooks = {
+  readonly resume?: ClipResume
+  readonly onTranslated?: (resume: ClipResume) => Promise<void>
+}
+
 export type ClipPipeline = (
   url: HttpUrl,
   deps: TranslateDeps,
   log?: PipelineLogContext,
+  hooks?: ClipPipelineHooks,
 ) => Promise<Result<ClipResult, PipelineError>>

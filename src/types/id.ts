@@ -24,6 +24,7 @@ export type ArticleMetaKey = `articles/${ArticleId}/meta.json`
 export type ArticleEpubKey = `articles/${ArticleId}/book.epub`
 export type ArticleObjectKey = ArticleMetaKey | ArticleEpubKey
 export type ClipJobKey = `jobs/${ClipJobId}.json`
+export type ClipCheckpointKey = `jobs/${ClipJobId}.checkpoint.json`
 
 const ARTICLE_ID_PATTERN = /^art_[a-f0-9]{32}$/
 const CLIP_JOB_ID_PATTERN = /^job_[a-f0-9]{32}$/
@@ -200,4 +201,8 @@ export function articleEpubKey(id: ArticleId): ArticleEpubKey {
 
 export function clipJobKey(id: ClipJobId): ClipJobKey {
   return `jobs/${id}.json`
+}
+
+export function clipCheckpointKey(id: ClipJobId): ClipCheckpointKey {
+  return `jobs/${id}.checkpoint.json`
 }

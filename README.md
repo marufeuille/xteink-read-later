@@ -262,7 +262,7 @@ npx wrangler d1 migrations apply xteink-read-later-candidates --local
 - `GET /clip/jobs/:jobId` で `status` と `error.code` を見る
 - 工程ごとの所要時間は job に残る。下記の `clip:status` で、tail を繋いでいなくても見られる
 
-DLQ は使わない。失敗は job レコードに残る。
+DLQ は使わない。失敗は job レコードに残る。翻訳が成功したあとの EPUB 失敗は、同じ run の再試行で OpenAI を呼ばない。翻訳結果は `jobs/{jobId}.checkpoint.json` に一時的に置き、完成するか再試行を打ち切ったら消す。本文は job API にもログにも出さない。別の run の翻訳は使わない。
 
 ### ジョブの進捗・失敗を見る
 

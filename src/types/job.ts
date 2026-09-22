@@ -1,3 +1,4 @@
+import type { TranslatedArticle } from './article'
 import type { ErrorKind } from './errors'
 import type { PipelineStage } from './http'
 import type { ArticleId, ClipJobId, ClipRunId, HttpUrl } from './id'
@@ -52,6 +53,14 @@ export type ClipFailedJob = ClipJobBase & {
 }
 
 export type ClipJobRecord = ClipQueuedJob | ClipRunningJob | ClipReadyJob | ClipFailedJob
+
+/** Translated article kept only until EPUB succeeds or the run stops retrying. */
+export type ClipCheckpoint = {
+  readonly jobId: ClipJobId
+  readonly runId: ClipRunId
+  readonly articleId: ArticleId
+  readonly article: TranslatedArticle
+}
 
 export type ClipQueueMessage = {
   readonly jobId: ClipJobId

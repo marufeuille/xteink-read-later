@@ -13,6 +13,7 @@ import type {
   ArticleWrite,
   CandidateStore,
   ClassifyArticle,
+  ClipCheckpoint,
   ClipJobId,
   ClipJobRecord,
   ClipPipeline,
@@ -233,6 +234,33 @@ async function continueCurrentRunOrAck(
   return false
 }
 
+async function deleteCheckpointForRun(
+  store: ArticleStore,
+  jobId: ClipJobId,
+  runId: ClipRunId,
+): Promise<void> {
+  const checkpoint = await store.getClipCheckpoint(jobId)
+  if (checkpoint !== null && checkpoint.runId === runId) {
+    await store.deleteClipCheckpoint(jobId)
+  }
+}
+
+async function checkpointForRun(
+  store: ArticleStore,
+  jobId: ClipJobId,
+  runId: ClipRunId,
+): Promise<ClipCheckpoint | null> {
+  const checkpoint = await store.getClipCheckpoint(jobId)
+  if (checkpoint === null) {
+    return null
+  }
+  if (checkpoint.runId !== runId) {
+    await store.deleteClipCheckpoint(jobId)
+    return null
+  }
+  return checkpoint
+}
+
 async function putJobIfCurrentRun(store: ArticleStore, job: ClipJobRecord): Promise<boolean> {
   const current = await currentRunId(store, job.jobId)
   if (current !== null && current !== job.runId) {
@@ -290,6 +318,7 @@ async function processMessage(
       message.retry()
       return
     }
+    await deleteCheckpointForRun(store, parsed.jobId, parsed.runId)
     await putJobIfCurrentRun(store, {
       ...fields,
       stages: copyStages(stages),
@@ -318,6 +347,7 @@ async function runClipQueueMessage(
   const classify = deps.classifyArticle ?? defaultClassifyArticle
   const existing = await store.getJob(jobId)
   if (!shouldProcessClipRun(existing, runId)) {
+    await deleteCheckpointForRun(store, jobId, runId)
     message.ack()
     return
   }
@@ -339,7 +369,23 @@ async function runClipQueueMessage(
     return
   }
 
-  const result = await pipeline(url, { OPENAI_API_KEY: env.OPENAI_API_KEY }, log)
+  const checkpoint = await checkpointForRun(store, jobId, runId)
+  const result = await pipeline(url, { OPENAI_API_KEY: env.OPENAI_API_KEY }, log, {
+    ...(checkpoint === null
+      ? {}
+      : { resume: { id: checkpoint.articleId, article: checkpoint.article } }),
+    onTranslated: async (resume) => {
+      if ((await currentRunId(store, jobId)) !== runId) {
+        return
+      }
+      await store.putClipCheckpoint({
+        jobId,
+        runId,
+        articleId: resume.id,
+        article: resume.article,
+      })
+    },
+  })
   if (result.ok) {
     const { id, article, epub } = result.value
     if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
@@ -368,6 +414,7 @@ async function runClipQueueMessage(
     if (!(await putCurrentRunOrAck(store, message, readyJob))) {
       return
     }
+    await deleteCheckpointForRun(store, jobId, runId)
     await attachCompletedCandidate(env, deps, readyJob)
     message.ack()
     return
@@ -380,6 +427,9 @@ async function runClipQueueMessage(
     )
   if (shouldRetryClipError(result.error, message.attempts)) {
     logQueueError()
+    if (result.error.kind !== 'epub_failed') {
+      await deleteCheckpointForRun(store, jobId, runId)
+    }
     await putJobIfCurrentRun(store, {
       ...fields,
       stages: copyStages(stages),
@@ -393,6 +443,7 @@ async function runClipQueueMessage(
   }
 
   logQueueError()
+  await deleteCheckpointForRun(store, jobId, runId)
   await putJobIfCurrentRun(store, {
     ...fields,
     stages: copyStages(stages),
