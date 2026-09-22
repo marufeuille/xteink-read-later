@@ -159,6 +159,11 @@ ${notice}
   <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />
   <button type="submit">有効な情報源をすべて収集</button>
 </form>
+<form method="post" action="/digest">
+  <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />
+  <button type="submit">今日のまとめを作る</button>
+</form>
+<p class="note">まとめは 06:00（Asia/Tokyo）にも作られます。このボタンは同じ Queue に当日号を予約します。</p>
 ${list}
 <form method="post" action="/candidates/logout">
   <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />
@@ -176,6 +181,10 @@ export function sourceNoticeMessage(kind: string | undefined): string | undefine
       return '同じフィードはすでに登録されています'
     case 'queued':
       return '収集を予約しました'
+    case 'digest_queued':
+      return 'まとめ生成を予約しました'
+    case 'digest_failed':
+      return 'まとめを予約できませんでした。しばらくしてからもう一度押してください'
     case 'feed_missing':
       return 'サイトからフィードを見つけられませんでした。フィード URL を入力してください'
     case 'stopped':
