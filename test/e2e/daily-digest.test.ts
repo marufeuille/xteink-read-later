@@ -25,6 +25,7 @@ import { basicAuthorization, bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN
 import { createFakeDigestQueue } from '../fake-digest-queue'
 import { createFakeFeedQueue } from '../fake-feed-queue'
 import { createFakeQueue } from '../fake-queue'
+import { readRgbPng } from '../png-file'
 import { installNetworkMock, openaiMessageResponse } from './mock-network'
 
 const ORIGIN = mustUrl('https://read.example.com')
@@ -263,6 +264,14 @@ describe('daily digest fixture e2e', () => {
     const confirm = digestConfirmUrl('https://read.example.com', 'cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', expiresAt, token)
     const png = files['OEBPS/images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'] ?? new Uint8Array()
     expect(Buffer.from(png).equals(Buffer.from(qrPng(confirm)))).toBe(true)
+    const decoded = readRgbPng(png)
+    expect(decoded.colorType).toBe(2)
+    expect(decoded.interlace).toBe(0)
+    expect(decoded.rowFilter).toBe(0)
+    expect(decoded.firstPixel).toEqual([255, 255, 255])
+    expect(decoded.hasBlack).toBe(true)
+    const other = readRgbPng(files['OEBPS/images/qr-cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png'] ?? new Uint8Array())
+    expect(other.hasBlack).toBe(true)
     expect(body).not.toContain(token)
     expect(body).not.toContain(TEST_CLIP_TOKEN)
 
