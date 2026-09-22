@@ -1,4 +1,4 @@
-import { deflateSync } from 'fflate'
+import { zlibSync } from 'fflate'
 import { encode } from 'uqr'
 
 const PNG_SIGNATURE = Uint8Array.of(137, 80, 78, 71, 13, 10, 26, 10)
@@ -49,7 +49,8 @@ function encodeRgbPng(width: number, height: number, scanlines: Uint8Array): Uin
   ihdr[10] = 0
   ihdr[11] = 0
   ihdr[12] = 0
-  const idat = deflateSync(scanlines, { level: 9 })
+  // IDAT is a zlib stream. Raw deflate is not a PNG; CrossPoint then shows "[Image: 全文を送る]".
+  const idat = zlibSync(scanlines, { level: 9 })
   const parts = [PNG_SIGNATURE, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', new Uint8Array())]
   const total = parts.reduce((sum, part) => sum + part.length, 0)
   const png = new Uint8Array(total)

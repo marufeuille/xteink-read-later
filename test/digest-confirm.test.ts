@@ -1,4 +1,4 @@
-import { inflateSync, strFromU8, unzipSync } from 'fflate'
+import { strFromU8, unzipSync } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app'
 import {
@@ -28,6 +28,7 @@ import {
 } from '../src/types'
 import { TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
 import { createFakeQueue } from './fake-queue'
+import { readRgbPng } from './png-file'
 
 const ORIGIN = 'https://read.example.com'
 const DATE = '2026-09-21'
@@ -85,60 +86,6 @@ function epubParts(epub: Uint8Array): { readonly opf: string; readonly chapter: 
     opf: strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array()),
     chapter: strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array()),
     pngs: Object.keys(files).filter((name) => name.endsWith('.png')).sort(),
-  }
-}
-
-function pngHeader(png: Uint8Array): {
-  readonly bitDepth: number
-  readonly colorType: number
-  readonly interlace: number
-  readonly firstPixel: number[]
-  readonly hasBlack: boolean
-} {
-  const view = new DataView(png.buffer, png.byteOffset, png.byteLength)
-  expect(new TextDecoder().decode(png.slice(12, 16))).toBe('IHDR')
-  const width = view.getUint32(16)
-  const height = view.getUint32(20)
-  let offset = 8
-  const idat: Uint8Array[] = []
-  while (offset + 12 <= png.byteLength) {
-    const length = view.getUint32(offset)
-    const type = new TextDecoder().decode(png.slice(offset + 4, offset + 8))
-    const data = png.slice(offset + 8, offset + 8 + length)
-    if (type === 'IDAT') {
-      idat.push(data)
-    }
-    offset += 12 + length
-    if (type === 'IEND') {
-      break
-    }
-  }
-  const compressed = new Uint8Array(idat.reduce((sum, part) => sum + part.length, 0))
-  let cursor = 0
-  for (const part of idat) {
-    compressed.set(part, cursor)
-    cursor += part.length
-  }
-  const raw = inflateSync(compressed)
-  const rowBytes = width * 3 + 1
-  expect(raw.byteLength).toBe(rowBytes * height)
-  expect(raw[0]).toBe(0)
-  let hasBlack = false
-  for (let y = 0; y < height; y += 1) {
-    const row = y * rowBytes
-    for (let x = 0; x < width * 3; x += 1) {
-      if (raw[row + 1 + x] === 0) {
-        hasBlack = true
-        break
-      }
-    }
-  }
-  return {
-    bitDepth: png[24] ?? 0,
-    colorType: png[25] ?? 0,
-    interlace: png[28] ?? 1,
-    firstPixel: [raw[1] ?? 0, raw[2] ?? 0, raw[3] ?? 0],
-    hasBlack,
   }
 }
 
@@ -218,10 +165,11 @@ describe('digest QR png', () => {
     const first = qrPng('https://read.example.com/digest/send/example')
     const second = qrPng('https://read.example.com/digest/send/example')
     expect(Buffer.from(first).equals(Buffer.from(second))).toBe(true)
-    const header = pngHeader(first)
+    const header = readRgbPng(first)
     expect(header.bitDepth).toBe(8)
     expect(header.colorType).toBe(2)
     expect(header.interlace).toBe(0)
+    expect(header.rowFilter).toBe(0)
     expect(header.firstPixel).toEqual([255, 255, 255])
     expect(header.hasBlack).toBe(true)
   })
@@ -257,6 +205,14 @@ describe('digest EPUB QR images', () => {
     expect(Buffer.from(png).equals(Buffer.from(right[`OEBPS/images/qr-${CANDIDATE_A}.png`] ?? new Uint8Array()))).toBe(
       true,
     )
+    for (const name of left.pngs) {
+      const decoded = readRgbPng(files[name] ?? new Uint8Array())
+      expect(decoded.colorType).toBe(2)
+      expect(decoded.interlace).toBe(0)
+      expect(decoded.rowFilter).toBe(0)
+      expect(decoded.firstPixel).toEqual([255, 255, 255])
+      expect(decoded.hasBlack).toBe(true)
+    }
   })
 
   it('leaves a digest without a public origin image-free', async () => {
