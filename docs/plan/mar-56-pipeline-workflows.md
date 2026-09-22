@@ -81,7 +81,7 @@ Workers Paid 前提。`wrangler.jsonc` の `limits.cpu_ms` は 30,000。既存�
 
 ### 翻訳 API（Cloudflare 外。再実行削減の比較用）
 
-現行モデルは `gpt-4o-mini`。[OpenAI のモデルページ](https://developers.openai.com/api/docs/models/gpt-4o-mini)（調査日時点）: 入力 $0.15 / 1M token、出力 $0.60 / 1M token。classify（Jev / OpenRouter）は job を失敗させない。再実行されても Cloudflare 増分には入れず、別枠として触れる。
+調査日時点の翻訳モデルは `gpt-4o-mini`。[OpenAI のモデルページ](https://developers.openai.com/api/docs/models/gpt-4o-mini)（調査日時点）: 入力 $0.15 / 1M token、出力 $0.60 / 1M token。下の翻訳 API の金額はこの単価。本番モデルはのちに `gpt-5.6-luna` へ替わったので、OpenAI 側のドルは現行の請求額ではない。classify（Jev / OpenRouter）は job を失敗させない。再実行されても Cloudflare 増分には入れず、別枠として触れる。Workflows に移さない結論は、この単価差では変わらない。
 
 ## 試算条件（実測ではなく例）
 
