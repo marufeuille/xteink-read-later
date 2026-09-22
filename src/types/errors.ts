@@ -19,6 +19,8 @@ export type FetchFailedError = {
   readonly kind: 'fetch_failed'
   readonly url: HttpUrl
   readonly reason: string
+  // Site recovery determined that retrying the same URL will not succeed.
+  readonly terminal?: true
 }
 
 export type ExtractFailedError = {

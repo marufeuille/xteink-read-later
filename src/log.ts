@@ -17,6 +17,17 @@ export function logPipeline(entry: PipelineLog, ctx?: PipelineLogContext): void 
   console.log(JSON.stringify({ event: 'pipeline', ...pipelineLogFields(ctx), ...entry }))
 }
 
+export type SiteRecoveryLog = {
+  readonly event: 'site_recovery'
+  readonly site: string
+  readonly outcome: 'recovered' | 'unavailable' | 'pass'
+  readonly url: string
+}
+
+export function logSiteRecovery(entry: Omit<SiteRecoveryLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'site_recovery', ...entry } satisfies SiteRecoveryLog))
+}
+
 export type CandidateClipLog = {
   readonly event: 'candidate_clip'
   readonly action: 'select' | 'reuse' | 'regenerate'
