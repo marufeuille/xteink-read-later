@@ -45,6 +45,29 @@ export function logOpdsDownload(entry: Omit<OpdsDownloadLog, 'event'>): void {
   console.log(JSON.stringify({ event: 'opds_download', ...entry } satisfies OpdsDownloadLog))
 }
 
+export type DigestConfirmResult = 'view' | 'rejected' | 'unsendable' | 'reused' | 'queued' | 'failed'
+
+export type DigestConfirmReason =
+  | 'invalid'
+  | 'expired'
+  | 'not_found'
+  | 'paywalled'
+  | 'excluded'
+  | 'unavailable'
+  | 'fetch_failed'
+  | 'queue_failed'
+
+export type DigestConfirmLog = {
+  readonly event: 'digest_confirm'
+  readonly result: DigestConfirmResult
+  readonly candidateId?: CandidateId
+  readonly reason?: DigestConfirmReason
+}
+
+export function logDigestConfirm(entry: Omit<DigestConfirmLog, 'event'>): void {
+  console.log(JSON.stringify({ event: 'digest_confirm', ...entry } satisfies DigestConfirmLog))
+}
+
 export type CandidateRecommendLog = {
   readonly event: 'candidate_recommend'
   readonly candidateId: CandidateId
@@ -108,6 +131,7 @@ export type DailyDigestLog = {
   readonly skipped: number
   readonly durationMs: number
   readonly articleId?: string
+  readonly qrCount: number
 }
 
 export function logDailyDigest(entry: Omit<DailyDigestLog, 'event'>): void {

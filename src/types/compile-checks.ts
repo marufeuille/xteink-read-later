@@ -49,6 +49,7 @@ import type {
   CandidateClipLog,
   CandidateRecommendLog,
   DailyDigestLog,
+  DigestConfirmLog,
   DigestScheduleLog,
   FeedScheduleLog,
   OpdsDownloadLog,
@@ -63,6 +64,7 @@ import {
   DAILY_DIGEST_TIMEZONE,
   DAILY_IDENTITY_STRATEGY,
   DAILY_TIMEZONE,
+  DIGEST_QR_TTL_DAYS,
   type DailyIssueIdentity,
 } from './daily'
 import { FEED_COLLECT_CRON, FEED_COLLECT_TIMEZONE } from './source'
@@ -372,6 +374,7 @@ type _envHasSecretsAndBucket = Assert<
     CLIP_TOKEN: string
     OPDS_USERNAME: string
     OPDS_PASSWORD: string
+    PUBLIC_ORIGIN: string
   }
     ? true
     : false
@@ -425,6 +428,9 @@ type _dailyDigestTimezoneIsTokyo = Assert<Equals<typeof DAILY_DIGEST_TIMEZONE, '
 type _digestScheduleLogHasNoUrl = Assert<'url' extends keyof DigestScheduleLog ? false : true>
 type _dailyDigestLogHasNoUrl = Assert<'url' extends keyof DailyDigestLog ? false : true>
 type _dailyDigestLogHasNoBody = Assert<'contentHtml' extends keyof DailyDigestLog ? false : true>
+type _digestQrTtlIs14Days = Assert<Equals<typeof DIGEST_QR_TTL_DAYS, 14>>
+type _digestConfirmLogHasNoToken = Assert<'token' extends keyof DigestConfirmLog ? false : true>
+type _digestConfirmLogHasNoUrl = Assert<'url' extends keyof DigestConfirmLog ? false : true>
 type _postDailyDigestUsesBearer = Assert<
   ApiRoutes['postDailyDigest']['auth'] extends { readonly scheme: 'bearer' } ? true : false
 >
@@ -528,5 +534,8 @@ export type CompileChecks = {
   readonly digestScheduleLogHasNoUrl: _digestScheduleLogHasNoUrl
   readonly dailyDigestLogHasNoUrl: _dailyDigestLogHasNoUrl
   readonly dailyDigestLogHasNoBody: _dailyDigestLogHasNoBody
+  readonly digestQrTtlIs14Days: _digestQrTtlIs14Days
+  readonly digestConfirmLogHasNoToken: _digestConfirmLogHasNoToken
+  readonly digestConfirmLogHasNoUrl: _digestConfirmLogHasNoUrl
   readonly postDailyDigestUsesBearer: _postDailyDigestUsesBearer
 }

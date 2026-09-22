@@ -1,4 +1,6 @@
-import { buildEpub } from '../epub/build-epub'
+import { digestConfirmUrl, digestQrExpiresAt, signDigestQrToken } from '../digest/confirm-link'
+import { qrPng } from '../digest/qr-png'
+import { buildEpub, type EpubImage } from '../epub/build-epub'
 import { xmlEscape } from '../epub/xhtml'
 import {
   parseHttpUrl,
@@ -20,17 +22,20 @@ const DIGEST_IDENTITY_ORIGIN: HttpUrl = (() => {
   return origin
 })()
 
-function digestSectionHtml(item: DigestPreparedItem): string {
+function digestSectionHtml(item: DigestPreparedItem, qrHref?: string): string {
   const url = xmlEscape(item.canonicalUrl)
+  const qr =
+    qrHref === undefined ? '' : `<p><img src="${xmlEscape(qrHref)}" alt="全文を送る"/></p>`
   return (
     `<h2 id="${xmlEscape(item.candidateId)}"><a href="${url}">${xmlEscape(item.title)}</a></h2>` +
     `<p class="source"><a href="${url}">${url}</a></p>` +
-    item.summaryHtml
+    item.summaryHtml +
+    qr
   )
 }
 
 function digestContentHtml(date: string, items: readonly DigestPreparedItem[]): string {
-  return `<h1>${xmlEscape(`まとめ ${date}`)}</h1>${items.map(digestSectionHtml).join('')}`
+  return `<h1>${xmlEscape(`まとめ ${date}`)}</h1>${items.map((item) => digestSectionHtml(item)).join('')}`
 }
 
 function digestArticle(
@@ -53,6 +58,7 @@ function digestArticle(
 async function writeDailyIssue(
   identity: DailyIssueIdentity,
   article: TranslatedArticle,
+  images: readonly EpubImage[] = [],
 ): Promise<{ identity: DailyIssueIdentity; write: ArticleWrite }> {
   return {
     identity,
@@ -65,8 +71,39 @@ async function writeDailyIssue(
       canonicalUrl: identity.canonicalUrl,
       language: article.language,
       translated: article.translated,
-      epub: await buildEpub(article, { identifier: identity.epubIdentifier }),
+      epub: await buildEpub(article, {
+        identifier: identity.epubIdentifier,
+        ...(images.length > 0 ? { images } : {}),
+      }),
     },
+  }
+}
+
+async function digestQrContent(
+  date: string,
+  items: readonly DigestPreparedItem[],
+  qr: { readonly publicOrigin: string; readonly secret: string },
+): Promise<{ readonly contentHtml: string; readonly images: EpubImage[] }> {
+  const expiresAt = digestQrExpiresAt(date)
+  const images: EpubImage[] = []
+  const sections: string[] = []
+  for (const item of items) {
+    const token = await signDigestQrToken({
+      secret: qr.secret,
+      candidateId: item.candidateId,
+      expiresAt,
+    })
+    const href = `images/qr-${item.candidateId}.png`
+    images.push({
+      id: `qr-${item.candidateId}`,
+      href,
+      bytes: qrPng(digestConfirmUrl(qr.publicOrigin, item.candidateId, expiresAt, token)),
+    })
+    sections.push(digestSectionHtml(item, href))
+  }
+  return {
+    contentHtml: `<h1>${xmlEscape(`まとめ ${date}`)}</h1>${sections.join('')}`,
+    images,
   }
 }
 
@@ -74,12 +111,17 @@ export async function buildDailyDigestWrite(input: {
   readonly date: string
   readonly items: readonly DigestPreparedItem[]
   readonly origin?: HttpUrl
+  readonly qr?: { readonly publicOrigin: string; readonly secret: string }
 }): Promise<{ identity: DailyIssueIdentity; write: ArticleWrite }> {
   const identity = await dailyIssueIdentity({
     date: input.date,
     origin: input.origin ?? DIGEST_IDENTITY_ORIGIN,
   })
-  return writeDailyIssue(identity, digestArticle(identity, digestContentHtml(identity.date, input.items), true))
+  if (input.qr === undefined) {
+    return writeDailyIssue(identity, digestArticle(identity, digestContentHtml(identity.date, input.items), true))
+  }
+  const rendered = await digestQrContent(identity.date, input.items, input.qr)
+  return writeDailyIssue(identity, digestArticle(identity, rendered.contentHtml, true), rendered.images)
 }
 
 export async function buildDummyDailyWrite(input: {

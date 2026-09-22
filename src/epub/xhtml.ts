@@ -11,6 +11,10 @@ import {
 
 const VOID_TAGS = new Set(['br', 'hr', 'meta', 'link', 'input'])
 
+export type XhtmlOptions = {
+  readonly preserveImageSrcs?: ReadonlySet<string>
+}
+
 export function xmlEscape(value: string): string {
   return stripXmlIllegalChars(value)
     .replaceAll('&', '&amp;')
@@ -20,7 +24,16 @@ export function xmlEscape(value: string): string {
     .replaceAll("'", '&apos;')
 }
 
-function serialize(node: Node): string {
+function preservedImage(node: HTMLElement, options: XhtmlOptions): string | null {
+  const src = node.getAttribute('src') ?? ''
+  if (options.preserveImageSrcs?.has(src) !== true) {
+    return null
+  }
+  const alt = node.getAttribute('alt') ?? ''
+  return `<img class="digest-qr" src="${xmlEscape(src)}" alt="${xmlEscape(alt)}"/>`
+}
+
+function serialize(node: Node, options: XhtmlOptions): string {
   if (node.nodeType === NodeType.TEXT_NODE) {
     return isLoneChartTick(node.text) ? '' : xmlEscape(node.text)
   }
@@ -32,6 +45,10 @@ function serialize(node: Node): string {
   }
   const tag = node.rawTagName.toLowerCase()
   if (tag === 'img') {
+    const preserved = preservedImage(node, options)
+    if (preserved !== null) {
+      return preserved
+    }
     const alt = imgAltText(node.getAttribute('alt') ?? '')
     return alt.length > 0 ? xmlEscape(alt) : ''
   }
@@ -47,9 +64,10 @@ function serialize(node: Node): string {
   if (VOID_TAGS.has(tag)) {
     return `<${tag}${attrs}/>`
   }
-  const inner = node.childNodes.map(serialize).join('')
+  const inner = node.childNodes.map((child) => serialize(child, options)).join('')
   if (
     inner.replace(/<[^>]+>/g, '').trim().length === 0 &&
+    !/<img\b/i.test(inner) &&
     (tag === 'figure' || tag === 'figcaption' || tag === 'ul' || tag === 'ol' || tag === 'p')
   ) {
     return ''
@@ -57,12 +75,12 @@ function serialize(node: Node): string {
   return `<${tag}${attrs}>${inner}</${tag}>`
 }
 
-export function htmlFragmentToXhtml(fragment: string): string {
+export function htmlFragmentToXhtml(fragment: string, options: XhtmlOptions = {}): string {
   const cleaned = stripXmlIllegalChars(stripChartTickMarkdown(stripPageCliWarnings(fragment)))
   const root = parse(`<div id="epub-root">${cleaned}</div>`, PARSE_HTML_OPTIONS)
   const wrapper = root.querySelector('#epub-root')
   if (wrapper === null) {
     return ''
   }
-  return stripXmlIllegalChars(wrapper.childNodes.map(serialize).join(''))
+  return stripXmlIllegalChars(wrapper.childNodes.map((child) => serialize(child, options)).join(''))
 }

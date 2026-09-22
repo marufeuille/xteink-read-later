@@ -13,6 +13,11 @@
     "cpu_ms": 30000
   },
   "workers_dev": true,
+  // Public origin baked into digest QR codes. Not a secret. Cron has no request URL.
+  // Remove this var and redeploy to publish digests without QR links.
+  "vars": {
+    "PUBLIC_ORIGIN": "https://xteink-read-later.marufeuille.workers.dev"
+  },
   // wrangler dev だけ。本番の管理画面は Zero Trust のパス単位 Access（Google）で保護する。
   // Worker 全体には掛けない（OPDS / POST /clip を壊す）。
   "access": {

@@ -24,6 +24,8 @@ export const DIGEST_BUCKET_QUOTAS: Readonly<Record<DigestBucket, DigestBucketQuo
 
 export const DIGEST_TARGET_READING_MINUTES = 5
 export const DIGEST_SUMMARY_MAX_CHARS = 400
+/** Confirm links in a digest issue stay valid this many days from the issue date. */
+export const DIGEST_QR_TTL_DAYS = 14
 export const DIGEST_MAX_JEV_CALLS = 10
 export const DIGEST_LIST_PAGE_SIZE = 100
 
@@ -88,6 +90,7 @@ export type DigestRunResult = {
   readonly summarized: number
   readonly skipped: number
   readonly articleId: ArticleId | null
+  readonly qrCount: number
 }
 
 export type DigestStore = {

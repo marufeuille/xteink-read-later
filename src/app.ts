@@ -3,6 +3,7 @@ import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from '
 import { mountBookRoutes } from './http/book-routes'
 import { mountCandidateRoutes, type CandidateHttpDeps } from './http/candidate-routes'
 import { mountClipWebRoutes } from './http/clip-web-routes'
+import { mountDigestConfirmRoutes } from './http/digest-confirm-routes'
 import { mountDigestRoutes, type DigestHttpDeps } from './http/digest-routes'
 import { mountSourceRoutes, type SourceHttpDeps } from './http/source-routes'
 import { toClipJobBody, toClipQueuedBody } from './http/clip-job'
@@ -250,6 +251,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   mountCandidateRoutes(app, deps)
   mountSourceRoutes(app, deps)
   mountDigestRoutes(app, deps)
+  mountDigestConfirmRoutes(app, deps)
 
   return app
 }
