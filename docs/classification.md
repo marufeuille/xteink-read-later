@@ -59,7 +59,7 @@ OPDS の棚は topic ではなく日付にする。Web 記事は `clip`、購入
 
 ## まだやらないこと
 
-- topic / kind による OPDS の棚。日付棚（`clip` / `ebook`）は MAR-84。CrossPoint で棚を辿って EPUB を取る実機確認は未実施。
+- topic / kind による OPDS の棚。日付棚（`clip` / `ebook`）は入っている（[MAR-84](https://linear.app/marufeuille/issue/MAR-84)）。CrossPoint で棚を辿って EPUB を取る実機確認は未実施。
 - 抽出検品と自動修復。判定の記録から始める。
 - 翻訳品質の検品。
 - 原文を別冊にすること。
