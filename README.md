@@ -14,6 +14,22 @@ Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xte
 
 送り先は `POST {worker}/clip`。認証は **Bearer `CLIP_TOKEN`**（JSON 本文や URL クエリには載せない）。パス名は変えない。
 
+### PC のブラウザから記事をクリップする
+
+今開いているタブの URL を、ブックマークレットで確認してからクリップする。`CLIP_TOKEN` はブックマークにも画面にも入れない。認証は Cloudflare Access（Google）。ページを開く GET では受け付けない。「クリップする」の POST で、Android と同じクリップ Queue に載る。
+
+`{worker}/clip/web` を開くと、その origin 向けのブックマークレットが出る。ブックマークの URL に貼る（リンクとしては動かない）。手で書くときは `WORKER` を末尾スラッシュなしの origin にする。
+
+```text
+javascript:(function(){location.href='WORKER/clip/web?url='+encodeURIComponent(location.href)})()
+```
+
+1. ブックマークの名前は「Xteink にクリップ」。URL は上の文字列。
+2. 記事のタブでそのブックマークを開く。Access の確認のあと、表示された URL を見て「クリップする」。
+3. 受付は **202** `status: "queued"` と `jobId`。同じ URL が queued / running のあいだは二重に載せない。ready / failed のあと、または 15 分以上更新がないときは新しい実行になる。完成は手順 2 の `clip` 棚、または `npm run clip:status`。
+
+`POST /clip` の Bearer 契約と Android の HTTP Shortcuts はそのまま。Access の対象は `/clip/web` だけで、`/clip` と `/clip/jobs` は入れない。
+
 ### 2. Xteink で読む
 
 CrossPoint JP に OPDS カタログを **一度だけ** 登録する。ルートは棚の入口なので、`clip`（Web 記事）か `ebook`（買った本）を開き、その日のフォルダから EPUB を取る。日付の中は新しいものが上。まとめは最新 1 冊だけルートに出る。
@@ -130,7 +146,7 @@ npm run dev
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は現行どおり canonical で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
 
-`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`POST /candidates/:id/recommend`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect`・`POST /digest` は Bearer `CLIP_TOKEN`。候補と情報源の **Web 画面**（`/candidates`・`/sources` とその配下）は Cloudflare Access の Google 認証。Worker は `ctx.access` の email を見る。トークンログインとセッション Cookie は使わない。フォーム POST は CSRF トークン必須。`GET /opds`（`clip` / `ebook` と日付を含む）・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。Access は **Worker 全体には掛けない**（OPDS と `POST /clip` を壊す）。`POST /clip` と `GET /opds`（棚と日付を含む）と `POST /books` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と clip ポインタ、おすすめ判定（本文は持たない）を持つ。
+`POST /clip`・`GET /clip/jobs/:jobId`・`POST /books`・`DELETE /articles/:id`・`POST /candidates`・`POST /candidates/:id/clip`・`POST /candidates/:id/recommend`・`GET /candidates.json`・`GET /sources.json`・`POST /sources`・`POST /sources/collect`・`POST /digest` は Bearer `CLIP_TOKEN`。候補・情報源・PC クリップの **Web 画面**（`/candidates`・`/sources`・`/clip/web` とその配下）は Cloudflare Access の Google 認証。Worker は `ctx.access` の email を見る。トークンログインとセッション Cookie は使わない。フォーム POST は CSRF トークン必須。`/clip/web` の GET は URL の確認だけで、クリップの受付は CSRF 付き POST。JSON で送るときは既存の `POST /clip` と同じ **202** `jobId`。`GET /opds`（`clip` / `ebook` と日付を含む）・`GET /articles/:id`・`GET /articles/:id/book.epub`・`GET /opds/download/:id.epub` は HTTP Basic。比較は timing-safe。Access は **Worker 全体には掛けない**（OPDS と `POST /clip` を壊す）。`POST /clip` と `GET /opds`（棚と日付を含む）と `POST /books` と `/clip/web` と候補・情報源の経路は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補 D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補 ID と clip ポインタ、おすすめ判定（本文は持たない）を持つ。
 
 ### 読書候補（翻訳しない URL 投入）
 
@@ -309,7 +325,7 @@ npx wrangler secret put OPDS_PASSWORD
 
 ### 初回だけ — 管理画面の Google 認証（Cloudflare Access）
 
-候補一覧と情報源のブラウザ画面だけを Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`・`/opds`・`/articles`・`/books` は今までどおり Bearer / Basic。
+候補一覧、情報源、PC クリップ確認のブラウザ画面を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles`・`/books` は今までどおり Bearer / Basic。`/clip/web` だけをクリップ画面として足す。
 
 1. [Zero Trust](https://one.dash.cloudflare.com/) で組織を有効にする。
 2. [Google を identity provider にする](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/)。Google Cloud の OAuth クライアントが必要。Authorized redirect URI は `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/callback`。
@@ -320,8 +336,11 @@ npx wrangler secret put OPDS_PASSWORD
    - `xteink-read-later.<account>.workers.dev/sources`
    - `xteink-read-later.<account>.workers.dev/sources/`
    - `xteink-read-later.<account>.workers.dev/sources/*`
-4. Allow ポリシー: Login method = Google、自分の Google メール。Reusable policy をアプリに付ける。
-5. `/candidates` を開いて Google で入れること、`/opds` が Access ログインに飛ばないことを確認する。
+   - `xteink-read-later.<account>.workers.dev/clip/web`
+   - `xteink-read-later.<account>.workers.dev/clip/web/`
+   - `xteink-read-later.<account>.workers.dev/clip/web/*`
+4. Allow ポリシー: Login method = Google、自分の Google メール。Reusable policy をアプリに付ける。`/clip` 自体は入れない（Android の `POST /clip` を Access のログインに通さない）。
+5. `/candidates` と `/clip/web` を開いて Google で入れること、`/opds` と `POST /clip` が Access ログインに飛ばないことを確認する。
 
 Access を掛ける前にこの変更が本番へ出ると、管理 HTML は 401 になる（JSON API の Bearer は残る）。復旧は Access アプリを足すか、この PR を戻す。
 
