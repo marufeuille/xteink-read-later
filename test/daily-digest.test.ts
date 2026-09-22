@@ -22,6 +22,7 @@ import {
   asEpubBytes,
   asFeedSourceId,
   DAILY_DIGEST_CRON,
+  digestSummaryCharBudget,
   FEED_COLLECT_CRON,
   ok,
   parseHttpUrl,
@@ -371,9 +372,44 @@ describe('daily digest selection', () => {
     expect(tech).toHaveLength(3)
     expect(general).toHaveLength(2)
   })
+
+  it('splits about five minutes across the selected articles and does not stretch a short issue', () => {
+    expect(digestSummaryCharBudget(1)).toBe(400)
+    expect(digestSummaryCharBudget(5)).toBe(400)
+    expect(digestSummaryCharBudget(8)).toBe(250)
+    expect(digestSummaryCharBudget(10)).toBe(200)
+    expect(digestSummaryCharBudget(0)).toBe(400)
+  })
 })
 
 describe('daily digest publish', () => {
+  it('gives every selected article the same shorter budget when eight fit', async () => {
+    const { candidateStore, digestStore, store } = memoryDigest()
+    const grades: RecommendGrade[] = [
+      ...Array.from({ length: 5 }, () => 'recommended' as const),
+      ...Array.from({ length: 3 }, () => 'related' as const),
+    ]
+    for (const [index, grade] of grades.entries()) {
+      await candidateStore.put(
+        listedCandidate({
+          id: asCandidateId(`cand_${index.toString(16).padStart(32, '0')}`),
+          canonicalUrl: mustUrl(`https://example.com/digest/${index}`),
+          title: `記事${index}`,
+          recommendation: judged(grade),
+        }),
+      )
+    }
+    const budgets: number[] = []
+    const summarize: SummarizeDigestArticle = async (candidate, deps) => {
+      budgets.push(deps.maxChars ?? -1)
+      return summarizeOk(candidate)
+    }
+    const result = await runDigest({ store, candidateStore, digestStore, summarize })
+    expect(result.status).toBe('published')
+    expect(result.summarized).toBe(8)
+    expect(budgets).toEqual(Array.from({ length: 8 }, () => 250))
+  })
+
   it('rejects title-only pages and does not call OpenAI', async () => {
     const candidate = listedCandidate({
       id: asCandidateId('cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
