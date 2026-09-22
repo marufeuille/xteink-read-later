@@ -62,7 +62,9 @@ https://xteink-read-later.<account>.workers.dev/opds
 
 ### 3. 買った EPUB をカタログに載せる
 
-ネット書店からは取らない。パソコンに置いてある EPUB を `CLIP_TOKEN` 付きで上げる。翻訳も抽出もサニタイズもしない。同じファイルを再送すると同じ `id` で上書きする。
+ネット書店からは取らない。パソコンのブラウザで `{worker}/books` を開く。Cloudflare Access が Google 認証する。`CLIP_TOKEN` の入力欄は無い。EPUB を選び、タイトルは空なら本の `dc:title`、著者は空なら `dc:creator`（無くてもよい）。翻訳・整形・本文の改変はしない。成功画面に「OPDS の ebook 棚に出ます」と出る。同じファイルを再送すると同じ `id` で上書きする。
+
+API は Bearer `CLIP_TOKEN` のまま。`title` は必須で、空タイトルを OPF では埋めない。
 
 ```bash
 curl -sS "$WORKER/books" \
@@ -72,7 +74,7 @@ curl -sS "$WORKER/books" \
   -F "epub=@book.epub;type=application/epub+zip"
 ```
 
-上げたあとは手順 2 の `ebook` 棚を更新して読む。秘密値と本文はログにも README にも出さない。
+上げたあとは手順 2 の `ebook` 棚を更新して読む。秘密値と本文はログにも README にも出さない。`/books` を Access の対象にすると、トークンだけの curl もログイン壁に当たる。その契約をブラウザ外から叩くときは Access の対象から外すか、Service Auth の Bypass を別に足す。
 
 削除は `DELETE /articles/:id`（Bearer `CLIP_TOKEN`）。無い id は 404。
 
@@ -161,13 +163,15 @@ npm run dev
 
 | 経路 | 認証 |
 | --- | --- |
-| `POST /clip`、`GET /clip/jobs/:jobId`、`POST /books`、`DELETE /articles/:id` | Bearer `CLIP_TOKEN` のみ |
+| `POST /clip`、`GET /clip/jobs/:jobId`、`DELETE /articles/:id` | Bearer `CLIP_TOKEN` のみ |
+| `POST /books`（Bearer） | Bearer `CLIP_TOKEN`。`title` 必須。空タイトルを OPF では埋めない |
+| `GET /books` と Access の購入本フォーム | Cloudflare Access（Google）。タイトルが空なら OPF の `dc:title`、著者が空なら `dc:creator` |
 | `/candidates`、`/sources`、`/clip/web`、`POST /digest` と配下 | JSON は Bearer `CLIP_TOKEN`。ブラウザの HTML は Cloudflare Access（Google）。Worker は `ctx.access` の email を見る |
 | `GET /opds`（`clip` / `ebook` と日付）、`GET /articles/:id`、`GET /articles/:id/book.epub`、`GET /opds/download/:id.epub` | HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`） |
 
-トークンログインとセッション Cookie は使わない。HTML のフォーム POST は CSRF 必須。Bearer の JSON は CSRF を見ない。`/clip/web` の GET は URL の確認だけで、クリップの受付は CSRF 付き POST。JSON で送るときは既存の `POST /clip` と同じ **202** `jobId`。
+トークンログインとセッション Cookie は使わない。HTML のフォーム POST は CSRF 必須。Bearer の JSON は CSRF を見ない。`/clip/web` の GET は URL の確認だけで、クリップの受付は CSRF 付き POST。JSON で送るときは既存の `POST /clip` と同じ **202** `jobId`。`GET /books` は購入 EPUB の投稿画面。
 
-`POST /clip`、`GET /opds`（棚と日付）、`POST /books`、`/clip/web`、候補、情報源、`POST /digest` は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補の D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補、発見元、情報源、clip へのポインタ、おすすめ判定（本文は持たない）、まとめに載せた canonical URL の履歴を持つ。完成した EPUB と購入 EPUB は R2。
+`POST /clip`、`GET /opds`（棚と日付）、`POST /books`、`GET /books`、`/clip/web`、候補、情報源、`POST /digest` は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補の D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補、発見元、情報源、clip へのポインタ、おすすめ判定（本文は持たない）、まとめに載せた canonical URL の履歴を持つ。完成した EPUB と購入 EPUB は R2。
 
 ### 読書候補（翻訳しない URL 投入）
 
@@ -356,7 +360,7 @@ npx wrangler secret put OPDS_PASSWORD
 
 ### 初回だけ — 管理画面の Google 認証（Cloudflare Access）
 
-候補一覧、情報源、PC クリップ確認のブラウザ画面を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles`・`/books` は今までどおり Bearer / Basic。`/clip/web` だけをクリップ画面として足す。
+候補一覧、情報源、PC クリップ確認、購入本投稿のブラウザ画面を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles` は Bearer / Basic のまま。`/clip/web` と `/books` を画面として足す。`/books` を足すと同じパスの curl も Access に当たる。Bearer の multipart 契約は Worker に届いたリクエストでは残す。
 
 1. [Zero Trust](https://one.dash.cloudflare.com/) で組織を有効にする。
 2. [Google を identity provider にする](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/)。Google Cloud の OAuth クライアントが必要。Authorized redirect URI は `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/callback`。
@@ -370,8 +374,11 @@ npx wrangler secret put OPDS_PASSWORD
    - `xteink-read-later.<account>.workers.dev/clip/web`
    - `xteink-read-later.<account>.workers.dev/clip/web/`
    - `xteink-read-later.<account>.workers.dev/clip/web/*`
+   - `xteink-read-later.<account>.workers.dev/books`
+   - `xteink-read-later.<account>.workers.dev/books/`
+   - `xteink-read-later.<account>.workers.dev/books/*`
 4. Allow ポリシー: Login method = Google、自分の Google メール。Reusable policy をアプリに付ける。`/clip` 自体は入れない（Android の `POST /clip` を Access のログインに通さない）。
-5. `/candidates` と `/clip/web` を開いて Google で入れること、`/opds` と `POST /clip` が Access ログインに飛ばないことを確認する。
+5. `/candidates`、`/clip/web`、`/books` を開いて Google で入れること、`/opds` と `POST /clip` が Access ログインに飛ばないことを確認する。
 
 Access を掛ける前に管理画面だけ本番へ出ると、その HTML は 401 になる（JSON API の Bearer は残る）。復旧は上の Access アプリを足すか、管理画面を出す変更を戻す。
 

@@ -1,3 +1,4 @@
+import { readEpubPackageMetadata } from '../epub/opf-metadata'
 import { err, ok, type InvalidEpubError, type PayloadTooLargeError, type Result } from '../types'
 
 export const MAX_PURCHASED_EPUB_BYTES = 30_000_000
@@ -36,9 +37,12 @@ async function formBytes(value: File | string | null): Promise<Uint8Array | null
 
 export async function parsePurchasedBookForm(
   form: FormData,
+  options: { readonly metadataFallback?: boolean } = {},
 ): Promise<Result<PurchasedBookFields, InvalidEpubError | PayloadTooLargeError>> {
-  const title = formString(form.get('title'))
-  if (title === null) {
+  const metadataFallback = options.metadataFallback === true
+  let title = formString(form.get('title'))
+  let author = formString(form.get('author'))
+  if (title === null && !metadataFallback) {
     return err({ kind: 'invalid_epub', reason: 'multipart field title is required' })
   }
 
@@ -53,9 +57,22 @@ export async function parsePurchasedBookForm(
     return err({ kind: 'invalid_epub', reason: 'uploaded file is not an EPUB zip' })
   }
 
+  if (metadataFallback && (title === null || author === null)) {
+    const metadata = readEpubPackageMetadata(epub)
+    if (title === null) {
+      title = metadata.title
+    }
+    if (author === null) {
+      author = metadata.creator
+    }
+  }
+  if (title === null) {
+    return err({ kind: 'invalid_epub', reason: 'EPUB package has no dc:title' })
+  }
+
   return ok({
     title,
-    author: formString(form.get('author')),
+    author,
     publishedAt: formString(form.get('publishedAt')),
     epub,
   })

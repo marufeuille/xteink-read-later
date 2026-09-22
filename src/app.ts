@@ -1,6 +1,6 @@
 import { Hono, type Context } from 'hono'
-import { unavailableClassification } from './classify/taxonomy'
 import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
+import { mountBookRoutes } from './http/book-routes'
 import { mountCandidateRoutes, type CandidateHttpDeps } from './http/candidate-routes'
 import { mountClipWebRoutes } from './http/clip-web-routes'
 import { mountDigestRoutes, type DigestHttpDeps } from './http/digest-routes'
@@ -9,7 +9,6 @@ import { toClipJobBody, toClipQueuedBody } from './http/clip-job'
 import { parseClipUrl } from './extract/parse-clip-url'
 import { parseClipShareText } from './http/clip-request'
 import { toErrorResponse } from './http/error-response'
-import { parsePurchasedBookForm } from './http/purchased-book'
 import { enqueueClipJob } from './job/enqueue'
 import { logOpdsDownload } from './log'
 import {
@@ -29,16 +28,12 @@ import type {
   EpubBytes,
   FeedQueueMessage,
   DigestQueueMessage,
-  PurchasedBookBody,
 } from './types'
 import {
   articleEpubKey,
-  articleIdFromBytes,
-  asEpubBytes,
   isArticleId,
   isClipJobId,
   parseHttpUrl,
-  purchasedCanonicalUrl,
 } from './types'
 
 function epubFileResponse(id: ArticleId, epub: EpubBytes): Response {
@@ -131,53 +126,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   }
 
   app.on('GET', ['/clip/jobs/:jobId', '/clip/jobs/:jobId/'], getClipJob)
-
-  const uploadBook = async (c: Context<AppEnv>) => {
-    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
-      return unauthorizedResponse('bearer')
-    }
-    let form: FormData
-    try {
-      form = await c.req.formData()
-    } catch {
-      return toErrorResponse({ kind: 'invalid_epub', reason: 'Request body must be multipart form data' })
-    }
-    const parsed = await parsePurchasedBookForm(form)
-    if (!parsed.ok) {
-      return toErrorResponse(parsed.error)
-    }
-
-    const id = await articleIdFromBytes(parsed.value.epub)
-    const canonicalUrl = purchasedCanonicalUrl(id)
-    await storeFor(c.env, deps).put({
-      id,
-      title: parsed.value.title,
-      author: parsed.value.author,
-      publishedAt: parsed.value.publishedAt,
-      sourceUrl: canonicalUrl,
-      canonicalUrl,
-      language: 'ja',
-      translated: false,
-      classification: unavailableClassification('skipped'),
-      epub: asEpubBytes(parsed.value.epub),
-    })
-
-    const response: PurchasedBookBody = {
-      id,
-      title: parsed.value.title,
-      author: parsed.value.author,
-      publishedAt: parsed.value.publishedAt,
-      sourceUrl: canonicalUrl,
-      canonicalUrl,
-      language: 'ja',
-      translated: false,
-      status: 'ready',
-      epubPath: `/${articleEpubKey(id)}`,
-    }
-    return c.json(response, 200)
-  }
-
-  app.on('POST', ['/books', '/books/'], uploadBook)
+  mountBookRoutes(app, deps)
 
   const requireOpdsBasic = async (c: Context<AppEnv>) => {
     if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
