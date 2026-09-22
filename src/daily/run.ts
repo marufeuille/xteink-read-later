@@ -7,6 +7,7 @@ import { createR2Store } from '../store/r2'
 import {
   DIGEST_LIST_PAGE_SIZE,
   DIGEST_MAX_JEV_CALLS,
+  digestSummaryCharBudget,
   type ArticleStore,
   type CandidateArticle,
   type CandidateStore,
@@ -133,11 +134,13 @@ async function summarizeSelected(
 ): Promise<{ prepared: DigestPreparedItem[]; skipped: number }> {
   const prepared: DigestPreparedItem[] = []
   let skipped = 0
+  const maxChars = digestSummaryCharBudget(selected.length)
   for (const candidate of selected) {
     try {
       const summarized = await summarize(candidate, {
         OPENAI_API_KEY: env.OPENAI_API_KEY,
         fetchPage,
+        maxChars,
       })
       if (summarized.ok) {
         prepared.push(summarized.value)

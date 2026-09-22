@@ -11,19 +11,29 @@ export const DAILY_DIGEST_TIMEZONE = 'Asia/Tokyo'
 export const DIGEST_BUCKETS = ['deep', 'tech', 'general'] as const
 export type DigestBucket = (typeof DIGEST_BUCKETS)[number]
 
+/** Upper bound for one bucket. There is no minimum and no backfill from another bucket. */
 export type DigestBucketQuota = {
-  readonly min: number
   readonly max: number
 }
 
 export const DIGEST_BUCKET_QUOTAS: Readonly<Record<DigestBucket, DigestBucketQuota>> = {
-  deep: { min: 3, max: 5 },
-  tech: { min: 1, max: 3 },
-  general: { min: 0, max: 2 },
+  deep: { max: 5 },
+  tech: { max: 3 },
+  general: { max: 2 },
 }
 
+/** Whole issue, not one article. A short issue is not stretched to fill the time. */
 export const DIGEST_TARGET_READING_MINUTES = 5
+/** E-ink reading pace used only to turn the issue target into a character budget. */
+export const DIGEST_CHARS_PER_MINUTE = 400
+/** Hard cap for one summary. One article never grows past this to fill five minutes. */
 export const DIGEST_SUMMARY_MAX_CHARS = 400
+
+export function digestSummaryCharBudget(articleCount: number): number {
+  const count = Number.isInteger(articleCount) && articleCount > 0 ? articleCount : 1
+  const issueBudget = DIGEST_TARGET_READING_MINUTES * DIGEST_CHARS_PER_MINUTE
+  return Math.min(DIGEST_SUMMARY_MAX_CHARS, Math.floor(issueBudget / count))
+}
 /** Confirm links in a digest issue stay valid this many days from the issue date. */
 export const DIGEST_QR_TTL_DAYS = 14
 export const DIGEST_MAX_JEV_CALLS = 10
