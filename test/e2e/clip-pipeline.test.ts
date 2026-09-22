@@ -5,10 +5,11 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/app'
 import { MAX_HTML_BYTES } from '../../src/extract/constants'
+import { buildEpub } from '../../src/epub/build-epub'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
 import { OPENAI_CHAT_URL } from '../../src/translate/constants'
-import { articleIdFromCanonicalUrl, parseHttpUrl } from '../../src/types'
+import { articleIdFromCanonicalUrl, asClipJobId, parseHttpUrl, type BuildEpub } from '../../src/types'
 import { basicAuthorization, bearerAuthorization, TEST_BINDINGS } from '../bindings'
 import { createFakeQueue } from '../fake-queue'
 import { installNetworkMock, openaiMessageResponse } from './mock-network'
@@ -32,10 +33,12 @@ type ClipJson = {
   error?: { code: string; message: string; extracted?: { contentHtml?: string; language?: string } }
 }
 
-function app() {
+function app(options: { readonly buildEpub?: BuildEpub } = {}) {
   const store = createMemoryStore()
   const queue = createFakeQueue()
-  const clipPipeline = createClipPipeline()
+  const clipPipeline = createClipPipeline({
+    ...(options.buildEpub === undefined ? {} : { buildEpub: options.buildEpub }),
+  })
   const hono = createApp({ store, queue })
   const env = { ...BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
   return { hono, store, queue, clipPipeline, env }
@@ -230,6 +233,45 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).toContain('<pre')
     expect(chapter).toContain('<code')
     expect(chapter).toContain('{&quot;compatibility_date&quot;:&quot;2026-09-19&quot;}')
+  })
+
+  it('retries EPUB generation without calling OpenAI again', async () => {
+    const pageUrl = 'https://example.com/en/compatibility-date'
+    let epubCalls = 0
+    const { fetchedUrls } = installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('en-tech.html') } },
+      openai: async () => openaiMessageResponse('一度だけ', '翻訳本文はここ。nodejs_compat が必要。'),
+    })
+    const ctx = app({
+      buildEpub: async (article) => {
+        epubCalls += 1
+        if (epubCalls === 1) {
+          throw new Error('zip boom')
+        }
+        return buildEpub(article)
+      },
+    })
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(epubCalls).toBe(2)
+    expect(fetchedUrls.filter((url) => url === OPENAI_CHAT_URL)).toEqual([OPENAI_CHAT_URL])
+    const jobId = queued.jobId
+    if (jobId === undefined) {
+      throw new Error('jobId')
+    }
+    expect(await ctx.store.getClipCheckpoint(asClipJobId(jobId))).toBeNull()
+    expect(JSON.stringify(job)).not.toContain('翻訳本文はここ')
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('翻訳本文はここ')
   })
 
   it('translates an English X article even when the page html lang is ja', async () => {

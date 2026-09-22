@@ -9,9 +9,13 @@ import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
 import { createMemoryStore } from '../src/store/memory'
 import { createR2Store } from '../src/store/r2'
+import { OPENAI_CHAT_URL } from '../src/translate/constants'
 import { translateArticle as openAiTranslate } from '../src/translate/openai'
 import { OPENROUTER_DECISIONS_URL } from '../src/jev/constants'
 import {
+  asArticleId,
+  asClipRunId,
+  asEpubBytes,
   clipJobIdFromUrl,
   err,
   ok,
@@ -618,6 +622,7 @@ describe('POST /clip', () => {
     try {
       const store = createMemoryStore()
       const queue = createFakeQueue()
+      let translations = 0
       const clipPipeline = createClipPipeline({
         extractPipeline: createExtractPipeline({
           fetchPage: async (url) =>
@@ -628,7 +633,10 @@ describe('POST /clip', () => {
               html: fixtureHtml('ja-tech.html'),
             }),
         }),
-        translateArticle: jaTranslate,
+        translateArticle: async (article, deps) => {
+          translations += 1
+          return jaTranslate(article, deps)
+        },
         buildEpub: async () => {
           throw new Error('zip boom')
         },
@@ -654,8 +662,90 @@ describe('POST /clip', () => {
             line.includes('"attempt":1'),
         ),
       ).toBe(true)
+      expect(translations).toBe(1)
+      const jobId = await clipJobIdFromUrl(mustUrl('https://example.com/ja/workers-cpu'))
+      expect(await store.getClipCheckpoint(jobId)).toBeNull()
+      expect(JSON.stringify(job)).not.toContain('contentHtml')
     } finally {
       spy.mockRestore()
+    }
+  })
+
+  it('does not call OpenAI again when an EPUB retry resumes the same run', async () => {
+    let openaiCalls = 0
+    let epubCalls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: unknown) => {
+        expect(String(input)).toBe(OPENAI_CHAT_URL)
+        openaiCalls += 1
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ title: '一度だけ', content: '翻訳本文はここ' }),
+              },
+            },
+          ],
+        })
+      }),
+    )
+    try {
+      const store = createMemoryStore()
+      const queue = createFakeQueue()
+      const pageUrl = 'https://example.com/en/compatibility-date'
+      const clipPipeline = createClipPipeline({
+        extractPipeline: createExtractPipeline({
+          fetchPage: async (url) =>
+            ok({
+              requestedUrl: url,
+              finalUrl: url,
+              contentType: 'text/html',
+              html: fixtureHtml('en-tech.html'),
+            }),
+        }),
+        translateArticle: openAiTranslate,
+        buildEpub: async () => {
+          epubCalls += 1
+          if (epubCalls === 1) {
+            throw new Error('zip boom')
+          }
+          return asEpubBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04]))
+        },
+      })
+      const app = createApp({ store, queue })
+      const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue, OPENAI_API_KEY: 'sk-test' } as Cloudflare.Env
+      const response = await clip(app, pageUrl, env)
+      expect(response.status).toBe(202)
+      const queued = await readJson(response)
+      const jobId = await clipJobIdFromUrl(mustUrl(pageUrl))
+      await store.putClipCheckpoint({
+        jobId,
+        runId: asClipRunId('run_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+        articleId: asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+        article: {
+          title: '古い翻訳',
+          author: null,
+          publishedAt: null,
+          sourceUrl: mustUrl(pageUrl),
+          canonicalUrl: mustUrl(pageUrl),
+          contentHtml: '<p>再利用してはいけない</p>',
+          language: 'ja',
+          translated: true,
+        },
+      })
+      await queue.drain(env, { clipPipeline, store })
+      const job = await readJson(await getJob(app, queued.jobId ?? '', env))
+      expect(job.status).toBe('ready')
+      expect(openaiCalls).toBe(1)
+      expect(epubCalls).toBe(2)
+      expect(await store.getClipCheckpoint(jobId)).toBeNull()
+      const meta = (await (await opdsGet(app, `/articles/${job.id}`, env)).json()) as { title: string }
+      expect(meta.title).not.toBe('古い翻訳')
+      expect(JSON.stringify(job)).not.toContain('翻訳本文はここ')
+      expect(JSON.stringify(job)).not.toContain('再利用してはいけない')
+    } finally {
+      vi.unstubAllGlobals()
     }
   })
 

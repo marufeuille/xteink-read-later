@@ -4,6 +4,7 @@ import type {
   ArticleMeta,
   ArticleStore,
   ArticleWrite,
+  ClipCheckpoint,
   ClipJobId,
   ClipJobRecord,
   EpubBytes,
@@ -17,6 +18,7 @@ export function createMemoryStore(): ArticleStore {
   const metas = new Map<ArticleId, ArticleMeta>()
   const epubs = new Map<ArticleId, EpubBytes>()
   const jobs = new Map<ClipJobId, ClipJobRecord>()
+  const checkpoints = new Map<ClipJobId, ClipCheckpoint>()
 
   return {
     async getMeta(id) {
@@ -56,6 +58,15 @@ export function createMemoryStore(): ArticleStore {
     },
     async putJob(job: ClipJobRecord) {
       jobs.set(job.jobId, job)
+    },
+    async getClipCheckpoint(id) {
+      return checkpoints.get(id) ?? null
+    },
+    async putClipCheckpoint(checkpoint) {
+      checkpoints.set(checkpoint.jobId, checkpoint)
+    },
+    async deleteClipCheckpoint(id) {
+      checkpoints.delete(id)
     },
   }
 }

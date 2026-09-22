@@ -1,7 +1,7 @@
 import type { ArticleMeta } from './article'
 import type { ArticleClassification } from './classify'
 import type { ArticleId, ClipJobId, EpubBytes } from './id'
-import type { ClipJobRecord, PipelineLogContext } from './job'
+import type { ClipCheckpoint, ClipJobRecord, PipelineLogContext } from './job'
 
 export type StoreDeps = Pick<Cloudflare.Env, 'ARTICLES'>
 
@@ -27,6 +27,9 @@ export type ArticleStore = {
   readonly listMeta: () => Promise<readonly ArticleMeta[]>
   readonly getJob: (id: ClipJobId) => Promise<ClipJobRecord | null>
   readonly putJob: (job: ClipJobRecord) => Promise<void>
+  readonly getClipCheckpoint: (id: ClipJobId) => Promise<ClipCheckpoint | null>
+  readonly putClipCheckpoint: (checkpoint: ClipCheckpoint) => Promise<void>
+  readonly deleteClipCheckpoint: (id: ClipJobId) => Promise<void>
 }
 
 export type CreateArticleStore = (deps: StoreDeps) => ArticleStore

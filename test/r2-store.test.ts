@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { classifiedClassification, lowConfidenceClassification } from '../src/classify/taxonomy'
 import { createR2Store } from '../src/store/r2'
-import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asClipRunId, asEpubBytes, clipJobKey, parseHttpUrl } from '../src/types'
+import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asClipRunId, asEpubBytes, clipCheckpointKey, clipJobKey, parseHttpUrl } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
 
 function url(value: string) {
@@ -76,6 +76,36 @@ describe('createR2Store', () => {
     expect(await bucket.head(clipJobKey(jobId))).not.toBeNull()
     expect(await store.getJob(jobId)).toMatchObject({ status: 'queued', jobId })
     expect(await store.listMeta()).toEqual([])
+  })
+
+  it('stores a translate checkpoint outside the OPDS prefix and drops a broken one', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const jobId = asClipJobId('job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+    const sourceUrl = url('https://example.com/checkpoint')
+    await store.putClipCheckpoint({
+      jobId,
+      runId: asClipRunId('run_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+      articleId: asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      article: {
+        title: '翻訳済み',
+        author: null,
+        publishedAt: null,
+        sourceUrl,
+        canonicalUrl: sourceUrl,
+        contentHtml: '<p>本文</p>',
+        language: 'ja',
+        translated: true,
+      },
+    })
+    expect(await bucket.head(clipCheckpointKey(jobId))).not.toBeNull()
+    expect(clipCheckpointKey(jobId).startsWith('articles/')).toBe(false)
+    expect((await store.getClipCheckpoint(jobId))?.article.title).toBe('翻訳済み')
+    expect(await store.listMeta()).toEqual([])
+    await bucket.put(clipCheckpointKey(jobId), '{')
+    expect(await store.getClipCheckpoint(jobId)).toBeNull()
+    await store.deleteClipCheckpoint(jobId)
+    expect(await bucket.head(clipCheckpointKey(jobId))).toBeNull()
   })
 
   it('overwrites the same canonical article and keeps createdAt', async () => {

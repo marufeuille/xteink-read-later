@@ -3,6 +3,7 @@ import {
   articleMetaKey,
   asArticleId,
   asEpubBytes,
+  clipCheckpointKey,
   clipJobKey,
   isArticleId,
   parseHttpUrl,
@@ -17,6 +18,7 @@ import {
   parseArticleClassification,
 } from '../classify/parse'
 import { logPipeline } from '../log'
+import { parseClipCheckpoint } from './checkpoint'
 import { parseClipJobRecord } from './job'
 
 function nowIso(): string {
@@ -206,6 +208,24 @@ export const createR2Store: CreateArticleStore = (deps) => {
     },
     async putJob(job) {
       await bucket.put(clipJobKey(job.jobId), JSON.stringify(job), JSON_HTTP_METADATA)
+    },
+    async getClipCheckpoint(id) {
+      const object = await bucket.get(clipCheckpointKey(id))
+      if (object === null) {
+        return null
+      }
+      try {
+        const parsed = parseClipCheckpoint(await object.json())
+        return parsed !== null && parsed.jobId === id ? parsed : null
+      } catch {
+        return null
+      }
+    },
+    async putClipCheckpoint(checkpoint) {
+      await bucket.put(clipCheckpointKey(checkpoint.jobId), JSON.stringify(checkpoint), JSON_HTTP_METADATA)
+    },
+    async deleteClipCheckpoint(id) {
+      await bucket.delete([clipCheckpointKey(id)])
     },
   }
   return store

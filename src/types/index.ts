@@ -134,6 +134,7 @@ export {
   asFeedSourceId,
   candidateDiscoveryIdFrom,
   candidateIdFromCanonicalUrl,
+  clipCheckpointKey,
   clipJobIdFromUrl,
   clipJobKey,
   feedSourceIdFromFeedUrl,
@@ -167,6 +168,7 @@ export type {
   SystemOneUsage,
 } from './jev'
 export type {
+  ClipCheckpoint,
   ClipFailedJob,
   ClipJobError,
   ClipJobRecord,
@@ -286,6 +288,8 @@ export type {
   AssignLanguage,
   BuildEpub,
   ClipPipeline,
+  ClipPipelineHooks,
+  ClipResume,
   ClipResult,
   DetectLanguage,
   ExtractArticle,
