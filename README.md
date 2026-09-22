@@ -206,7 +206,7 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 
 ### 情報源（RSS/Atom の巡回）
 
-企業ブログや Zenn などのフィードを登録し、候補にする。毎日 **04:00 Asia/Tokyo**（UTC 19:00）の Cron が有効な情報源を `FEED_QUEUE`（`xteink-read-later-feed`）に載せる。**06:00 Asia/Tokyo**（UTC 21:00）の Cron が当日号を `DIGEST_QUEUE`（`xteink-read-later-digest`）に載せる。画面の「今すぐ収集」は 1 件。「有効な情報源をすべて収集」が `POST /sources/collect`。既存の情報源は `POST /sources/:id` で更新する。まとめの手動実行は `POST /digest`（画面にボタンは無い）。`POST /clip` の全文生成 Queue とは別。媒体ごとの専用パーサは置かない。
+企業ブログや Zenn などのフィードを登録し、候補にする。毎日 **04:00 Asia/Tokyo**（UTC 19:00）の Cron が有効な情報源を `FEED_QUEUE`（`xteink-read-later-feed`）に載せる。**06:00 Asia/Tokyo**（UTC 21:00）の Cron が当日号を `DIGEST_QUEUE`（`xteink-read-later-digest`）に載せる。画面の「今すぐ収集」は 1 件。「有効な情報源をすべて収集」が `POST /sources/collect`。既存の情報源は `POST /sources/:id` で更新する。まとめの手動実行は情報源画面の「今日のまとめを作る」（`POST /digest`）。JSON の `POST /digest` も残す。`POST /clip` の全文生成 Queue とは別。媒体ごとの専用パーサは置かない。
 
 まとめに入るのは、一覧に残っていてページ取得済み、かつ無料全文を確認できた候補だけ。おすすめ度ごとの上限は、おすすめ 5、関連あり 3、優先度低 2。件数が足りなくても埋めない。過去号に載せた canonical URL は再掲しない。未判定は、その実行の中で最大 10 回まで Jev で判定する。各記事は抽出本文からの日本語要約（400 字まで）。タイトルやフィード抜粋だけからは本文を作らない。要約が 0 件の日、または実行が失敗した日は、デイリーをカタログから外す。クリップと購入 EPUB は残す。識別子と旧号は [docs/daily-opds.md](docs/daily-opds.md)。OPDS のデイリーは最新 1 冊だけ。
 

@@ -14,6 +14,7 @@ import {
   type FetchPage,
 } from '../src/types'
 import { accessIdentity, bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
+import { createFakeDigestQueue } from './fake-digest-queue'
 import { createFakeFeedQueue } from './fake-feed-queue'
 import { createFakeQueue } from './fake-queue'
 
@@ -157,9 +158,51 @@ describe('source HTTP', () => {
     expect(listed.status).toBe(200)
     const page = await listed.text()
     expect(page).toContain('情報源')
+    expect(page).toContain('今日のまとめを作る')
+    expect(page).toContain('action="/digest"')
     expect(page).not.toContain(TEST_CLIP_TOKEN)
     const denied = await app.request(
       '/sources/collect',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf: 'nope' }).toString(),
+      },
+      env,
+    )
+    expect(denied.status).toBe(403)
+  })
+
+  it('queues today’s digest from the sources form and shows the notice', async () => {
+    const digest = createFakeDigestQueue()
+    const app = createApp({
+      store: createMemoryStore(),
+      candidateStore: createMemoryCandidateStore(),
+      sourceStore: createMemoryFeedSourceStore(),
+      digestQueue: digest,
+      now: () => new Date('2026-09-21T03:00:00.000Z'),
+      ...accessIdentity(),
+    })
+    const env = { ...TEST_BINDINGS, DIGEST_QUEUE: digest } as Cloudflare.Env
+    const page = await app.request('/sources', {}, env)
+    const csrf = /name="csrf" value="([^"]+)"/.exec(await page.text())?.[1] ?? ''
+    const posted = await app.request(
+      '/digest',
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrf }).toString(),
+      },
+      env,
+    )
+    expect(posted.status).toBe(303)
+    expect(posted.headers.get('location')).toBe('/sources?notice=digest_queued')
+    expect(digest.peek()).toEqual([{ date: '2026-09-21' }])
+    const followed = await app.request('/sources?notice=digest_queued', {}, env)
+    expect(await followed.text()).toContain('まとめ生成を予約しました')
+
+    const denied = await app.request(
+      '/digest',
       {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },

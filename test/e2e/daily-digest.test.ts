@@ -21,7 +21,7 @@ import {
   type CandidateArticle,
   type HttpUrl,
 } from '../../src/types'
-import { basicAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from '../bindings'
+import { basicAuthorization, bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from '../bindings'
 import { createFakeDigestQueue } from '../fake-digest-queue'
 import { createFakeFeedQueue } from '../fake-feed-queue'
 import { createFakeQueue } from '../fake-queue'
@@ -321,5 +321,34 @@ describe('daily digest fixture e2e', () => {
     expect(finished.status).toBe(200)
     expect(await finished.text()).toContain('新しい生成は始めません')
     expect(clip.size).toBe(1)
+  })
+
+  it('queues a digest from the sources form without starting a clip', async () => {
+    const { clip, feed, digest } = queues()
+    const app = createApp({
+      store: createMemoryStore(),
+      queue: clip,
+      feedQueue: feed,
+      digestQueue: digest,
+      now: () => NOW,
+    })
+    const env = envWithQueues({ clip, feed, digest })
+    const posted = await app.request(
+      '/digest',
+      {
+        method: 'POST',
+        headers: {
+          authorization: bearerAuthorization(),
+          'content-type': 'application/x-www-form-urlencoded',
+        },
+        body: '',
+      },
+      env,
+    )
+    expect(posted.status).toBe(303)
+    expect(posted.headers.get('location')).toBe('/sources?notice=digest_queued')
+    expect(digest.peek()).toEqual([{ date: TODAY }])
+    expect(clip.size).toBe(0)
+    expect(feed.size).toBe(0)
   })
 })

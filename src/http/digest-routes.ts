@@ -36,11 +36,18 @@ export function mountDigestRoutes(app: Hono<AppEnv>, deps: DigestHttpDeps = {}):
       now,
     })
     if (queued.failed > 0) {
+      if (!json) {
+        return htmlResponse('情報源', '<p>まとめを予約できませんでした</p>', 303, {
+          location: '/sources?notice=digest_failed',
+        })
+      }
       return toErrorResponse({ kind: 'queue_failed', reason: 'Digest enqueue failed' })
     }
     if (json) {
       return c.json(toDailyDigestQueuedBody(queued.date), 202)
     }
-    return htmlResponse('まとめ', '<p>まとめ生成を予約しました</p>', 202)
+    return htmlResponse('情報源', '<p>まとめ生成を予約しました</p>', 303, {
+      location: '/sources?notice=digest_queued',
+    })
   })
 }
