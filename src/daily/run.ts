@@ -1,4 +1,5 @@
 import { reevaluateCandidate } from '../candidates/recommend'
+import { workerPublicOrigin } from '../digest/confirm-link'
 import { logDailyDigest } from '../log'
 import { createD1CandidateStore } from '../store/d1-candidates'
 import { createD1DigestStore } from '../store/d1-digest'
@@ -160,7 +161,16 @@ function publishedHistory(date: string, items: readonly DigestPreparedItem[]): D
 }
 
 function emptyResult(date: string, status: DigestRunResult['status'], selected = 0, skipped = 0): DigestRunResult {
-  return { date, status, selected, summarized: 0, skipped, articleId: null }
+  return { date, status, selected, summarized: 0, skipped, articleId: null, qrCount: 0 }
+}
+
+function digestQrInput(env: Cloudflare.Env): { readonly publicOrigin: string; readonly secret: string } | undefined {
+  const publicOrigin = workerPublicOrigin(env.PUBLIC_ORIGIN)
+  const secret = typeof env.CLIP_TOKEN === 'string' ? env.CLIP_TOKEN : ''
+  if (publicOrigin === null || secret.length === 0) {
+    return undefined
+  }
+  return { publicOrigin, secret }
 }
 
 export async function runDailyDigest(env: Cloudflare.Env, deps: RunDailyDigestDeps): Promise<DigestRunResult> {
@@ -194,7 +204,12 @@ export async function runDailyDigest(env: Cloudflare.Env, deps: RunDailyDigestDe
       return finish(emptyResult(date, 'empty', selected.length, skipped))
     }
 
-    const built = await buildDailyDigestWrite({ date, items: prepared })
+    const qr = digestQrInput(env)
+    const built = await buildDailyDigestWrite({
+      date,
+      items: prepared,
+      ...(qr === undefined ? {} : { qr }),
+    })
     const published = await publishLatestDaily(store, built.write)
     await digestStore.replacePublishedItems(date, publishedHistory(date, prepared))
     return finish({
@@ -204,6 +219,7 @@ export async function runDailyDigest(env: Cloudflare.Env, deps: RunDailyDigestDe
       summarized: prepared.length,
       skipped,
       articleId: published.meta.id,
+      qrCount: qr === undefined ? 0 : prepared.length,
     })
   } catch {
     await unpublishDailyDigests(store)
@@ -219,6 +235,7 @@ function logDigestRun(result: DigestRunResult, durationMs: number): void {
     summarized: result.summarized,
     skipped: result.skipped,
     durationMs,
+    qrCount: result.qrCount,
     ...(result.articleId === null ? {} : { articleId: result.articleId }),
   })
 }

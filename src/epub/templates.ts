@@ -20,6 +20,14 @@ a {
 .source {
   font-size: 0.9em;
 }
+img.digest-qr {
+  display: block;
+  width: 70%;
+  max-width: 18em;
+  height: auto;
+  background: #ffffff;
+  margin: 1em 0;
+}
 `
 
 export const CONTAINER_XML = `<?xml version="1.0" encoding="UTF-8"?>

@@ -5,5 +5,6 @@ declare namespace Cloudflare {
     CLIP_TOKEN: string
     OPDS_USERNAME: string
     OPDS_PASSWORD: string
+    PUBLIC_ORIGIN: string
   }
 }

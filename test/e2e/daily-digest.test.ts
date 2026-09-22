@@ -1,6 +1,8 @@
 import { unzipSync, strFromU8 } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/app'
+import { digestConfirmUrl, digestQrExpiresAt, signDigestQrToken } from '../../src/digest/confirm-link'
+import { qrPng } from '../../src/digest/qr-png'
 import { buildDummyDailyWrite } from '../../src/daily/issue'
 import { publishLatestDaily } from '../../src/daily/publish'
 import { handleScheduled } from '../../src/schedule'
@@ -10,6 +12,7 @@ import { createMemoryCandidateStore } from '../../src/store/memory-candidates'
 import { createMemoryDigestStore } from '../../src/store/memory-digest'
 import { createMemoryStore } from '../../src/store/memory'
 import {
+  articleIdFromCanonicalUrl,
   asArticleId,
   asCandidateId,
   asEpubBytes,
@@ -18,7 +21,7 @@ import {
   type CandidateArticle,
   type HttpUrl,
 } from '../../src/types'
-import { basicAuthorization, TEST_BINDINGS } from '../bindings'
+import { basicAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from '../bindings'
 import { createFakeDigestQueue } from '../fake-digest-queue'
 import { createFakeFeedQueue } from '../fake-feed-queue'
 import { createFakeQueue } from '../fake-queue'
@@ -41,6 +44,10 @@ function chapter(epub: Uint8Array): string {
   return strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
 }
 
+function epubFiles(epub: Uint8Array): Record<string, Uint8Array> {
+  return unzipSync(epub)
+}
+
 function articleHtml(url: string, title: string): string {
   return `<!DOCTYPE html><html lang="ja"><head><title>${title}</title><link rel="canonical" href="${url}" /></head>
 <body><article><h1>${title}</h1>
@@ -54,6 +61,7 @@ function listed(input: {
   readonly id: string
   readonly url: string
   readonly title: string
+  readonly recommendation?: CandidateArticle['recommendation']
 }): CandidateArticle {
   const canonicalUrl = mustUrl(input.url)
   const now = NOW.toISOString()
@@ -73,18 +81,20 @@ function listed(input: {
     clipJobId: null,
     clipRunId: null,
     selectedAt: null,
-    recommendation: evaluatedRecommendation({
-      grade: 'recommended',
-      confidence: 0.94,
-      model: 'test-model',
-      excerptHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      evaluatedAt: now,
-      relevant: true,
-      concrete: true,
-      verification: true,
-      inputTokens: 20,
-      durationMs: 10,
-    }),
+    recommendation:
+      input.recommendation ??
+      evaluatedRecommendation({
+        grade: 'recommended',
+        confidence: 0.94,
+        model: 'test-model',
+        excerptHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        evaluatedAt: now,
+        relevant: true,
+        concrete: true,
+        verification: true,
+        inputTokens: 20,
+        durationMs: 10,
+      }),
     createdAt: now,
     updatedAt: now,
   }
@@ -114,9 +124,11 @@ afterEach(() => {
 describe('daily digest fixture e2e', () => {
   it('publishes only today’s digest to OPDS after the aggregation cron', async () => {
     const todayUrl = 'https://example.com/deep-pipeline'
+    const secondUrl = 'https://example.com/related-note'
     installNetworkMock({
       pages: {
         [todayUrl]: { html: articleHtml(todayUrl, 'パイプラインの深い話') },
+        [secondUrl]: { html: articleHtml(secondUrl, '関連する実装メモ') },
       },
       openai: async () => openaiMessageResponse('unused', '日本語の要約です。設計と運用の要点だけを残します。'),
     })
@@ -124,8 +136,10 @@ describe('daily digest fixture e2e', () => {
     const candidateStore = createMemoryCandidateStore()
     const digestStore = createMemoryDigestStore()
     const { clip, feed, digest } = queues()
+    const keptEpub = asEpubBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3]))
+    const keptId = asArticleId('art_dddddddddddddddddddddddddddddddd')
     await store.put({
-      id: asArticleId('art_dddddddddddddddddddddddddddddddd'),
+      id: keptId,
       title: 'クリップ記事',
       author: null,
       publishedAt: null,
@@ -134,7 +148,7 @@ describe('daily digest fixture e2e', () => {
       language: 'ja',
       translated: false,
       classification: unavailableClassification('skipped'),
-      epub: asEpubBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3])),
+      epub: keptEpub,
     })
     const yesterday = await buildDummyDailyWrite({
       date: '2026-09-20',
@@ -149,8 +163,30 @@ describe('daily digest fixture e2e', () => {
         title: 'パイプラインの深い話',
       }),
     )
+    await candidateStore.put(
+      listed({
+        id: 'cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        url: secondUrl,
+        title: '関連する実装メモ',
+        recommendation: evaluatedRecommendation({
+          grade: 'related',
+          confidence: 0.9,
+          model: 'test-model',
+          excerptHash: 'cccccccccccccccccccccccccccccccc',
+          evaluatedAt: NOW.toISOString(),
+          relevant: true,
+          concrete: false,
+          verification: false,
+          inputTokens: 20,
+          durationMs: 10,
+        }),
+      }),
+    )
 
-    const env = envWithQueues({ clip, feed, digest })
+    const env = {
+      ...envWithQueues({ clip, feed, digest }),
+      PUBLIC_ORIGIN: 'https://read.example.com',
+    }
     const scheduled = await handleScheduled({ cron: DAILY_DIGEST_CRON }, env, {
       digestQueue: digest,
       now: () => NOW,
@@ -167,7 +203,7 @@ describe('daily digest fixture e2e', () => {
     })
     expect(clip.size).toBe(0)
 
-    const app = createApp({ store })
+    const app = createApp({ store, candidateStore, queue: clip, now: () => NOW })
     const catalog = await app.request(
       'https://read.example.com/opds',
       { headers: { authorization: basicAuthorization() } },
@@ -198,8 +234,92 @@ describe('daily digest fixture e2e', () => {
     const epub = (await store.getEpub(todayMeta!.id)) ?? new Uint8Array()
     const body = chapter(epub)
     expect(body).toContain('パイプラインの深い話')
+    expect(body).toContain('関連する実装メモ')
     expect(body).toContain(todayUrl)
     expect(body).toContain('日本語の要約です')
     expect(body).not.toContain('DAY-2026-09-20')
+    const files = epubFiles(epub)
+    const pngs = Object.keys(files).filter((name) => name.endsWith('.png')).sort()
+    expect(pngs).toEqual([
+      'OEBPS/images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png',
+      'OEBPS/images/qr-cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png',
+    ])
+    const opf = strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())
+    expect(opf.match(/media-type="image\/png"/g)).toHaveLength(2)
+    const kept = (await store.getEpub(keptId)) ?? new Uint8Array()
+    expect(Buffer.from(kept).equals(Buffer.from(keptEpub))).toBe(true)
+
+    const expiresAt = digestQrExpiresAt(TODAY)
+    const token = await signDigestQrToken({
+      secret: TEST_CLIP_TOKEN,
+      candidateId: 'cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      expiresAt,
+    })
+    const confirm = digestConfirmUrl('https://read.example.com', 'cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', expiresAt, token)
+    const png = files['OEBPS/images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'] ?? new Uint8Array()
+    expect(Buffer.from(png).equals(Buffer.from(qrPng(confirm)))).toBe(true)
+    expect(body).not.toContain(token)
+    expect(body).not.toContain(TEST_CLIP_TOKEN)
+
+    const viewed = await app.request(confirm, { method: 'GET' }, env)
+    expect(viewed.status).toBe(200)
+    expect(await viewed.text()).toContain('全文を送る')
+    expect(clip.size).toBe(0)
+    const sent = await app.request(confirm, { method: 'POST' }, env)
+    expect(sent.status).toBe(200)
+    expect(await sent.text()).toContain('全文の準備を開始しました')
+    expect(clip.size).toBe(1)
+
+    const tampered = `${confirm.slice(0, -1)}${confirm.endsWith('a') ? 'b' : 'a'}`
+    const rejected = await app.request(tampered, { method: 'POST' }, env)
+    expect(rejected.status).toBe(403)
+    expect(clip.size).toBe(1)
+
+    const expiredAt = digestQrExpiresAt('2026-09-01')
+    const expiredToken = await signDigestQrToken({
+      secret: TEST_CLIP_TOKEN,
+      candidateId: 'cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      expiresAt: expiredAt,
+    })
+    const expired = await app.request(
+      digestConfirmUrl('https://read.example.com', 'cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', expiredAt, expiredToken),
+      { method: 'POST' },
+      env,
+    )
+    expect(expired.status).toBe(403)
+    expect(await expired.text()).toContain('期限が切れています')
+    expect(clip.size).toBe(1)
+
+    const secondUrlParsed = mustUrl(secondUrl)
+    const finishedId = await articleIdFromCanonicalUrl(secondUrlParsed)
+    await store.put({
+      id: finishedId,
+      title: '関連する実装メモ',
+      author: null,
+      publishedAt: null,
+      sourceUrl: secondUrlParsed,
+      canonicalUrl: secondUrlParsed,
+      language: 'ja',
+      translated: false,
+      epub: asEpubBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 4])),
+    })
+    const finishedToken = await signDigestQrToken({
+      secret: TEST_CLIP_TOKEN,
+      candidateId: 'cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      expiresAt,
+    })
+    const finished = await app.request(
+      digestConfirmUrl(
+        'https://read.example.com',
+        'cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        expiresAt,
+        finishedToken,
+      ),
+      { method: 'POST' },
+      env,
+    )
+    expect(finished.status).toBe(200)
+    expect(await finished.text()).toContain('新しい生成は始めません')
+    expect(clip.size).toBe(1)
   })
 })

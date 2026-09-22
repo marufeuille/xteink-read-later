@@ -192,6 +192,10 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 
 1 回の収集は情報源ごとに独立する。件数 20、フィードサイズ約 1MB、時間 20 秒、Queue 再試行 3 回が上限。失敗は情報源一覧に出る。同じ「今すぐ収集」か翌日の Cron で再実行する。収集 Cron は enqueue だけで本文翻訳しない。まとめ Cron は無料本文が取れた候補だけを日本語要約し、タイトルやフィード抜粋からは本文を作らない。
 
+まとめ EPUB の各記事の下に、確認ページへの白地 PNG の QR を入れる。スマホで開くと「全文を送る」が出る。GET は送信しない。ボタンの POST だけが候補一覧と同じ全文 Queue に入る。Google ログインは要らない。署名は候補 ID と、号の日付から 14 日の期限に紐づく。`CLIP_TOKEN` は URL に入らない。同じ日にまとめを作り直しても QR は同じ。完成済みの全文は再利用し、新しい run は作らない。有料・取得できない記事は理由を出して送らない。通常の記事 EPUB には画像を入れない。`/digest/send` は Access のパスに入れない。
+
+`PUBLIC_ORIGIN` は秘密ではない。`wrangler.jsonc` の `vars` に本番 origin（末尾スラッシュなし）を置く。未設定、またはパスやクエリ付きのときはまとめ自体は出るが QR は付かない。
+
 ```bash
 curl -sS "$WORKER/sources" \
   -H 'content-type: application/json' \
@@ -325,7 +329,7 @@ npx wrangler secret put OPDS_PASSWORD
 
 ### 初回だけ — 管理画面の Google 認証（Cloudflare Access）
 
-候補一覧、情報源、PC クリップ確認のブラウザ画面を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles`・`/books` は今までどおり Bearer / Basic。`/clip/web` だけをクリップ画面として足す。
+候補一覧、情報源、PC クリップ確認のブラウザ画面を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles`・`/books` は今までどおり Bearer / Basic。`/clip/web` だけをクリップ画面として足す。まとめ QR の `/digest/send` は Access に入れない。
 
 1. [Zero Trust](https://one.dash.cloudflare.com/) で組織を有効にする。
 2. [Google を identity provider にする](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/)。Google Cloud の OAuth クライアントが必要。Authorized redirect URI は `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/callback`。
