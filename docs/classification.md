@@ -1,6 +1,6 @@
 # 記事分類（MAR-57）
 
-clip した記事に、Jev で話題と種類を付ける。OPDS の棚は話題ではなく日付にする（[MAR-84](https://linear.app/marufeuille/issue/MAR-84)）。`GET /opds` は `clip` と `ebook` の入口で、その下は Asia/Tokyo の暦日。分類に失敗しても記事は隠さない。
+clip した記事に、Jev で話題と種類を付ける。OPDS の棚は話題ではなく日付にする（[MAR-84](https://linear.app/marufeuille/issue/MAR-84)）。`GET /opds` は `clip` と `ebook` の入口で、その下は Asia/Tokyo の暦日。`clip` の暦日は初回保存（Clip した時刻）で、記事の公開日ではない（[MAR-92](https://linear.app/marufeuille/issue/MAR-92)）。分類に失敗しても記事は隠さない。
 
 ## プロバイダ
 
@@ -40,7 +40,7 @@ Secret は `OPENROUTER_API_KEY`。未設定・空なら Jev は呼ばず `status
 | `essay` | エッセイ、意見、体験談、コラム |
 | `uncategorized` | 同上 |
 
-OPDS の棚は topic ではなく日付にする。Web 記事は `clip`、購入本は `ebook` で、見返しが少ないので topic / kind の棚は作らない。topic と kind は記事メタに残す。
+OPDS の棚は topic ではなく日付にする。Web 記事は `clip`、購入本は `ebook` で、見返しが少ないので topic / kind の棚は作らない。`clip` は `createdAt` の Asia/Tokyo 暦日（公開日では分けない）。`ebook` は読める `publishedAt` を優先し、空または解釈できないときだけ `createdAt` に倒す。topic と kind は記事メタに残す。
 
 ## 分岐
 

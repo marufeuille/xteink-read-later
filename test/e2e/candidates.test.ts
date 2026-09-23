@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/app'
+import { opdsClipCalendarDate } from '../../src/opds/catalog'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryCandidateStore } from '../../src/store/memory-candidates'
 import { createMemoryStore } from '../../src/store/memory'
@@ -195,8 +196,22 @@ describe('candidate fixture e2e', () => {
     expect(item?.availableInOpds).toBe(true)
     expect(item?.completedArticleId).toMatch(/^art_/)
 
+    const saved = await hono.request(
+      `/articles/${item?.completedArticleId}`,
+      { headers: { authorization: basicAuthorization() } },
+      env,
+    )
+    const createdAt = ((await saved.json()) as { createdAt: string }).createdAt
+    const clipDate = opdsClipCalendarDate({ createdAt })
+    expect(clipDate).not.toBe('2026-03-01')
+    expect(
+      (
+        await hono.request('/opds/clip/2026-03-01', { headers: { authorization: basicAuthorization() } }, env)
+      ).status,
+    ).toBe(404)
+
     const catalog = await hono.request(
-      '/opds/clip/2026-03-01',
+      `/opds/clip/${clipDate}`,
       { headers: { authorization: basicAuthorization() } },
       env,
     )

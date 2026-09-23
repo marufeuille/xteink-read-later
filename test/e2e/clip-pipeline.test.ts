@@ -9,6 +9,7 @@ import { buildEpub } from '../../src/epub/build-epub'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
 import { OPENAI_CHAT_URL } from '../../src/translate/constants'
+import { opdsClipCalendarDate } from '../../src/opds/catalog'
 import { articleIdFromCanonicalUrl, asClipJobId, parseHttpUrl, type BuildEpub } from '../../src/types'
 import { basicAuthorization, bearerAuthorization, TEST_BINDINGS } from '../bindings'
 import { createFakeQueue } from '../fake-queue'
@@ -363,10 +364,20 @@ describe('clip pipeline E2E (fixture network)', () => {
       ctx.env,
     )
     expect(meta.status).toBe(200)
-    expect(((await meta.json()) as { title: string }).title).toBe(extractTitle)
+    const saved = (await meta.json()) as { title: string; createdAt: string }
+    expect(saved.title).toBe(extractTitle)
+    const clipDate = opdsClipCalendarDate(saved)
+    expect(clipDate).not.toBe('2026-04-12')
+
+    const publishedDay = await ctx.hono.request(
+      '/opds/clip/2026-04-12',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(publishedDay.status).toBe(404)
 
     const catalog = await ctx.hono.request(
-      '/opds/clip/2026-04-12',
+      `/opds/clip/${clipDate}`,
       { headers: { authorization: basicAuthorization() } },
       ctx.env,
     )
