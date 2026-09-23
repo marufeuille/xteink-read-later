@@ -102,7 +102,11 @@ export function parseOpdsCatalogPath(pathname: string): OpdsLocation | null {
   return { kind: 'date', shelf, date }
 }
 
-export function opdsCalendarDate(article: Pick<ArticleMeta, 'publishedAt' | 'createdAt'>): string | null {
+export function opdsClipCalendarDate(article: Pick<ArticleMeta, 'createdAt'>): string | null {
+  return calendarDateOf(article.createdAt)
+}
+
+export function opdsEbookCalendarDate(article: Pick<ArticleMeta, 'publishedAt' | 'createdAt'>): string | null {
   const published = article.publishedAt
   if (published !== null && published.trim().length > 0) {
     const instant = readableInstant(published)
@@ -217,7 +221,7 @@ function groupOpdsArticles(articles: readonly ArticleMeta[]): OpdsGroups {
       }
       continue
     }
-    const date = opdsCalendarDate(article)
+    const date = bucket === 'clip' ? opdsClipCalendarDate(article) : opdsEbookCalendarDate(article)
     if (date === null) {
       continue
     }

@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/app'
 import { dailyCanonicalUrl, dailyIssueIdentity } from '../../src/daily/identity'
 import { buildDummyDailyWrite } from '../../src/daily/issue'
 import { publishLatestDaily } from '../../src/daily/publish'
-import { OPDS_CACHE_CONTROL, OPDS_CATALOG_TYPE, OPDS_NAVIGATION_TYPE, opdsCalendarDate } from '../../src/opds/catalog'
+import { OPDS_CACHE_CONTROL, OPDS_CATALOG_TYPE, OPDS_NAVIGATION_TYPE } from '../../src/opds/catalog'
 import { unavailableClassification } from '../../src/classify/taxonomy'
 import { createMemoryStore } from '../../src/store/memory'
 import {
@@ -51,33 +51,40 @@ describe('OPDS date shelves', () => {
     const feed = asArticleId('art_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
     const undated = asArticleId('art_cccccccccccccccccccccccccccccccc')
     const purchased = asArticleId('art_dddddddddddddddddddddddddddddddd')
-    await store.put(
-      book({
-        id: manual,
-        title: '手動記事',
-        publishedAt: '2026-09-20T14:59:59.000Z',
-        canonicalUrl: mustUrl('https://example.com/manual'),
-        sourceUrl: mustUrl('https://example.com/manual'),
-      }),
-    )
-    await store.put(
-      book({
-        id: feed,
-        title: 'フィード記事',
-        publishedAt: '2026-09-20T15:00:00.000Z',
-        canonicalUrl: mustUrl('https://feeds.example.com/item'),
-        sourceUrl: mustUrl('https://feeds.example.com/item'),
-      }),
-    )
-    await store.put(
-      book({
-        id: undated,
-        title: '日付のない記事',
-        publishedAt: '2024年3月',
-        canonicalUrl: mustUrl('https://notes.example.com/free-form'),
-        sourceUrl: mustUrl('https://notes.example.com/free-form'),
-      }),
-    )
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-18T01:00:00.000Z'))
+      await store.put(
+        book({
+          id: manual,
+          title: '手動記事',
+          publishedAt: '2026-09-20T14:59:59.000Z',
+          canonicalUrl: mustUrl('https://example.com/manual'),
+          sourceUrl: mustUrl('https://example.com/manual'),
+        }),
+      )
+      await store.put(
+        book({
+          id: undated,
+          title: '日付のない記事',
+          publishedAt: '2024年3月',
+          canonicalUrl: mustUrl('https://notes.example.com/free-form'),
+          sourceUrl: mustUrl('https://notes.example.com/free-form'),
+        }),
+      )
+      vi.setSystemTime(new Date('2026-09-22T01:00:00.000Z'))
+      await store.put(
+        book({
+          id: feed,
+          title: 'フィード記事',
+          publishedAt: '2026-09-20T15:00:00.000Z',
+          canonicalUrl: mustUrl('https://feeds.example.com/item'),
+          sourceUrl: mustUrl('https://feeds.example.com/item'),
+        }),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
     await store.put(
       book({
         id: purchased,
@@ -126,42 +133,38 @@ describe('OPDS date shelves', () => {
 
     const clip = await app.request('https://read.example.com/opds/clip/', { headers }, TEST_BINDINGS)
     expect(clip.headers.get('content-type')).toContain(OPDS_NAVIGATION_TYPE)
-    const clipDates = subsectionHrefs(await clip.text())
-    const undatedMeta = await app.request(`https://read.example.com/articles/${undated}`, { headers }, TEST_BINDINGS)
-    const createdAt = ((await undatedMeta.json()) as { createdAt: string }).createdAt
-    const fallbackDate = opdsCalendarDate({ publishedAt: '2024年3月', createdAt })
-    expect(fallbackDate).not.toBeNull()
-    expect(clipDates).toEqual(
-      [...new Set(['2026-09-21', '2026-09-20', fallbackDate ?? ''])]
-        .sort((left, right) => (left < right ? 1 : -1))
-        .map((date) => `https://read.example.com/opds/clip/${date}`),
-    )
+    expect(subsectionHrefs(await clip.text())).toEqual([
+      'https://read.example.com/opds/clip/2026-09-22',
+      'https://read.example.com/opds/clip/2026-09-18',
+    ])
 
-    const sep21 = await app.request('https://read.example.com/opds/clip/2026-09-21', { headers }, TEST_BINDINGS)
-    expect(sep21.headers.get('content-type')).toContain(OPDS_CATALOG_TYPE)
-    const sep21Xml = await sep21.text()
-    expect(sep21Xml).toContain('フィード記事')
-    expect(sep21Xml).toContain(`https://read.example.com/opds/download/${feed}.epub`)
-    expect(sep21Xml).not.toContain('手動記事')
-    expect(sep21Xml).not.toContain('購入本')
-    expect(sep21Xml).not.toContain('まとめ')
-    expect(sep21Xml.includes('日付のない記事')).toBe(fallbackDate === '2026-09-21')
+    const clippedLater = await app.request('https://read.example.com/opds/clip/2026-09-22', { headers }, TEST_BINDINGS)
+    expect(clippedLater.headers.get('content-type')).toContain(OPDS_CATALOG_TYPE)
+    const clippedLaterXml = await clippedLater.text()
+    expect(clippedLaterXml).toContain('フィード記事')
+    expect(clippedLaterXml).toContain(`https://read.example.com/opds/download/${feed}.epub`)
+    expect(clippedLaterXml).toContain('<published>2026-09-20T15:00:00.000Z</published>')
+    expect(clippedLaterXml).not.toContain('手動記事')
+    expect(clippedLaterXml).not.toContain('日付のない記事')
+    expect(clippedLaterXml).not.toContain('購入本')
+    expect(clippedLaterXml).not.toContain('まとめ')
 
-    const sep20 = await app.request('https://read.example.com/opds/clip/2026-09-20/', { headers }, TEST_BINDINGS)
-    const sep20Xml = await sep20.text()
-    expect(sep20Xml).toContain('手動記事')
-    expect(sep20Xml).not.toContain('フィード記事')
-    expect(sep20Xml.includes('日付のない記事')).toBe(fallbackDate === '2026-09-20')
-
-    const fallback = await app.request(
-      `https://read.example.com/opds/clip/${fallbackDate}`,
+    const clippedEarlier = await app.request(
+      'https://read.example.com/opds/clip/2026-09-18/',
       { headers },
       TEST_BINDINGS,
     )
-    const fallbackXml = await fallback.text()
-    expect(fallbackXml).toContain('日付のない記事')
-    expect(fallbackXml.includes('フィード記事')).toBe(fallbackDate === '2026-09-21')
-    expect(fallbackXml.includes('手動記事')).toBe(fallbackDate === '2026-09-20')
+    const clippedEarlierXml = await clippedEarlier.text()
+    expect(clippedEarlierXml).toContain('手動記事')
+    expect(clippedEarlierXml).toContain('日付のない記事')
+    expect(clippedEarlierXml).toContain('<published>2026-09-20T14:59:59.000Z</published>')
+    expect(clippedEarlierXml).not.toContain('フィード記事')
+    expect(
+      await app.request('https://read.example.com/opds/clip/2026-09-21', { headers }, TEST_BINDINGS),
+    ).toMatchObject({ status: 404 })
+    expect(
+      await app.request('https://read.example.com/opds/clip/2026-09-20/', { headers }, TEST_BINDINGS),
+    ).toMatchObject({ status: 404 })
     expect(await app.request('https://read.example.com/opds/clip/2026-01-01', { headers }, TEST_BINDINGS)).toMatchObject({
       status: 404,
     })

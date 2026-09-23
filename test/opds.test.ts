@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app'
 import { dailyCanonicalUrl } from '../src/daily/identity'
 import {
@@ -7,7 +7,8 @@ import {
   OPDS_CATALOG_TYPE,
   OPDS_NAVIGATION_TYPE,
   OPDS_SUBSECTION_REL,
-  opdsCalendarDate,
+  opdsClipCalendarDate,
+  opdsEbookCalendarDate,
   parseOpdsCatalogPath,
   parseOpdsDownloadFile,
 } from '../src/opds/catalog'
@@ -105,27 +106,34 @@ describe('parseOpdsCatalogPath', () => {
   })
 })
 
-describe('opdsCalendarDate', () => {
-  it('uses the JST calendar date of publishedAt and falls back to createdAt', () => {
+describe('opds shelf dates', () => {
+  it('places clips on the JST day they were saved, ignoring the article date', () => {
+    expect(opdsClipCalendarDate({ createdAt: '2026-09-20T14:59:59.000Z' })).toBe('2026-09-20')
+    expect(opdsClipCalendarDate({ createdAt: '2026-09-20T15:00:00.000Z' })).toBe('2026-09-21')
+    expect(opdsClipCalendarDate({ createdAt: '  2026-04-12  ' })).toBe('2026-04-12')
+    expect(opdsClipCalendarDate({ createdAt: 'not-a-date' })).toBeNull()
+  })
+
+  it('places ebooks on a readable publishedAt and falls back to createdAt', () => {
     const createdAt = '2026-09-20T15:00:00.000Z'
     const base = {
       createdAt,
       publishedAt: null as string | null,
     }
-    expect(opdsCalendarDate({ ...base, publishedAt: '2026-09-20T14:59:59.000Z' })).toBe('2026-09-20')
-    expect(opdsCalendarDate({ ...base, publishedAt: '2026-09-20T15:00:00.000Z' })).toBe('2026-09-21')
-    expect(opdsCalendarDate({ ...base, publishedAt: '2026-09-21T00:00:00.000+09:00' })).toBe('2026-09-21')
-    expect(opdsCalendarDate({ ...base, publishedAt: '2026-04-12' })).toBe('2026-04-12')
-    expect(opdsCalendarDate({ ...base, publishedAt: '  2026-04-12  ' })).toBe('2026-04-12')
-    expect(opdsCalendarDate({ ...base, publishedAt: null })).toBe('2026-09-21')
-    expect(opdsCalendarDate({ ...base, publishedAt: '' })).toBe('2026-09-21')
-    expect(opdsCalendarDate({ ...base, publishedAt: '   ' })).toBe('2026-09-21')
-    expect(opdsCalendarDate({ ...base, publishedAt: '2024年3月' })).toBe('2026-09-21')
-    expect(opdsCalendarDate({ ...base, publishedAt: '2026-02-31' })).toBe('2026-09-21')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '2026-09-20T14:59:59.000Z' })).toBe('2026-09-20')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '2026-09-20T15:00:00.000Z' })).toBe('2026-09-21')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '2026-09-21T00:00:00.000+09:00' })).toBe('2026-09-21')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '2026-04-12' })).toBe('2026-04-12')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '  2026-04-12  ' })).toBe('2026-04-12')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: null })).toBe('2026-09-21')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '' })).toBe('2026-09-21')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '   ' })).toBe('2026-09-21')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '2024年3月' })).toBe('2026-09-21')
+    expect(opdsEbookCalendarDate({ ...base, publishedAt: '2026-02-31' })).toBe('2026-09-21')
     expect(
-      opdsCalendarDate({ publishedAt: '2026-09-21T00:00:00', createdAt: '2026-09-18T00:00:00.000Z' }),
+      opdsEbookCalendarDate({ publishedAt: '2026-09-21T00:00:00', createdAt: '2026-09-18T00:00:00.000Z' }),
     ).toBe('2026-09-18')
-    expect(opdsCalendarDate({ publishedAt: 'not-a-date', createdAt: 'also-not-a-date' })).toBeNull()
+    expect(opdsEbookCalendarDate({ publishedAt: 'not-a-date', createdAt: 'also-not-a-date' })).toBeNull()
   })
 })
 
@@ -135,26 +143,26 @@ describe('buildOpdsCatalog', () => {
     id: asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
     title: '手動 & <記事>',
     author: '石井',
-    publishedAt: '2026-09-19T15:00:00.000Z',
+    publishedAt: '2026-03-01T00:00:00.000Z',
     sourceUrl: url('https://example.com/manual'),
     canonicalUrl: url('https://example.com/manual'),
-    createdAt: '2026-09-18T10:00:00.000Z',
+    createdAt: '2026-09-19T15:00:00.000Z',
     updatedAt: '2026-09-21T01:00:00.000Z',
   })
   const feed = meta({
     id: asArticleId('art_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
     title: 'フィード記事',
-    publishedAt: '2026-09-21T00:00:00.000Z',
+    publishedAt: '2026-09-19T15:00:00.000Z',
     sourceUrl: url('https://feeds.example.com/item'),
     canonicalUrl: url('https://feeds.example.com/item'),
-    createdAt: '2026-09-18T11:00:00.000Z',
+    createdAt: '2026-09-20T16:00:00.000Z',
     updatedAt: '2026-09-21T03:00:00.000Z',
   })
   const olderSameDay = meta({
     id: asArticleId('art_cccccccccccccccccccccccccccccccc'),
     title: '同じ日の古い記事',
-    publishedAt: '2026-09-21T02:00:00.000Z',
-    createdAt: '2026-09-18T12:00:00.000Z',
+    publishedAt: '2026-09-20T15:00:00.000Z',
+    createdAt: '2026-09-20T18:00:00.000Z',
     updatedAt: '2026-09-21T02:00:00.000Z',
   })
   const purchasedId = asArticleId('art_dddddddddddddddddddddddddddddddd')
@@ -212,6 +220,7 @@ describe('buildOpdsCatalog', () => {
       'https://opds.example.com/opds/clip/2026-09-20',
     ])
     expect(buildOpdsCatalog(articles, origin, { kind: 'date', shelf: 'clip', date: '2026-09-19' })).toBeNull()
+    expect(buildOpdsCatalog(articles, origin, { kind: 'date', shelf: 'clip', date: '2026-03-01' })).toBeNull()
 
     const day = catalogXml(articles, { kind: 'date', shelf: 'clip', date: '2026-09-21' })
     expect(day).toContain(`type="${OPDS_CATALOG_TYPE}"`)
@@ -229,7 +238,7 @@ describe('buildOpdsCatalog', () => {
     const previous = catalogXml(articles, { kind: 'date', shelf: 'clip', date: '2026-09-20' })
     expect(previous).toContain('手動 &amp; &lt;記事&gt;')
     expect(previous).toContain('<name>石井</name>')
-    expect(previous).toContain('<published>2026-09-19T15:00:00.000Z</published>')
+    expect(previous).toContain('<published>2026-03-01T00:00:00.000Z</published>')
     expect(previous).not.toContain('フィード記事')
 
     const ebook = buildOpdsCatalog(articles, origin, { kind: 'shelf', shelf: 'ebook' })
@@ -324,30 +333,38 @@ describe('OPDS HTTP', () => {
     const older = asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
     const newer = asArticleId('art_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
     const purchased = asArticleId('art_dddddddddddddddddddddddddddddddd')
-    await store.put(
-      article({
-        id: older,
-        title: '古い記事',
-        publishedAt: '2026-09-20T00:00:00.000Z',
-      }),
-    )
-    await store.put(
-      article({
-        id: newer,
-        title: '新しい記事',
-        publishedAt: '2026-09-21T00:00:00.000Z',
-        epub: asEpubBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3])),
-      }),
-    )
-    await store.put(
-      article({
-        id: purchased,
-        title: '購入本',
-        publishedAt: '自由な日付',
-        canonicalUrl: purchasedCanonicalUrl(purchased),
-        sourceUrl: purchasedCanonicalUrl(purchased),
-      }),
-    )
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-22T03:00:00.000Z'))
+      await store.put(
+        article({
+          id: older,
+          title: '古い記事',
+          publishedAt: '2026-09-20T00:00:00.000Z',
+        }),
+      )
+      vi.setSystemTime(new Date('2026-09-22T04:00:00.000Z'))
+      await store.put(
+        article({
+          id: newer,
+          title: '新しい記事',
+          publishedAt: '2026-09-21T00:00:00.000Z',
+          epub: asEpubBytes(new Uint8Array([0x50, 0x4b, 0x03, 0x04, 1, 2, 3])),
+        }),
+      )
+      vi.setSystemTime(new Date('2026-09-18T01:00:00.000Z'))
+      await store.put(
+        article({
+          id: purchased,
+          title: '購入本',
+          publishedAt: '自由な日付',
+          canonicalUrl: purchasedCanonicalUrl(purchased),
+          sourceUrl: purchasedCanonicalUrl(purchased),
+        }),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
     const app = createApp({ store })
     const headers = { authorization: basicAuthorization() }
     const catalog = await app.request('https://read.example.com/opds', { headers }, BINDINGS)
@@ -369,25 +386,24 @@ describe('OPDS HTTP', () => {
 
     const clip = await app.request('https://read.example.com/opds/clip/', { headers }, BINDINGS)
     expect(clip.status).toBe(200)
-    expect(subsectionHrefs(await clip.text())).toEqual([
-      'https://read.example.com/opds/clip/2026-09-21',
-      'https://read.example.com/opds/clip/2026-09-20',
-    ])
+    expect(subsectionHrefs(await clip.text())).toEqual(['https://read.example.com/opds/clip/2026-09-22'])
 
-    const day = await app.request('https://read.example.com/opds/clip/2026-09-21', { headers }, BINDINGS)
+    const day = await app.request('https://read.example.com/opds/clip/2026-09-22', { headers }, BINDINGS)
     expect(day.status).toBe(200)
     expect(day.headers.get('content-type')).toContain(OPDS_CATALOG_TYPE)
     const dayXml = await day.text()
-    expect(dayXml).toContain('新しい記事')
-    expect(dayXml).not.toContain('古い記事')
+    const newerAt = dayXml.indexOf('新しい記事')
+    const olderAt = dayXml.indexOf('古い記事')
+    expect(newerAt).toBeGreaterThan(0)
+    expect(olderAt).toBeGreaterThan(newerAt)
     expect(dayXml).toContain(`https://read.example.com/opds/download/${newer}.epub`)
-
-    const otherDay = await app.request('https://read.example.com/opds/clip/2026-09-20/', { headers }, BINDINGS)
-    expect(await otherDay.text()).toContain('古い記事')
+    expect(dayXml).toContain('<published>2026-09-21T00:00:00.000Z</published>')
+    expect((await app.request('https://read.example.com/opds/clip/2026-09-21', { headers }, BINDINGS)).status).toBe(404)
+    expect((await app.request('https://read.example.com/opds/clip/2026-09-20/', { headers }, BINDINGS)).status).toBe(404)
 
     const purchasedMeta = await app.request(`https://read.example.com/articles/${purchased}`, { headers }, BINDINGS)
     const createdAt = ((await purchasedMeta.json()) as { createdAt: string }).createdAt
-    const purchasedDate = opdsCalendarDate({ publishedAt: '自由な日付', createdAt })
+    const purchasedDate = opdsEbookCalendarDate({ publishedAt: '自由な日付', createdAt })
     expect(purchasedDate).not.toBeNull()
     const ebookDay = await app.request(
       `https://read.example.com/opds/ebook/${purchasedDate}`,

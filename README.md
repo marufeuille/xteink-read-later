@@ -43,7 +43,7 @@ javascript:(function(){location.href='WORKER/clip/web?url='+encodeURIComponent(l
 
 ### 2. Xteink で読む
 
-CrossPoint JP に OPDS カタログを **一度だけ** 登録する。ルートは棚の入口なので、`clip`（Web 記事）か `ebook`（買った本）を開き、その日のフォルダから EPUB を取る。日付の中は新しいものが上。まとめは最新 1 冊だけルートに出る。
+CrossPoint JP に OPDS カタログを **一度だけ** 登録する。ルートは棚の入口なので、`clip`（Web 記事）か `ebook`（買った本）を開き、その日のフォルダから EPUB を取る。`clip` の日付は Clip した日（初回保存の日本時間）、`ebook` の日付は本の公開日（読めなければ投入した日）です。日付の中は新しいものが上。まとめは最新 1 冊だけルートに出る。
 
 登録する URL:
 

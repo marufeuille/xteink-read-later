@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { compareDailyIdentities, dailyDateFromInstant, dailyIssueIdentity, isDailyCanonicalUrl, parseDailyDate } from '../src/daily/identity'
 import { buildDummyDailyWrite } from '../src/daily/issue'
 import { publishLatestDaily } from '../src/daily/publish'
-import { buildOpdsCatalog, OPDS_CACHE_CONTROL, opdsCalendarDate } from '../src/opds/catalog'
+import { buildOpdsCatalog, OPDS_CACHE_CONTROL, opdsClipCalendarDate } from '../src/opds/catalog'
 import { createApp } from '../src/app'
 import { createMemoryStore } from '../src/store/memory'
 import { unavailableClassification } from '../src/classify/taxonomy'
@@ -160,7 +160,7 @@ describe('dummy daily EPUBs', () => {
     expect(firstDaily?.acquisition).toBe(first.identity.acquisitionUrl)
     expect(firstCatalog?.xml).not.toContain('通常記事')
     const clipMeta = listedFirst.find((item) => item.title === '通常記事')
-    const clipDate = clipMeta === undefined ? null : opdsCalendarDate(clipMeta)
+    const clipDate = clipMeta === undefined ? null : opdsClipCalendarDate(clipMeta)
     expect(clipDate).not.toBeNull()
     const clipCatalog = buildOpdsCatalog(listedFirst, ORIGIN, {
       kind: 'date',
