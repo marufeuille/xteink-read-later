@@ -159,6 +159,7 @@ describe('source HTTP', () => {
     const page = await listed.text()
     expect(page).toContain('情報源')
     expect(page).toContain('今日のまとめを作る')
+    expect(page).toContain('まとめは 04:00（Asia/Tokyo）にも作られます')
     expect(page).toContain('action="/digest"')
     expect(page).not.toContain(TEST_CLIP_TOKEN)
     const denied = await app.request(

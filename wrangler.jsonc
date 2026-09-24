@@ -84,8 +84,8 @@
     ]
   },
   "triggers": {
-    // Daily feed collection at 04:00 Asia/Tokyo (UTC 19:00). Keep in sync with FEED_COLLECT_CRON.
-    // Daily digest at 06:00 Asia/Tokyo (UTC 21:00). Keep in sync with DAILY_DIGEST_CRON.
-    "crons": ["0 19 * * *", "0 21 * * *"]
+    // 04:00 Asia/Tokyo (UTC 19:00). One trigger runs feed collection and the daily digest.
+    // Keep in sync with FEED_COLLECT_CRON and DAILY_DIGEST_CRON.
+    "crons": ["0 19 * * *"]
   }
 }

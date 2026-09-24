@@ -10,6 +10,7 @@ import { unavailableClassification } from '../../src/classify/taxonomy'
 import { evaluatedRecommendation } from '../../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../../src/store/memory-candidates'
 import { createMemoryDigestStore } from '../../src/store/memory-digest'
+import { createMemoryFeedSourceStore } from '../../src/store/memory-sources'
 import { createMemoryStore } from '../../src/store/memory'
 import {
   articleIdFromCanonicalUrl,
@@ -194,10 +195,16 @@ describe('daily digest fixture e2e', () => {
       PUBLIC_ORIGIN: 'https://read.example.com',
     }
     const scheduled = await handleScheduled({ cron: DAILY_DIGEST_CRON }, env, {
+      sourceStore: createMemoryFeedSourceStore(),
+      feedQueue: feed,
       digestQueue: digest,
       now: () => NOW,
     })
-    expect(scheduled).toMatchObject({ kind: 'daily_digest', queued: 1, failed: 0 })
+    expect(scheduled).toMatchObject({
+      kinds: ['feed_collect', 'daily_digest'],
+      queued: 1,
+      failed: 0,
+    })
     expect(feed.size).toBe(0)
     expect(clip.size).toBe(0)
 

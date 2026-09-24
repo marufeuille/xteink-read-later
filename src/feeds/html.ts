@@ -163,7 +163,7 @@ ${notice}
   <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />
   <button type="submit">今日のまとめを作る</button>
 </form>
-<p class="note">まとめは 06:00（Asia/Tokyo）にも作られます。このボタンは同じ Queue に当日号を予約します。</p>
+<p class="note">まとめは 04:00（Asia/Tokyo）にも作られます。このボタンは同じ Queue に当日号を予約します。</p>
 ${list}
 <form method="post" action="/candidates/logout">
   <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />

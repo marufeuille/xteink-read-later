@@ -206,7 +206,7 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 
 ### 情報源（RSS/Atom の巡回）
 
-企業ブログや Zenn などのフィードを登録し、候補にする。毎日 **04:00 Asia/Tokyo**（UTC 19:00）の Cron が有効な情報源を `FEED_QUEUE`（`xteink-read-later-feed`）に載せる。**06:00 Asia/Tokyo**（UTC 21:00）の Cron が当日号を `DIGEST_QUEUE`（`xteink-read-later-digest`）に載せる。画面の「今すぐ収集」は 1 件。「有効な情報源をすべて収集」が `POST /sources/collect`。既存の情報源は `POST /sources/:id` で更新する。まとめの手動実行は情報源画面の「今日のまとめを作る」（`POST /digest`）。JSON の `POST /digest` も残す。`POST /clip` の全文生成 Queue とは別。媒体ごとの専用パーサは置かない。
+企業ブログや Zenn などのフィードを登録し、候補にする。毎日 **04:00 Asia/Tokyo**（UTC 19:00）の Cron が、有効な情報源を `FEED_QUEUE`（`xteink-read-later-feed`）に載せ、同じ時刻に当日号を `DIGEST_QUEUE`（`xteink-read-later-digest`）に載せる。画面の「今すぐ収集」は 1 件。「有効な情報源をすべて収集」が `POST /sources/collect`。既存の情報源は `POST /sources/:id` で更新する。まとめの手動実行は情報源画面の「今日のまとめを作る」（`POST /digest`）。JSON の `POST /digest` も残す。`POST /clip` の全文生成 Queue とは別。媒体ごとの専用パーサは置かない。
 
 まとめに入るのは、一覧に残っていてページ取得済み、かつ無料全文を確認できた候補だけ。枠は上限だけで、下限も他枠からの穴埋めもない。おすすめ（深掘り）は最大 5、関連あり（技術）は最大 3、優先度低（一般）は最大 2。1 本しかなくても、その 1 本で出す。過去号に載せた canonical URL は再掲しない。未判定は、その実行の中で最大 10 回まで Jev で判定する。
 

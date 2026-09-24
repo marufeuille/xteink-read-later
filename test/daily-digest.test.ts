@@ -9,7 +9,7 @@ import { publishLatestDaily } from '../src/daily/publish'
 import { runDailyDigest } from '../src/daily/run'
 import { selectDigestCandidates } from '../src/daily/select'
 import { summarizeDigestArticle, type SummarizeDigestArticle } from '../src/daily/summarize'
-import { handleScheduled } from '../src/schedule'
+import { handleScheduled, scheduledKinds } from '../src/schedule'
 import { unavailableClassification } from '../src/classify/taxonomy'
 import { evaluatedRecommendation, unevaluatedRecommendation } from '../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
@@ -208,15 +208,23 @@ afterEach(() => {
 })
 
 describe('daily digest cron', () => {
-  it('adds the digest cron without changing the collection cron', () => {
+  it('runs the digest at 04:00 Asia/Tokyo on the same cron as collection', () => {
     const wrangler = readFileSync(join(root, '..', 'wrangler.jsonc'), 'utf8')
-    expect(wrangler).toContain(`"${FEED_COLLECT_CRON}"`)
-    expect(wrangler).toContain(`"${DAILY_DIGEST_CRON}"`)
     expect(FEED_COLLECT_CRON).toBe('0 19 * * *')
-    expect(DAILY_DIGEST_CRON).toBe('0 21 * * *')
+    expect(DAILY_DIGEST_CRON).toBe('0 19 * * *')
+    expect(wrangler.match(/0 19 \* \* \*/g)).toEqual(['0 19 * * *'])
+    expect(wrangler).not.toContain('0 21 * * *')
   })
 
-  it('enqueues feed collection only for the collection cron', async () => {
+  it('keeps collection and digest apart when their cron expressions differ', () => {
+    const split = { feedCollect: '0 19 * * *', dailyDigest: '0 21 * * *' }
+    expect(scheduledKinds('0 19 * * *', split)).toEqual(['feed_collect'])
+    expect(scheduledKinds('0 21 * * *', split)).toEqual(['daily_digest'])
+    expect(scheduledKinds('0 12 * * *', split)).toEqual([])
+    expect(scheduledKinds(DAILY_DIGEST_CRON)).toEqual(['feed_collect', 'daily_digest'])
+  })
+
+  it('enqueues feed collection and the digest from the 04:00 cron', async () => {
     const sourceStore = createMemoryFeedSourceStore()
     await sourceStore.put({
       id: asFeedSourceId('src_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
@@ -240,28 +248,19 @@ describe('daily digest cron', () => {
       updatedAt: NOW.toISOString(),
     })
     const { clip, feed, digest } = queues()
-    const result = await handleScheduled({ cron: FEED_COLLECT_CRON }, envWithQueues({ clip, feed, digest }), {
+    const result = await handleScheduled({ cron: DAILY_DIGEST_CRON }, envWithQueues({ clip, feed, digest }), {
       sourceStore,
       feedQueue: feed,
       digestQueue: digest,
       now: () => NOW,
     })
-    expect(result).toMatchObject({ kind: 'feed_collect', queued: 1, failed: 0 })
-    expect(feed.size).toBe(1)
-    expect(digest.size).toBe(0)
-    expect(clip.size).toBe(0)
-  })
-
-  it('enqueues digest work only for the digest cron', async () => {
-    const { clip, feed, digest } = queues()
-    const result = await handleScheduled({ cron: DAILY_DIGEST_CRON }, envWithQueues({ clip, feed, digest }), {
-      feedQueue: feed,
-      digestQueue: digest,
-      now: () => NOW,
+    expect(result).toMatchObject({
+      kinds: ['feed_collect', 'daily_digest'],
+      queued: 2,
+      failed: 0,
     })
-    expect(result).toMatchObject({ kind: 'daily_digest', queued: 1, failed: 0 })
+    expect(feed.size).toBe(1)
     expect(digest.peek()).toEqual([{ date: TODAY }])
-    expect(feed.size).toBe(0)
     expect(clip.size).toBe(0)
   })
 
@@ -272,7 +271,7 @@ describe('daily digest cron', () => {
       digestQueue: digest,
       now: () => NOW,
     })
-    expect(result.kind).toBe('unknown')
+    expect(result.kinds).toEqual([])
     expect(feed.size).toBe(0)
     expect(digest.size).toBe(0)
     expect(clip.size).toBe(0)
