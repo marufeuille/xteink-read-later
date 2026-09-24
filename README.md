@@ -219,6 +219,8 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 - Zenn トピックフィード（投稿サイト）例: `https://zenn.dev/topics/cloudflare/feed`
 - Mercari Engineering Blog（企業ブログ）: `https://engineering.mercari.com/blog/feed.xml`
 
+データ・アナリティクス・LLM と日本語の開発者ブログは `migrations/0006_seed_engineering_feeds.sql` が初回適用時に入れる。同じフィード URL が既にあればその行は残す。うるさい媒体は情報源画面で止める。
+
 1 回の収集は情報源ごとに独立する。件数 20、フィードサイズ約 1MB、時間 20 秒、Queue 再試行 3 回が上限。失敗は情報源一覧に出る。同じ「今すぐ収集」か翌日の Cron で再実行する。収集 Cron は enqueue だけで本文翻訳しない。まとめの中身は上の枠と要約の規則。
 
 まとめ EPUB の各記事の下に、確認ページへの白地 PNG の QR を入れる。スマホで開くと「全文を送る」が出る。GET は送信しない。ボタンの POST だけが候補一覧と同じ全文 Queue に入る。Google ログインは要らない。署名は候補 ID と、号の日付から 14 日の期限に紐づく。`CLIP_TOKEN` は URL に入らない。同じ日にまとめを作り直しても QR は同じ。完成済みの全文は再利用し、新しい run は作らない。有料・取得できない記事は理由を出して送らない。通常の記事 EPUB には画像を入れない。`/digest/send` は Access のパスに入れない。
