@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { feedSourceIdFromFeedUrl, type HttpUrl } from '../src/types'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -48,6 +49,32 @@ describe('D1 candidate migration', () => {
     expect(sql).toContain('topic_tags TEXT NOT NULL DEFAULT')
     expect(sql).toContain('enabled INTEGER NOT NULL DEFAULT 1')
     expect(sql).toContain('Collection is separate from clip Queue')
+  })
+
+  it('seeds practitioner feeds without replacing an existing feed URL', async () => {
+    const sql = readFileSync(join(root, 'migrations/0006_seed_engineering_feeds.sql'), 'utf8')
+    expect(sql).toContain('INSERT OR IGNORE INTO feed_sources')
+    expect(sql).not.toMatch(/\b(DELETE|UPDATE)\b/i)
+    const rows = [
+      ...sql.matchAll(
+        /\('(src_[a-f0-9]{32})', '((?:[^']|'')*)', '(https?:\/\/[^']+)', '(https?:\/\/[^']+)', '(corporate_blog|posting_site|news|curation)', '(\[[^']*\])'/g,
+      ),
+    ]
+    expect(rows.length).toBe(85)
+    const feeds = new Set<string>()
+    for (const row of rows) {
+      const id = row[1]
+      const feedUrl = row[4]
+      expect(id).toBeDefined()
+      expect(feedUrl).toBeDefined()
+      if (id === undefined || feedUrl === undefined) {
+        continue
+      }
+      expect(feeds.has(feedUrl)).toBe(false)
+      feeds.add(feedUrl)
+      expect(id).toBe(await feedSourceIdFromFeedUrl(feedUrl as HttpUrl))
+      expect(JSON.parse(row[6] ?? '[]')).toBeInstanceOf(Array)
+    }
   })
 
   it('stores digest publication history without article bodies', () => {
