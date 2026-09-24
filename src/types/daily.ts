@@ -4,8 +4,8 @@ import type { ArticleMeta } from './article'
 export const DAILY_TIMEZONE = 'Asia/Tokyo'
 export const DAILY_CANONICAL_PREFIX = 'https://daily.invalid/digest/'
 export const DAILY_IDENTITY_STRATEGY = 'new-id-per-jst-day'
-/** UTC 21:00 = 06:00 Asia/Tokyo. Change this and wrangler.jsonc together. */
-export const DAILY_DIGEST_CRON = '0 21 * * *'
+/** UTC 19:00 = 04:00 Asia/Tokyo. Same expression as feed collection; one trigger runs both. Change this and wrangler.jsonc together. */
+export const DAILY_DIGEST_CRON = '0 19 * * *'
 export const DAILY_DIGEST_TIMEZONE = 'Asia/Tokyo'
 
 export const DIGEST_BUCKETS = ['deep', 'tech', 'general'] as const

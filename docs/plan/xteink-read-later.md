@@ -386,5 +386,5 @@ MVP（抽出〜OPDS〜Android 共有〜購入 EPUB）のあとに入ったもの
 - MAR-45: clip は Queue。`POST /clip` は 202。Workflows には移さない（`mar-56-pipeline-workflows.md`）
 - MAR-57: 記事分類。`docs/classification.md`
 - MAR-73: 読書候補。MAR-74: RSS/Atom。MAR-75: 候補から clip へのポインタ。MAR-76: おすすめ度（`docs/de-recommend.md`）
-- MAR-77: まとめ EPUB の日付別 identity（`docs/daily-opds.md`）。朝のまとめは `DIGEST_QUEUE` と 06:00 Asia/Tokyo の Cron
+- MAR-77: まとめ EPUB の日付別 identity（`docs/daily-opds.md`）。朝のまとめは `DIGEST_QUEUE` と 04:00 Asia/Tokyo の Cron
 - MAR-84: OPDS を `clip` / `ebook` と Asia/Tokyo の暦日に分ける

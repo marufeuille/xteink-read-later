@@ -1,6 +1,6 @@
 # デイリーまとめ EPUB の識別子と旧号
 
-[MAR-77](https://linear.app/marufeuille/issue/MAR-77) の検証記録。日付別 identity と「最新 1 冊だけ」は本番のまとめに入っている。04:00 Asia/Tokyo のフィード巡回と、06:00 Asia/Tokyo の要約配信（`DIGEST_QUEUE`）も動く。選択枠と手動の `POST /digest` は README。
+[MAR-77](https://linear.app/marufeuille/issue/MAR-77) の検証記録。日付別 identity と「最新 1 冊だけ」は本番のまとめに入っている。04:00 Asia/Tokyo のフィード巡回と、同じ時刻の要約配信（`DIGEST_QUEUE`）も動く。選択枠と手動の `POST /digest` は README。
 
 ## 結論
 
