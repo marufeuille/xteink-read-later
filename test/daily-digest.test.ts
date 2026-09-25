@@ -7,7 +7,7 @@ import { createApp } from '../src/app'
 import { buildDummyDailyWrite } from '../src/daily/issue'
 import { publishLatestDaily } from '../src/daily/publish'
 import { runDailyDigest } from '../src/daily/run'
-import { selectDigestCandidates } from '../src/daily/select'
+import { orderDigestEvaluations, selectDigestCandidates } from '../src/daily/select'
 import { summarizeDigestArticle, type SummarizeDigestArticle } from '../src/daily/summarize'
 import { handleScheduled, scheduledKinds } from '../src/schedule'
 import { unavailableClassification } from '../src/classify/taxonomy'
@@ -22,6 +22,9 @@ import {
   asEpubBytes,
   asFeedSourceId,
   DAILY_DIGEST_CRON,
+  DIGEST_BUCKET_QUOTAS,
+  DIGEST_MAX_PER_SOURCE,
+  DIGEST_SUMMARY_MAX_CHARS,
   digestSummaryCharBudget,
   FEED_COLLECT_CRON,
   ok,
@@ -56,12 +59,16 @@ function mustUrl(value: string): HttpUrl {
   return parsed
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
 function epubChapter(epub: Uint8Array): string {
   const files = unzipSync(epub)
   return strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
 }
 
-function judged(grade: RecommendGrade) {
+function judged(grade: RecommendGrade, concrete = grade === 'recommended') {
   return evaluatedRecommendation({
     grade,
     confidence: 0.92,
@@ -69,7 +76,7 @@ function judged(grade: RecommendGrade) {
     excerptHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     evaluatedAt: NOW.toISOString(),
     relevant: grade !== 'low_priority',
-    concrete: grade === 'recommended',
+    concrete,
     verification: grade === 'recommended',
     inputTokens: 12,
     durationMs: 8,
@@ -190,6 +197,7 @@ async function runDigest(input: {
   readonly summarize?: SummarizeDigestArticle
   readonly evaluateRecommend?: EvaluateSystemOne
   readonly env?: Cloudflare.Env
+  readonly maxJevCalls?: number
 }): Promise<Awaited<ReturnType<typeof runDailyDigest>>> {
   return runDailyDigest(input.env ?? ({ ...TEST_BINDINGS } as Cloudflare.Env), {
     date: TODAY,
@@ -200,6 +208,7 @@ async function runDigest(input: {
     summarize: input.summarize ?? summarizeOk,
     now: () => NOW,
     ...(input.evaluateRecommend === undefined ? {} : { evaluateRecommend: input.evaluateRecommend }),
+    ...(input.maxJevCalls === undefined ? {} : { maxJevCalls: input.maxJevCalls }),
   })
 }
 
@@ -336,30 +345,30 @@ describe('daily digest selection', () => {
 
   it('keeps deep, tech, and general counts within the configured maxima', () => {
     const candidates = [
-      ...Array.from({ length: 6 }, (_, index) =>
+      ...Array.from({ length: DIGEST_BUCKET_QUOTAS.deep.max + 1 }, (_, index) =>
         listedCandidate({
-          id: asCandidateId(`cand_a${String(index).padStart(31, '0')}`),
-          canonicalUrl: mustUrl(`https://example.com/deep/${index}`),
+          id: asCandidateId(`cand_a${index.toString(16).padStart(31, '0')}`),
+          canonicalUrl: mustUrl(`https://deep-${index}.example/article`),
           title: `深掘り${index}`,
-          discoveredAt: `2026-09-21T00:0${index}:00.000Z`,
+          discoveredAt: `2026-09-21T00:${String(index).padStart(2, '0')}:00.000Z`,
         }),
       ),
-      ...Array.from({ length: 4 }, (_, index) =>
+      ...Array.from({ length: DIGEST_BUCKET_QUOTAS.tech.max + 1 }, (_, index) =>
         listedCandidate({
-          id: asCandidateId(`cand_b${String(index).padStart(31, '0')}`),
-          canonicalUrl: mustUrl(`https://example.com/tech/${index}`),
+          id: asCandidateId(`cand_b${index.toString(16).padStart(31, '0')}`),
+          canonicalUrl: mustUrl(`https://tech-${index}.example/article`),
           title: `技術${index}`,
-          recommendation: judged('related'),
-          discoveredAt: `2026-09-21T01:0${index}:00.000Z`,
+          recommendation: judged('related', true),
+          discoveredAt: `2026-09-21T01:${String(index).padStart(2, '0')}:00.000Z`,
         }),
       ),
-      ...Array.from({ length: 3 }, (_, index) =>
+      ...Array.from({ length: DIGEST_BUCKET_QUOTAS.general.max + 1 }, (_, index) =>
         listedCandidate({
-          id: asCandidateId(`cand_c${String(index).padStart(31, '0')}`),
-          canonicalUrl: mustUrl(`https://example.com/general/${index}`),
+          id: asCandidateId(`cand_c${index.toString(16).padStart(31, '0')}`),
+          canonicalUrl: mustUrl(`https://general-${index}.example/article`),
           title: `一般${index}`,
-          recommendation: judged('low_priority'),
-          discoveredAt: `2026-09-21T02:0${index}:00.000Z`,
+          recommendation: judged('low_priority', true),
+          discoveredAt: `2026-09-21T02:${String(index).padStart(2, '0')}:00.000Z`,
         }),
       ),
     ]
@@ -367,22 +376,122 @@ describe('daily digest selection', () => {
     const deep = selected.filter((item) => item.recommendation.grade === 'recommended')
     const tech = selected.filter((item) => item.recommendation.grade === 'related')
     const general = selected.filter((item) => item.recommendation.grade === 'low_priority')
-    expect(deep).toHaveLength(5)
-    expect(tech).toHaveLength(3)
-    expect(general).toHaveLength(2)
+    expect(deep).toHaveLength(DIGEST_BUCKET_QUOTAS.deep.max)
+    expect(tech).toHaveLength(DIGEST_BUCKET_QUOTAS.tech.max)
+    expect(general).toHaveLength(DIGEST_BUCKET_QUOTAS.general.max)
+    expect(selected.length).toBeGreaterThan(10)
   })
 
-  it('splits about five minutes across the selected articles and does not stretch a short issue', () => {
-    expect(digestSummaryCharBudget(1)).toBe(400)
-    expect(digestSummaryCharBudget(5)).toBe(400)
-    expect(digestSummaryCharBudget(8)).toBe(250)
-    expect(digestSummaryCharBudget(10)).toBe(200)
-    expect(digestSummaryCharBudget(0)).toBe(400)
+  it('leaves announcements without practical detail out of the issue', () => {
+    const practical = listedCandidate({
+      id: asCandidateId('cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      canonicalUrl: mustUrl('https://techlife.cookpad.com/pipeline'),
+      title: 'パイプラインの運用',
+      recommendation: judged('related', true),
+    })
+    const release = listedCandidate({
+      id: asCandidateId('cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+      canonicalUrl: mustUrl('https://sakana.ai/blog/press'),
+      title: '新モデルを発表',
+      recommendation: { ...judged('recommended'), concrete: false, confidence: 0.99 },
+    })
+    const selected = selectDigestCandidates([release, practical], { usedCanonicalUrls: new Set() })
+    expect(selected.map((item) => item.id)).toEqual([practical.id])
+  })
+
+  it('does not let one site fill every slot', () => {
+    const sakana = Array.from({ length: 6 }, (_, index) =>
+      listedCandidate({
+        id: asCandidateId(`cand_d${String(index).padStart(31, '0')}`),
+        canonicalUrl: mustUrl(`https://sakana.ai/posts/${index}`),
+        outlet: 'Sakana AI',
+        title: `Sakana ${index}`,
+        recommendation: { ...judged('recommended'), confidence: 0.99 },
+        discoveredAt: `2026-09-21T05:0${index}:00.000Z`,
+      }),
+    )
+    const others = [
+      listedCandidate({
+        id: asCandidateId('cand_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
+        canonicalUrl: mustUrl('https://techlife.cookpad.com/quality'),
+        title: 'クックパッドの品質',
+      }),
+      listedCandidate({
+        id: asCandidateId('cand_ffffffffffffffffffffffffffffffff'),
+        canonicalUrl: mustUrl('https://engineering.dena.com/post'),
+        title: 'DeNA の基盤',
+        recommendation: judged('related', true),
+      }),
+    ]
+    const selected = selectDigestCandidates([...sakana, ...others], { usedCanonicalUrls: new Set() })
+    const fromSakana = selected.filter((item) => new URL(item.canonicalUrl).hostname === 'sakana.ai')
+    expect(fromSakana).toHaveLength(DIGEST_MAX_PER_SOURCE)
+    expect(selected.map((item) => item.title)).toEqual(
+      expect.arrayContaining(['クックパッドの品質', 'DeNA の基盤']),
+    )
+  })
+
+  it('counts Zenn authors separately and still caps one author', () => {
+    const alice = Array.from({ length: 3 }, (_, index) =>
+      listedCandidate({
+        id: asCandidateId(`cand_1${String(index).padStart(31, '0')}`),
+        canonicalUrl: mustUrl(`https://zenn.dev/alice/articles/post-${index}`),
+        outlet: 'Zenn',
+        title: `alice ${index}`,
+        discoveredAt: `2026-09-21T06:0${index}:00.000Z`,
+      }),
+    )
+    const bob = listedCandidate({
+      id: asCandidateId('cand_22222222222222222222222222222222'),
+      canonicalUrl: mustUrl('https://zenn.dev/bob/articles/warehouse'),
+      outlet: 'Zenn',
+      title: 'bob warehouse',
+    })
+    const publication = listedCandidate({
+      id: asCandidateId('cand_33333333333333333333333333333333'),
+      canonicalUrl: mustUrl('https://zenn.dev/p/loglass/articles/dbt'),
+      outlet: 'Zenn',
+      title: 'loglass dbt',
+    })
+    const selected = selectDigestCandidates([...alice, bob, publication], { usedCanonicalUrls: new Set() })
+    expect(selected.filter((item) => item.canonicalUrl.includes('/alice/'))).toHaveLength(DIGEST_MAX_PER_SOURCE)
+    expect(selected.map((item) => item.title)).toEqual(expect.arrayContaining(['bob warehouse', 'loglass dbt']))
+  })
+
+  it('rotates unevaluated articles across sites before filling one feed', () => {
+    const sakana = Array.from({ length: 4 }, (_, index) =>
+      listedCandidate({
+        id: asCandidateId(`cand_4${String(index).padStart(31, '0')}`),
+        canonicalUrl: mustUrl(`https://sakana.ai/new/${index}`),
+        title: `sakana ${index}`,
+        recommendation: unevaluatedRecommendation(),
+        discoveredAt: `2026-09-21T08:0${index}:00.000Z`,
+      }),
+    )
+    const mercari = listedCandidate({
+      id: asCandidateId('cand_55555555555555555555555555555555'),
+      canonicalUrl: mustUrl('https://engineering.mercari.com/blog/pipeline'),
+      title: 'メルカリ',
+      recommendation: unevaluatedRecommendation(),
+      discoveredAt: '2026-09-21T07:00:00.000Z',
+    })
+    const ordered = orderDigestEvaluations([...sakana, mercari])
+    expect(ordered.slice(0, 2).map((item) => new URL(item.canonicalUrl).hostname)).toEqual([
+      'sakana.ai',
+      'engineering.mercari.com',
+    ])
+  })
+
+  it('keeps each summary at the per-article cap when the issue is long', () => {
+    expect(digestSummaryCharBudget(1)).toBe(DIGEST_SUMMARY_MAX_CHARS)
+    expect(digestSummaryCharBudget(8)).toBe(DIGEST_SUMMARY_MAX_CHARS)
+    expect(digestSummaryCharBudget(12)).toBe(DIGEST_SUMMARY_MAX_CHARS)
+    expect(digestSummaryCharBudget(0)).toBe(DIGEST_SUMMARY_MAX_CHARS)
   })
 })
 
 describe('daily digest publish', () => {
-  it('gives every selected article the same shorter budget when eight fit', async () => {
+  it('gives every selected article the full summary cap when eight fit', async () => {
     const { candidateStore, digestStore, store } = memoryDigest()
     const grades: RecommendGrade[] = [
       ...Array.from({ length: 5 }, () => 'recommended' as const),
@@ -392,9 +501,9 @@ describe('daily digest publish', () => {
       await candidateStore.put(
         listedCandidate({
           id: asCandidateId(`cand_${index.toString(16).padStart(32, '0')}`),
-          canonicalUrl: mustUrl(`https://example.com/digest/${index}`),
+          canonicalUrl: mustUrl(`https://blog-${index}.example/post`),
           title: `記事${index}`,
-          recommendation: judged(grade),
+          recommendation: { ...judged(grade), concrete: true },
         }),
       )
     }
@@ -406,7 +515,83 @@ describe('daily digest publish', () => {
     const result = await runDigest({ store, candidateStore, digestStore, summarize })
     expect(result.status).toBe('published')
     expect(result.summarized).toBe(8)
-    expect(budgets).toEqual(Array.from({ length: 8 }, () => 250))
+    expect(budgets).toEqual(Array.from({ length: 8 }, () => DIGEST_SUMMARY_MAX_CHARS))
+  })
+
+  it('does not spend a judgment on a site that already has two practical articles', async () => {
+    const { candidateStore, digestStore, store } = memoryDigest()
+    const html = readFileSync(join(root, 'fixtures', 'ja-tech.html'), 'utf8')
+    for (const index of [0, 1]) {
+      await candidateStore.put(
+        listedCandidate({
+          id: asCandidateId(`cand_6${index.toString(16).padStart(31, '0')}`),
+          canonicalUrl: mustUrl(`https://sakana.ai/ready/${index}`),
+          title: `判定済み ${index}`,
+        }),
+      )
+    }
+    for (const index of [2, 3]) {
+      await candidateStore.put(
+        listedCandidate({
+          id: asCandidateId(`cand_7${index.toString(16).padStart(31, '0')}`),
+          canonicalUrl: mustUrl(`https://sakana.ai/new/${index}`),
+          title: `未判定 ${index}`,
+          recommendation: unevaluatedRecommendation(),
+          discoveredAt: `2026-09-21T09:0${index}:00.000Z`,
+        }),
+      )
+    }
+    const mercari = mustUrl('https://engineering.mercari.com/blog/pipeline')
+    await candidateStore.put(
+      listedCandidate({
+        id: asCandidateId('cand_88888888888888888888888888888888'),
+        canonicalUrl: mercari,
+        title: 'メルカリのパイプライン',
+        recommendation: unevaluatedRecommendation(),
+        discoveredAt: '2026-09-21T06:00:00.000Z',
+      }),
+    )
+    const seen: string[] = []
+    const evaluateRecommend: EvaluateSystemOne = async (request) => {
+      if (isRecord(request.state) && typeof request.state.canonicalUrl === 'string') {
+        seen.push(request.state.canonicalUrl)
+      }
+      return {
+        ok: true,
+        value: {
+          model: 'jev-test',
+          answers: {
+            recommendation: { type: 'choice', choice: 'recommended', confidence: 0.93, probabilities: { recommended: 0.93 } },
+            de_relevant: { type: 'noul', noul: 0.9 },
+            has_concreteness: { type: 'noul', noul: 0.8 },
+            has_verification: { type: 'noul', noul: 0.7 },
+          },
+          usage: { inputTokens: 10, outputTokens: 4 },
+        },
+      }
+    }
+    const result = await runDigest({
+      store,
+      candidateStore,
+      digestStore,
+      maxJevCalls: 4,
+      fetchPage: async (requested) =>
+        ok({
+          requestedUrl: requested,
+          finalUrl: requested,
+          contentType: 'text/html',
+          html: html.replaceAll('https://example.com/ja/workers-cpu', requested),
+        }),
+      evaluateRecommend,
+      env: { ...TEST_BINDINGS, OPENROUTER_API_KEY: 'or-test' } as Cloudflare.Env,
+    })
+    expect(seen).toEqual([mercari])
+    expect(result.summarized).toBe(3)
+    const chapter = epubChapter(
+      (await store.getEpub(result.articleId ?? asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))) ?? new Uint8Array(),
+    )
+    expect(chapter).toContain('メルカリのパイプライン')
+    expect(chapter).not.toContain('未判定')
   })
 
   it('rejects title-only pages and does not call OpenAI', async () => {

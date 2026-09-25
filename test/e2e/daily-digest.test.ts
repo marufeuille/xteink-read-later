@@ -63,6 +63,7 @@ function listed(input: {
   readonly id: string
   readonly url: string
   readonly title: string
+  readonly outlet?: string
   readonly recommendation?: CandidateArticle['recommendation']
 }): CandidateArticle {
   const canonicalUrl = mustUrl(input.url)
@@ -72,7 +73,7 @@ function listed(input: {
     canonicalUrl,
     sourceUrl: canonicalUrl,
     title: input.title,
-    outlet: 'example.com',
+    outlet: input.outlet ?? 'example.com',
     publishedAt: '2026-09-20T00:00:00.000Z',
     discoveredAt: now,
     fetchStatus: 'fetched',
@@ -182,8 +183,8 @@ describe('daily digest fixture e2e', () => {
           excerptHash: 'cccccccccccccccccccccccccccccccc',
           evaluatedAt: NOW.toISOString(),
           relevant: true,
-          concrete: false,
-          verification: false,
+          concrete: true,
+          verification: true,
           inputTokens: 20,
           durationMs: 10,
         }),
@@ -371,5 +372,80 @@ describe('daily digest fixture e2e', () => {
     expect(digest.peek()).toEqual([{ date: TODAY }])
     expect(clip.size).toBe(0)
     expect(feed.size).toBe(0)
+  })
+
+  it('publishes more than ten matching articles and drops a press release plus a third post from one site', async () => {
+    const others = Array.from({ length: 10 }, (_, index) => ({
+      id: `cand_a${index.toString(16).padStart(31, '0')}`,
+      url: `https://blog-${index}.example/post`,
+      title: `他サイト${index}`,
+    }))
+    const sakana = [0, 1, 2].map((index) => ({
+      id: `cand_b${index.toString(16).padStart(31, '0')}`,
+      url: `https://sakana.ai/posts/${index}`,
+      title: `Sakana ${index}`,
+    }))
+    const release = {
+      id: 'cand_cccccccccccccccccccccccccccccccc',
+      url: 'https://sakana.ai/blog/press',
+      title: '新モデルを発表',
+    }
+    const pages = Object.fromEntries(
+      [...others, ...sakana, release].map((item) => [item.url, { html: articleHtml(item.url, item.title) }]),
+    )
+    installNetworkMock({
+      pages,
+      openai: async () => openaiMessageResponse('unused', '設計と運用の要点です。'),
+    })
+    const store = createMemoryStore()
+    const candidateStore = createMemoryCandidateStore()
+    const digestStore = createMemoryDigestStore()
+    for (const item of others) {
+      await candidateStore.put(listed(item))
+    }
+    for (const item of sakana) {
+      await candidateStore.put(listed({ ...item, outlet: 'Sakana AI' }))
+    }
+    await candidateStore.put(
+      listed({
+        ...release,
+        outlet: 'Sakana AI',
+        recommendation: evaluatedRecommendation({
+          grade: 'recommended',
+          confidence: 0.99,
+          model: 'test-model',
+          excerptHash: 'dddddddddddddddddddddddddddddddd',
+          evaluatedAt: NOW.toISOString(),
+          relevant: true,
+          concrete: false,
+          verification: false,
+          inputTokens: 20,
+          durationMs: 10,
+        }),
+      }),
+    )
+    const { clip, feed, digest } = queues()
+    const env = {
+      ...envWithQueues({ clip, feed, digest }),
+      PUBLIC_ORIGIN: 'https://read.example.com',
+    }
+    await handleScheduled({ cron: DAILY_DIGEST_CRON }, env, {
+      sourceStore: createMemoryFeedSourceStore(),
+      feedQueue: feed,
+      digestQueue: digest,
+      now: () => NOW,
+    })
+    await digest.drain(env, { store, candidateStore, digestStore, now: () => NOW })
+
+    const listedMeta = await store.listMeta()
+    const todayMeta = listedMeta.find((item) => item.title === `まとめ ${TODAY}`)
+    expect(todayMeta).toBeDefined()
+    const body = chapter((await store.getEpub(todayMeta!.id)) ?? new Uint8Array())
+    for (const item of others) {
+      expect(body).toContain(item.title)
+    }
+    expect(sakana.filter((item) => body.includes(item.title))).toHaveLength(2)
+    expect(body).not.toContain('新モデルを発表')
+    expect(body.match(/<h2 /g)).toHaveLength(12)
   })
 })
