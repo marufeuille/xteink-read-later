@@ -17,26 +17,26 @@ export type DigestBucketQuota = {
 }
 
 export const DIGEST_BUCKET_QUOTAS: Readonly<Record<DigestBucket, DigestBucketQuota>> = {
-  deep: { max: 5 },
-  tech: { max: 3 },
+  deep: { max: 12 },
+  tech: { max: 8 },
   general: { max: 2 },
 }
 
-/** Whole issue, not one article. A short issue is not stretched to fill the time. */
-export const DIGEST_TARGET_READING_MINUTES = 5
-/** E-ink reading pace used only to turn the issue target into a character budget. */
-export const DIGEST_CHARS_PER_MINUTE = 400
-/** Hard cap for one summary. One article never grows past this to fill five minutes. */
+/** One issue keeps at most this many articles from the same site. */
+export const DIGEST_MAX_PER_SOURCE = 2
+
+/** Hard cap for one summary. A longer issue does not shrink each summary. */
 export const DIGEST_SUMMARY_MAX_CHARS = 400
 
 export function digestSummaryCharBudget(articleCount: number): number {
-  const count = Number.isInteger(articleCount) && articleCount > 0 ? articleCount : 1
-  const issueBudget = DIGEST_TARGET_READING_MINUTES * DIGEST_CHARS_PER_MINUTE
-  return Math.min(DIGEST_SUMMARY_MAX_CHARS, Math.floor(issueBudget / count))
+  if (!Number.isInteger(articleCount) || articleCount < 1) {
+    return DIGEST_SUMMARY_MAX_CHARS
+  }
+  return DIGEST_SUMMARY_MAX_CHARS
 }
 /** Confirm links in a digest issue stay valid this many days from the issue date. */
 export const DIGEST_QR_TTL_DAYS = 14
-export const DIGEST_MAX_JEV_CALLS = 10
+export const DIGEST_MAX_JEV_CALLS = 30
 export const DIGEST_LIST_PAGE_SIZE = 100
 
 export type DailyIssueIdentity = {

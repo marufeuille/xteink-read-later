@@ -25,7 +25,14 @@ import {
 import { dailyDateFromInstant } from './identity'
 import { buildDailyDigestWrite } from './issue'
 import { publishLatestDaily, unpublishDailyDigests } from './publish'
-import { countDigestBuckets, digestNeedsEvaluation, digestQuotasFilled, selectDigestCandidates } from './select'
+import {
+  digestNeedsEvaluation,
+  digestSelectionSaturated,
+  digestSourceAtCap,
+  digestSourceKey,
+  orderDigestEvaluations,
+  selectDigestCandidates,
+} from './select'
 import { summarizeDigestArticle, type SummarizeDigestArticle } from './summarize'
 
 export type RunDailyDigestDeps = {
@@ -95,14 +102,15 @@ async function evaluateNeeded(
 ): Promise<CandidateArticle[]> {
   const pool = candidates.filter((candidate) => !usedCanonicalUrls.has(candidate.canonicalUrl))
   const byId = new Map(pool.map((candidate) => [candidate.id, candidate]))
-  const pending = pool
-    .filter(digestNeedsEvaluation)
-    .sort((left, right) => (left.discoveredAt < right.discoveredAt ? 1 : -1))
+  const pending = orderDigestEvaluations(pool.filter(digestNeedsEvaluation))
   let remaining = deps.maxJevCalls
 
   for (const candidate of pending) {
-    if (remaining < 1 || digestQuotasFilled(countDigestBuckets(byId.values()))) {
+    if (remaining < 1 || digestSelectionSaturated([...byId.values()], usedCanonicalUrls)) {
       break
+    }
+    if (digestSourceAtCap(byId.values(), digestSourceKey(candidate), usedCanonicalUrls)) {
+      continue
     }
     remaining -= 1
     try {
