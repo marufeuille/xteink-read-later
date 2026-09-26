@@ -1,3 +1,4 @@
+import { compareListedByPublishedDate } from '../candidates/list'
 import {
   candidateMatchesListFilters,
   parseCandidateListFilters,
@@ -12,21 +13,6 @@ import type {
   ClipJobId,
   HttpUrl,
 } from '../types'
-
-function compareListed(a: CandidateArticle, b: CandidateArticle): number {
-  const aUnknown = a.publishedAt === null ? 1 : 0
-  const bUnknown = b.publishedAt === null ? 1 : 0
-  if (aUnknown !== bUnknown) {
-    return aUnknown - bUnknown
-  }
-  if (a.publishedAt !== null && b.publishedAt !== null && a.publishedAt !== b.publishedAt) {
-    return a.publishedAt < b.publishedAt ? 1 : -1
-  }
-  if (a.discoveredAt !== b.discoveredAt) {
-    return a.discoveredAt < b.discoveredAt ? 1 : -1
-  }
-  return a.id < b.id ? 1 : a.id > b.id ? -1 : 0
-}
 
 export function createMemoryCandidateStore(): CandidateStore {
   const articles = new Map<string, CandidateArticle>()
@@ -75,7 +61,7 @@ export function createMemoryCandidateStore(): CandidateStore {
       const all = [...articles.values()]
       const filters = parseCandidateListFilters(query)
       const matched = all.filter((article) => candidateMatchesListFilters(article, filters))
-      matched.sort(compareListed)
+      matched.sort(compareListedByPublishedDate)
       return {
         items: matched.slice(query.offset, query.offset + query.limit),
         total: matched.length,

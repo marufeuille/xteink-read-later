@@ -26,13 +26,43 @@ export function calendarDateInTimeZone(iso: string, timeZone: string): string {
   }).format(date)
 }
 
+function publishedInstant(value: string | null): number | null {
+  if (value === null || value.trim() === '') {
+    return null
+  }
+  const time = Date.parse(value)
+  return Number.isFinite(time) ? time : null
+}
+
+export function compareListedByPublishedDate(
+  left: { readonly publishedAt: string | null; readonly discoveredAt: string; readonly id: string },
+  right: { readonly publishedAt: string | null; readonly discoveredAt: string; readonly id: string },
+): number {
+  const leftTime = publishedInstant(left.publishedAt)
+  const rightTime = publishedInstant(right.publishedAt)
+  if (leftTime === null || rightTime === null) {
+    if (leftTime !== rightTime) {
+      return leftTime === null ? 1 : -1
+    }
+  } else if (leftTime !== rightTime) {
+    return rightTime - leftTime
+  }
+  if (left.discoveredAt !== right.discoveredAt) {
+    return left.discoveredAt < right.discoveredAt ? 1 : -1
+  }
+  if (left.id !== right.id) {
+    return left.id < right.id ? 1 : -1
+  }
+  return 0
+}
+
 export function groupPublicCandidatesByPublishedDate(
   items: readonly CandidatePublic[],
   timeZone: string = CANDIDATE_LIST_TIMEZONE,
 ): readonly CandidateListGroup[] {
   const groups: CandidateListGroup[] = []
   const index = new Map<string, number>()
-  for (const item of items) {
+  for (const item of [...items].sort(compareListedByPublishedDate)) {
     const date = item.publishedAt === null ? null : calendarDateInTimeZone(item.publishedAt, timeZone)
     const key = date ?? 'unknown'
     const existing = index.get(key)

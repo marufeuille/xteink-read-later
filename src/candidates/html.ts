@@ -12,7 +12,6 @@ import {
   candidatesReturnToQuery,
   formatCandidatesPath,
 } from './list-filter'
-import { calendarDateInTimeZone } from './list'
 
 function escapeHtml(value: string): string {
   return value
@@ -65,8 +64,8 @@ function statusLabel(item: CandidatePublic): string {
 
 const STYLES = `
 :root { color-scheme: light dark; }
-body { font-family: system-ui, sans-serif; margin: 0 auto; padding: 1rem; max-width: 80rem; line-height: 1.45; }
-h1 { font-size: 1.25rem; }
+body { font-family: system-ui, sans-serif; margin: 0 auto; padding: 1rem; max-width: 46rem; line-height: 1.45; }
+h1 { font-size: 1.25rem; margin-bottom: 0.75rem; }
 label { display: block; margin: 0.75rem 0 0.35rem; }
 input[type="url"], input[type="search"], select {
   width: 100%; box-sizing: border-box; font-size: 1rem; padding: 0.55rem;
@@ -74,27 +73,58 @@ input[type="url"], input[type="search"], select {
 button { font-size: 1rem; padding: 0.7rem 1rem; min-height: 44px; margin-top: 0.75rem; margin-right: 0.5rem; }
 .notice { padding: 0.75rem 1rem; margin: 0 0 1rem; border-radius: 0.4rem; background: color-mix(in srgb, CanvasText 8%, Canvas); }
 .note { font-size: 0.9rem; color: color-mix(in srgb, CanvasText 70%, Canvas); }
-.login, .register { max-width: 40rem; }
+.login { max-width: 40rem; }
+.add {
+  display: flex;
+  gap: 0.5rem;
+  align-items: end;
+  margin: 0.75rem 0 0;
+}
+.add label { flex: 1; margin: 0; }
+.add button { margin: 0; white-space: nowrap; }
 .filters {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
   gap: 0.65rem 1rem;
   align-items: end;
   margin: 1rem 0;
 }
 .filters label { margin: 0; }
 .filters button { margin: 0; }
-.table-wrap { overflow-x: auto; margin-top: 0.75rem; }
-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 56rem; }
-th, td { text-align: left; vertical-align: top; padding: 0.45rem 0.5rem; border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, Canvas); }
-th { font-size: 0.78rem; font-weight: 600; color: color-mix(in srgb, CanvasText 70%, Canvas); }
-.title a { font-weight: 600; text-decoration: none; }
-.title a:hover { text-decoration: underline; }
-.reasons { display: block; font-size: 0.8rem; color: color-mix(in srgb, CanvasText 70%, Canvas); }
-.actions { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.about { margin: 0 0 0.5rem; }
+.about summary { cursor: pointer; }
+.day { margin-top: 1.1rem; }
+.day h2 {
+  position: sticky;
+  top: 0;
+  margin: 0;
+  padding: 0.4rem 0;
+  font-size: 0.8rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  background: Canvas;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 22%, Canvas);
+}
+.item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.35rem 0.75rem;
+  align-items: start;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, Canvas);
+}
+.title { font-weight: 650; text-decoration: none; }
+.title:hover { text-decoration: underline; }
+.meta { margin: 0.2rem 0 0; font-size: 0.85rem; color: color-mix(in srgb, CanvasText 70%, Canvas); }
+.actions { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; justify-content: flex-end; }
 .actions form { margin: 0; }
 .actions button { margin: 0; min-height: 36px; padding: 0.3rem 0.55rem; font-size: 0.85rem; }
 nav { display: flex; gap: 1rem; margin-top: 1.25rem; flex-wrap: wrap; }
+@media (max-width: 40rem) {
+  .add { flex-direction: column; align-items: stretch; }
+  .item { grid-template-columns: minmax(0, 1fr); }
+  .actions { justify-content: flex-start; }
+}
 `.trim()
 
 function layout(title: string, body: string): string {
@@ -192,23 +222,32 @@ function itemActions(item: CandidatePublic, csrfToken: string, returnTo: string)
   return actionsBlock(buttons)
 }
 
-function publishedLabel(item: CandidatePublic): string {
-  return item.publishedAt === null
-    ? '公開日不明'
-    : calendarDateInTimeZone(item.publishedAt, CANDIDATE_LIST_TIMEZONE)
+function itemCard(item: CandidatePublic, csrfToken: string, returnTo: string): string {
+  const reasons = recommendReasonsLabel(item)
+  const meta = [
+    item.outlet,
+    recommendDisplayLabel(item.recommendation),
+    ...(reasons === '' ? [] : [reasons]),
+    statusLabel(item),
+  ].join(' · ')
+  return `<article class="item">
+  <div>
+    <a class="title" href="${escapeHtml(item.canonicalUrl)}" rel="noreferrer">${escapeHtml(item.title)}</a>
+    <p class="meta">${escapeHtml(meta)}</p>
+  </div>
+  ${itemActions(item, csrfToken, returnTo)}
+</article>`
 }
 
-function itemRow(item: CandidatePublic, csrfToken: string, returnTo: string): string {
-  const reasons = recommendReasonsLabel(item)
-  const reasonsHtml = reasons === '' ? '' : `<span class="reasons">${escapeHtml(reasons)}</span>`
-  return `<tr>
-  <td>${escapeHtml(publishedLabel(item))}</td>
-  <td class="title"><a href="${escapeHtml(item.canonicalUrl)}" rel="noreferrer">${escapeHtml(item.title)}</a></td>
-  <td>${escapeHtml(item.outlet)}</td>
-  <td>${escapeHtml(recommendDisplayLabel(item.recommendation))}${reasonsHtml}</td>
-  <td>${escapeHtml(statusLabel(item))}</td>
-  <td>${itemActions(item, csrfToken, returnTo)}</td>
-</tr>`
+function dayHeading(date: string | null, label: string): string {
+  if (date === null) {
+    return label
+  }
+  const weekday = new Intl.DateTimeFormat('ja-JP', {
+    timeZone: CANDIDATE_LIST_TIMEZONE,
+    weekday: 'short',
+  }).format(new Date(`${date}T12:00:00+09:00`))
+  return `${date}（${weekday}）`
 }
 
 const GRADE_FILTER_OPTIONS: ReadonlyArray<{ value: CandidateListFilters['grade']; label: string }> = [
@@ -270,31 +309,21 @@ export function candidatesPageHtml(input: {
     input.notice === undefined
       ? ''
       : `<p class="notice" role="status">${escapeHtml(input.notice.message)}</p>`
-  const items = input.list.groups.flatMap((group) => group.items)
+  const groups = input.list.groups
+  const items = groups.flatMap((group) => group.items)
   const preparing = items.some((item) => item.deliveryState === 'preparing')
   const returnTo = candidatesReturnToQuery(input.list.filters, input.list.page)
   const listPath = formatCandidatesPath(input.list.filters, input.list.page)
-  const table =
+  const list =
     items.length === 0
       ? `<p>${escapeHtml(rangeLabel(input.list))}</p>`
-      : `<p class="note">${escapeHtml(rangeLabel(input.list))}</p>
-<div class="table-wrap">
-<table>
-  <thead>
-    <tr>
-      <th scope="col">公開日</th>
-      <th scope="col">タイトル</th>
-      <th scope="col">ソース</th>
-      <th scope="col">おすすめ度</th>
-      <th scope="col">状態</th>
-      <th scope="col">操作</th>
-    </tr>
-  </thead>
-  <tbody>
-    ${items.map((item) => itemRow(item, input.csrfToken, returnTo)).join('\n')}
-  </tbody>
-</table>
-</div>`
+      : `<p class="note">${escapeHtml(rangeLabel(input.list))} · 公開日の新しい順</p>
+${groups
+  .map((group) => {
+    const cards = group.items.map((item) => itemCard(item, input.csrfToken, returnTo)).join('\n')
+    return `<section class="day"><h2>${escapeHtml(dayHeading(group.date, group.label))}</h2>${cards}</section>`
+  })
+  .join('\n')}`
   const totalPages = Math.max(1, Math.ceil(input.list.total / input.list.pageSize))
   const prev =
     input.list.page > 1
@@ -309,20 +338,24 @@ export function candidatesPageHtml(input: {
     : ''
   return `<h1>読書候補</h1>
 ${notice}
-<p class="note">${escapeHtml(input.list.timezoneNote)}</p>
-<p class="note">「OPDSで取得可能」はカタログに載った状態です。端末のダウンロード済みや読了ではありません。</p>
-<p class="note">おすすめ度はデータエンジニア視点の読書補助です。品質の保証ではありません。未判定・材料不足・低確信・失敗は低評価ではありません。</p>
 <nav><a href="/sources">情報源</a></nav>
-<form class="register" method="post" action="/candidates">
+<form class="add" method="post" action="/candidates">
   <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />
   ${returnTo === '' ? '' : `<input type="hidden" name="return_to" value="${escapeHtml(returnTo)}" />`}
-  <label for="url">記事 URL</label>
-  <input id="url" name="url" type="url" inputmode="url" autocomplete="url" required placeholder="https://" />
+  <label for="url">記事 URL
+    <input id="url" name="url" type="url" inputmode="url" autocomplete="url" required placeholder="https://" />
+  </label>
   <button type="submit">候補に追加</button>
 </form>
 ${filterForm(input.list)}
+<details class="about">
+  <summary>一覧の見方</summary>
+  <p class="note">${escapeHtml(input.list.timezoneNote)}</p>
+  <p class="note">「OPDSで取得可能」はカタログに載った状態です。端末のダウンロード済みや読了ではありません。</p>
+  <p class="note">おすすめ度はデータエンジニア視点の読書補助です。品質の保証ではありません。未判定・材料不足・低確信・失敗は低評価ではありません。</p>
+</details>
 ${refresh}
-${table}
+${list}
 <nav>${prev}${next}</nav>
 <form method="post" action="/candidates/logout">
   <input type="hidden" name="csrf" value="${escapeHtml(input.csrfToken)}" />
