@@ -13,6 +13,7 @@ Rules:
 - If the source is not Japanese, translate the full article into natural Japanese Markdown.
 - If the source is already Japanese, do not translate; only tidy wording without changing meaning.
 - Preserve heading hierarchy, paragraphs, lists, block quotes, links, and fenced code blocks.
+- A line matching X3IMG:n:… is an image placeholder. Copy each such line unchanged and alone. Do not translate, drop, or rewrite it.
 - Keep code, CLI commands, API names, and proper nouns in the original spelling.
 - Technical terms may include the English original in parentheses on first use only.
 - Do not summarize, omit sections, or add ads/CTAs/navigation.

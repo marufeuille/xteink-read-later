@@ -183,7 +183,7 @@ describe('XML-illegal chars and img drop', () => {
     expect(markdown).toContain('Keep\ttabs and\nline feeds.')
   })
 
-  it('drops svg, png, and data-URI img, keeping short alt text', () => {
+  it('keeps a raster image as an X3 placeholder and drops svg and data URIs', () => {
     const markdown = htmlToMarkdown(dummy, BASE)
     expect(markdown).not.toMatch(/!\[/)
     expect(markdown).not.toContain('<img')
@@ -193,6 +193,24 @@ describe('XML-illegal chars and img drop', () => {
     expect(markdown).not.toContain('example.com/chart.svg')
     expect(markdown).not.toContain('example.com/photo.png')
     expect(markdown).not.toContain('data:image/png')
+    expect(markdown).toContain('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png')
+  })
+
+  it('turns an X3 placeholder into an img', () => {
+    const html = markdownToHtml('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png', BASE)
+    expect(html).toBe('<p><img src="https://example.com/photo.png" alt=""/></p>')
+  })
+
+  it('drops tracking pixels and private image hosts', () => {
+    const markdown = htmlToMarkdown(
+      '<p><img src="https://example.com/pixel.png" alt="pixel" width="1" height="1"></p>' +
+        '<p><img src="http://127.0.0.1/secret.png" alt="local"></p>',
+      BASE,
+    )
+    expect(markdown).toContain('pixel')
+    expect(markdown).toContain('local')
+    expect(markdown).not.toContain('X3IMG:')
+    expect(markdown).not.toContain('127.0.0.1')
   })
 
   it('does not resurrect Markdown images as HTML img', () => {

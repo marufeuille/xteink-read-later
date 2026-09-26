@@ -1,5 +1,6 @@
 import { createExtractPipeline } from '../extract/pipeline'
 import { buildEpub } from '../epub/build-epub'
+import { embedX3Images } from '../epub/x3-image'
 import { logPipeline } from '../log'
 import { translateArticle as defaultTranslateArticle } from '../translate/openai'
 import type {
@@ -72,12 +73,15 @@ async function finishEpub(
 ): Promise<Result<ClipResult, PipelineError>> {
   const epubStarted = Date.now()
   try {
-    const epub = await build(article)
+    const embedded = await embedX3Images(article.contentHtml)
+    const ready =
+      embedded.html === article.contentHtml ? article : { ...article, contentHtml: embedded.html }
+    const epub = await build(ready, embedded.images.length > 0 ? { images: embedded.images } : {})
     const epubMs = Date.now() - epubStarted
     logPipeline({ articleId, stage: 'epub', durationMs: epubMs }, log)
     return ok({
       id: articleId,
-      article,
+      article: ready,
       epub,
       timingsMs: { ...timings, epub: epubMs },
     })

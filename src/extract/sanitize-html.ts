@@ -1,4 +1,10 @@
 import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
+import { assertFetchableCandidateUrl } from '../candidates/fetch-policy'
+import {
+  X3_IMAGE_MAX_COUNT,
+  x3ImageMarker,
+  x3ImageUrlFromLine,
+} from '../images/x3-token'
 import { parseHttpUrl, type HttpUrl } from '../types'
 import { PARSE_HTML_OPTIONS } from './constants'
 import {
@@ -116,11 +122,14 @@ const BLOCK_TAGS = new Set([
 
 const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
 
+type FigureCounter = { count: number }
+
 type SerializeCtx = {
   readonly base: HttpUrl
   readonly inPre: boolean
   readonly list: 'ul' | 'ol' | null
   readonly index: number
+  readonly figures: FigureCounter
 }
 
 function escapeText(value: string): string {
@@ -335,7 +344,11 @@ function htmlNode(node: Node, ctx: SerializeCtx): string {
 
   if (tag === 'img') {
     const alt = imgFallback(node)
-    return alt.length > 0 ? escapeText(alt) : ''
+    const src = embeddableImageUrl(node, nextCtx)
+    if (src === null) {
+      return alt.length > 0 ? escapeText(alt) : ''
+    }
+    return `<img src="${escapeAttr(src)}" alt="${escapeAttr(alt)}">`
   }
 
   if (WRAPPER_TAGS.has(tag)) {
@@ -366,6 +379,7 @@ function htmlNode(node: Node, ctx: SerializeCtx): string {
   }
   if (
     inner.replace(/<[^>]+>/g, '').trim().length === 0 &&
+    !/<img\b/i.test(inner) &&
     (tag === 'figure' || tag === 'figcaption' || tag === 'ul' || tag === 'ol' || tag === 'p')
   ) {
     return ''
@@ -412,7 +426,13 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
   const tag = node.rawTagName.toLowerCase()
 
   if (tag === 'img') {
-    return imgFallback(node)
+    const alt = imgFallback(node)
+    const src = embeddableImageUrl(node, ctx)
+    if (src === null) {
+      return alt
+    }
+    const marker = x3ImageMarker(ctx.figures.count, src)
+    return alt.length > 0 ? `${alt}\n\n${marker}` : marker
   }
 
   if (tag === 'br') {
@@ -500,7 +520,50 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
 }
 
 function rootCtx(base: HttpUrl): SerializeCtx {
-  return { base, inPre: false, list: null, index: 0 }
+  return { base, inPre: false, list: null, index: 0, figures: { count: 0 } }
+}
+
+function positivePixel(value: string | undefined): number | null {
+  if (value === undefined || !/^\d{1,5}$/.test(value)) {
+    return null
+  }
+  const parsed = Number(value)
+  return parsed > 0 ? parsed : null
+}
+
+function isTrackingPixel(el: HTMLElement): boolean {
+  const width = positivePixel(el.getAttribute('width'))
+  const height = positivePixel(el.getAttribute('height'))
+  return width !== null && height !== null && width <= 8 && height <= 8
+}
+
+function isSvgUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.toLowerCase().endsWith('.svg')
+  } catch {
+    return true
+  }
+}
+
+/** Absolute raster URL worth embedding, or null for SVG, data URIs, pixels, and private hosts. */
+function embeddableImageUrl(el: HTMLElement, ctx: SerializeCtx): string | null {
+  if (ctx.figures.count >= X3_IMAGE_MAX_COUNT || isTrackingPixel(el)) {
+    return null
+  }
+  const src = el.getAttribute('src')
+  if (src === undefined || src.trim().length === 0) {
+    return null
+  }
+  const resolved = resolveHref(ctx.base, src.trim())
+  if (resolved === null || isSvgUrl(resolved)) {
+    return null
+  }
+  const httpUrl = parseHttpUrl(resolved)
+  if (httpUrl === null || !assertFetchableCandidateUrl(httpUrl).ok) {
+    return null
+  }
+  ctx.figures.count += 1
+  return httpUrl
 }
 
 export function sanitizeContentHtml(root: HTMLElement, base: HttpUrl): string {
@@ -727,6 +790,13 @@ export function markdownToHtml(markdown: string, base: HttpUrl): string {
   while (index < lines.length) {
     const line = lines[index] ?? ''
     if (line.trim() === '') {
+      index += 1
+      continue
+    }
+
+    const figureUrl = x3ImageUrlFromLine(line)
+    if (figureUrl !== null) {
+      blocks.push(`<p><img src="${escapeAttr(figureUrl)}" alt=""/></p>`)
       index += 1
       continue
     }
