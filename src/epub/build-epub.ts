@@ -6,12 +6,16 @@ import { htmlFragmentToXhtml, xmlEscape } from './xhtml'
 
 type HeadingEntry = { href: string; label: string }
 
-const IMAGE_HREF = /^images\/[A-Za-z0-9][A-Za-z0-9._-]*\.png$/
+const IMAGE_HREF = /^images\/[A-Za-z0-9][A-Za-z0-9._-]*\.(?:png|jpe?g)$/
 
 export type EpubImage = {
   readonly id: string
   readonly href: string
   readonly bytes: Uint8Array
+}
+
+function imageMediaType(href: string): 'image/jpeg' | 'image/png' {
+  return href.endsWith('.jpg') || href.endsWith('.jpeg') ? 'image/jpeg' : 'image/png'
 }
 
 function assertImageHref(href: string): void {
@@ -160,7 +164,7 @@ function contentOpf(
     ${images
       .map(
         (image) =>
-          `<item id="${xmlEscape(image.id)}" href="${xmlEscape(image.href)}" media-type="image/png"/>`,
+          `<item id="${xmlEscape(image.id)}" href="${xmlEscape(image.href)}" media-type="${imageMediaType(image.href)}"/>`,
       )
       .join('\n    ')}
   </manifest>

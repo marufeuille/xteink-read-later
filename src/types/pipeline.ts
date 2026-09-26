@@ -56,7 +56,17 @@ export type TranslateArticle = (
   deps: TranslateDeps,
 ) => Promise<Result<TranslatedArticle, TranslateFailedError>>
 
-export type BuildEpub = (article: TranslatedArticle) => Promise<EpubBytes>
+export type BuildEpub = (
+  article: TranslatedArticle,
+  options?: {
+    readonly identifier?: string
+    readonly images?: readonly {
+      readonly id: string
+      readonly href: string
+      readonly bytes: Uint8Array
+    }[]
+  },
+) => Promise<EpubBytes>
 
 export type ParseClipUrl = (
   body: ClipRequestBody,

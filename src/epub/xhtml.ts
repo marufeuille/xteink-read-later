@@ -30,7 +30,8 @@ function preservedImage(node: HTMLElement, options: XhtmlOptions): string | null
     return null
   }
   const alt = node.getAttribute('alt') ?? ''
-  return `<img class="digest-qr" src="${xmlEscape(src)}" alt="${xmlEscape(alt)}"/>`
+  const classAttr = src.startsWith('images/qr-') ? ' class="digest-qr"' : ''
+  return `<img${classAttr} src="${xmlEscape(src)}" alt="${xmlEscape(alt)}"/>`
 }
 
 function serialize(node: Node, options: XhtmlOptions): string {
