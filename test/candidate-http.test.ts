@@ -321,6 +321,46 @@ describe('candidate JSON API', () => {
     expect(second.groups.reduce((sum, group) => sum + group.items.length, 0)).toBe(1)
   })
 
+  it('shows the newer publication date above an older one', async () => {
+    const { app, candidateStore, env } = appWithAccess()
+    const put = async (id: string, title: string, publishedAt: string) => {
+      const url = parseHttpUrl(`https://example.com/${id}`)
+      if (url === null) {
+        throw new Error('url')
+      }
+      await candidateStore.put({
+        id: asCandidateId(id),
+        canonicalUrl: url,
+        sourceUrl: url,
+        title,
+        outlet: 'Example',
+        publishedAt,
+        discoveredAt: '2026-09-01T00:00:00.000Z',
+        fetchStatus: 'fetched',
+        listingState: 'listed',
+        exclusionReason: null,
+        fullTextState: 'unconfirmed',
+        completedArticleId: null,
+        clipJobId: null,
+        clipRunId: null,
+        selectedAt: null,
+        recommendation: unevaluatedRecommendation(),
+        createdAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      })
+    }
+    await put('cand_00000000000000000000000000000001', '古い記事', '2026-09-01T00:00:00.000Z')
+    await put('cand_ffffffffffffffffffffffffffffffff', '新しい記事', '2026-09-26T15:00:00.000Z')
+    const listed = await app.request('/candidates', {}, env)
+    const body = await listed.text()
+    const newer = body.indexOf('2026-09-27')
+    const older = body.indexOf('2026-09-01')
+    expect(newer).toBeGreaterThan(0)
+    expect(older).toBeGreaterThan(newer)
+    expect(body.indexOf('新しい記事')).toBeLessThan(body.indexOf('古い記事'))
+    expect(body).not.toContain('min-width: 56rem')
+  })
+
   it('filters the JSON list by title, grade, and outlet', async () => {
     const { app, candidateStore, env } = appWith()
     const now = '2026-09-21T00:00:00.000Z'
@@ -416,7 +456,7 @@ describe('candidate HTML form', () => {
     expect(submitted.headers.get('location')).toContain('notice=fetch_failed')
     const listed = await app.request(submitted.headers.get('location') ?? '/candidates', {}, env)
     const listedHtml = await listed.text()
-    expect(listedHtml).toContain('<table')
+    expect(listedHtml).toContain('公開日の新しい順')
     expect(listedHtml).toContain('ソース')
     expect(listedHtml).toContain('絞り込む')
     expect(listedHtml).toContain('取得失敗')
@@ -454,7 +494,7 @@ describe('candidate HTML form', () => {
 
     const formPage = await app.request('/candidates?title=CPU', {}, env)
     const formHtml = await formPage.text()
-    expect(formHtml).toContain('<table')
+    expect(formHtml).toContain('公開日の新しい順')
     expect(formHtml).toContain('name="return_to" value="title=CPU"')
     const csrf = csrfFrom(formHtml)
     const sent = await app.request(

@@ -1,3 +1,4 @@
+import { compareListedByPublishedDate } from '../candidates/list'
 import { listedFilterSql, parseCandidateListFilters } from '../candidates/list-filter'
 import { parseCandidateRecommendation, recommendBindValues } from '../recommend/parse'
 import {
@@ -281,8 +282,8 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
           .prepare(
             `SELECT * FROM candidate_articles
              WHERE ${where}
-             ORDER BY CASE WHEN published_at IS NULL THEN 1 ELSE 0 END ASC,
-               published_at DESC,
+             ORDER BY CASE WHEN datetime(published_at) IS NULL THEN 1 ELSE 0 END ASC,
+               datetime(published_at) DESC,
                discovered_at DESC,
                id DESC
              LIMIT ? OFFSET ?`,
@@ -307,6 +308,7 @@ export const createD1CandidateStore: CreateCandidateStore = (deps) => {
       const items = (list.results as CandidateRow[])
         .map(parseCandidate)
         .filter((row): row is CandidateArticle => row !== null)
+        .sort(compareListedByPublishedDate)
       const outlets = outletRows.results
         .map((row) => (isRecord(row) && typeof row.outlet === 'string' ? row.outlet : null))
         .filter((row): row is string => row !== null && row !== '')

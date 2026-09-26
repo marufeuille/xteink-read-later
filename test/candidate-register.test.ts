@@ -227,11 +227,48 @@ describe('published date grouping', () => {
     }
     expect(calendarDateInTimeZone('2026-09-20T14:59:59.000Z', 'Asia/Tokyo')).toBe('2026-09-20')
     expect(calendarDateInTimeZone('2026-09-20T15:00:00.000Z', 'Asia/Tokyo')).toBe('2026-09-21')
-    const groups = groupCandidatesByPublishedDate([after, before, unknown], 'Asia/Tokyo')
+    const groups = groupCandidatesByPublishedDate([unknown, before, after], 'Asia/Tokyo')
     expect(groups.map((group) => group.date)).toEqual(['2026-09-21', '2026-09-20', null])
     expect(groups[2]?.label).toBe('公開日不明')
     expect(groups[2]?.items[0]?.publishedAt).toBeNull()
     expect(groups[2]?.items[0]?.discoveredAt).toBe('2026-09-20T15:00:00.000Z')
+  })
+
+  it('lists a newer publication before an older one even when its id is smaller', async () => {
+    const store = createMemoryCandidateStore()
+    const put = async (
+      id: string,
+      title: string,
+      publishedAt: string | null,
+      discoveredAt: string,
+    ) => {
+      const url = mustUrl(`https://example.com/${id}`)
+      await store.put({
+        id: asCandidateId(id),
+        canonicalUrl: url,
+        sourceUrl: url,
+        title,
+        outlet: 'Example',
+        publishedAt,
+        discoveredAt,
+        fetchStatus: 'fetched',
+        listingState: 'listed',
+        exclusionReason: null,
+        fullTextState: 'unconfirmed',
+        completedArticleId: null,
+        clipJobId: null,
+        clipRunId: null,
+        selectedAt: null,
+        recommendation: unevaluatedRecommendation(),
+        createdAt: discoveredAt,
+        updatedAt: discoveredAt,
+      })
+    }
+    await put('cand_00000000000000000000000000000001', '古い記事', '2026-09-01T00:00:00.000Z', '2026-09-26T00:00:00.000Z')
+    await put('cand_ffffffffffffffffffffffffffffffff', '新しい記事', '2026-09-26T00:00:00.000Z', '2026-09-01T00:00:00.000Z')
+    await put('cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', '日付なし', null, '2026-09-27T00:00:00.000Z')
+    const listed = await store.listListed({ limit: 10, offset: 0 })
+    expect(listed.items.map((item) => item.title)).toEqual(['新しい記事', '古い記事', '日付なし'])
   })
 
   it('pages listed candidates', async () => {

@@ -132,7 +132,7 @@ describe('candidate fixture e2e', () => {
 
     const htmlList = await ctx.hono.request('/candidates', { headers: { authorization: bearerAuthorization() } }, ctx.env)
     const htmlBody = await htmlList.text()
-    expect(htmlBody).toContain('<table')
+    expect(htmlBody).toContain('公開日の新しい順')
     expect(htmlBody).toContain('ソース')
     expect(htmlBody).toContain('絞り込む')
     expect(htmlBody).toContain('Cloudflare Workers の CPU 制限')
