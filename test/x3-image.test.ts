@@ -93,13 +93,13 @@ describe('embedX3Images', () => {
     expect(fetchImage).not.toHaveBeenCalledWith('http://127.0.0.1/secret.jpg', expect.anything())
   })
 
-  it('keeps the digest QR class on PNG placeholders', async () => {
+  it('keeps the digest QR class on JPEG images', async () => {
     const files = unzipSync(
-      await buildEpub(article('<p><img src="images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png" alt="全文を送る"/></p>'), {
+      await buildEpub(article('<p><img src="images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg" alt="全文を送る"/></p>'), {
         images: [
           {
             id: 'qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            href: 'images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png',
+            href: 'images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
             bytes: jpeg('x3-baseline.jpg'),
           },
         ],
@@ -107,6 +107,6 @@ describe('embedX3Images', () => {
     )
     const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
     expect(chapter).toContain('class="digest-qr"')
-    expect(strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())).toContain('media-type="image/png"')
+    expect(strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())).toContain('media-type="image/jpeg"')
   })
 })

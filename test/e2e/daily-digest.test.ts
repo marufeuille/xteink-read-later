@@ -2,7 +2,7 @@ import { unzipSync, strFromU8 } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/app'
 import { digestConfirmUrl, digestQrExpiresAt, signDigestQrToken } from '../../src/digest/confirm-link'
-import { qrPng } from '../../src/digest/qr-png'
+import { qrJpeg } from '../../src/digest/qr-jpeg'
 import { buildDummyDailyWrite } from '../../src/daily/issue'
 import { publishLatestDaily } from '../../src/daily/publish'
 import { handleScheduled } from '../../src/schedule'
@@ -26,7 +26,7 @@ import { basicAuthorization, bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN
 import { createFakeDigestQueue } from '../fake-digest-queue'
 import { createFakeFeedQueue } from '../fake-feed-queue'
 import { createFakeQueue } from '../fake-queue'
-import { readRgbPng } from '../png-file'
+import { readQrJpeg } from '../qr-jpeg'
 import { installNetworkMock, openaiMessageResponse } from './mock-network'
 
 const ORIGIN = mustUrl('https://read.example.com')
@@ -253,13 +253,14 @@ describe('daily digest fixture e2e', () => {
     expect(body).toContain('日本語の要約です')
     expect(body).not.toContain('DAY-2026-09-20')
     const files = epubFiles(epub)
-    const pngs = Object.keys(files).filter((name) => name.endsWith('.png')).sort()
-    expect(pngs).toEqual([
-      'OEBPS/images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png',
-      'OEBPS/images/qr-cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png',
+    const jpgs = Object.keys(files).filter((name) => name.endsWith('.jpg')).sort()
+    expect(jpgs).toEqual([
+      'OEBPS/images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
+      'OEBPS/images/qr-cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.jpg',
     ])
     const opf = strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array())
-    expect(opf.match(/media-type="image\/png"/g)).toHaveLength(2)
+    expect(opf.match(/media-type="image\/jpeg"/g)).toHaveLength(2)
+    expect(opf).not.toContain('image/png')
     const kept = (await store.getEpub(keptId)) ?? new Uint8Array()
     expect(Buffer.from(kept).equals(Buffer.from(keptEpub))).toBe(true)
 
@@ -270,16 +271,14 @@ describe('daily digest fixture e2e', () => {
       expiresAt,
     })
     const confirm = digestConfirmUrl('https://read.example.com', 'cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', expiresAt, token)
-    const png = files['OEBPS/images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png'] ?? new Uint8Array()
-    expect(Buffer.from(png).equals(Buffer.from(qrPng(confirm)))).toBe(true)
-    const decoded = readRgbPng(png)
-    expect(decoded.colorType).toBe(2)
-    expect(decoded.interlace).toBe(0)
-    expect(decoded.rowFilter).toBe(0)
-    expect(decoded.firstPixel).toEqual([255, 255, 255])
-    expect(decoded.hasBlack).toBe(true)
-    const other = readRgbPng(files['OEBPS/images/qr-cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.png'] ?? new Uint8Array())
-    expect(other.hasBlack).toBe(true)
+    const jpeg = files['OEBPS/images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg'] ?? new Uint8Array()
+    expect(Buffer.from(jpeg).equals(Buffer.from(qrJpeg(confirm)))).toBe(true)
+    const decoded = readQrJpeg(jpeg)
+    expect(decoded.width).toBe(decoded.height)
+    expect(decoded.border[0]).toBeGreaterThan(240)
+    expect(decoded.darkest).toBeLessThan(40)
+    const other = readQrJpeg(files['OEBPS/images/qr-cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.jpg'] ?? new Uint8Array())
+    expect(other.darkest).toBeLessThan(40)
     expect(body).not.toContain(token)
     expect(body).not.toContain(TEST_CLIP_TOKEN)
 

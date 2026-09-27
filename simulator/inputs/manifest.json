@@ -1,5 +1,5 @@
 {
-  "note": "短い HTML の置き場。実ページは同じディレクトリに HTML を足し、pages に 1 件追加する。turns は本を開いたあとのページ送り回数。",
+  "note": "問題ページの置き場。短い HTML も実ページも pages に 1 件足す。画像が複数なら images に並べ、まとめの QR は kind を digest にする。turns は本を開いたあとのページ送り回数。",
   "pages": [
     {
       "id": "keep-image",
@@ -19,6 +19,66 @@
       "expect": "empty",
       "bandFrom": "keep-image",
       "turns": 1
+    },
+    {
+      "id": "grok-bot-101",
+      "html": "grok-bot-101.html",
+      "url": "https://x.ai/bot/guides/grok-bot-101",
+      "images": [
+        {
+          "file": "images/grok-1.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,f=auto/v1/website/grok-bot-guides-grok-bot-101-hero-7d861d71.jpg"
+        },
+        {
+          "file": "images/grok-2.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=500,f=auto/v1/website/grok-bot-guides-grok-bot-101-cloud-computer-b57bf80b.jpg"
+        },
+        {
+          "file": "images/grok-3.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=500,f=auto/v1/website/grok-bot-guides-grok-bot-101-anatomy-2135357a.jpg"
+        },
+        {
+          "file": "images/grok-4.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=500,f=auto/v1/website/grok-bot-guides-grok-bot-101-settings-211dc21a.jpg"
+        },
+        {
+          "file": "images/grok-5.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=500,f=auto/v1/website/grok-bot-guides-grok-bot-101-routines-3ee4464a.jpg"
+        },
+        {
+          "file": "images/grok-6.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=500,f=auto/v1/website/grok-bot-guides-grok-bot-101-permissions-e0c14511.jpg"
+        },
+        {
+          "file": "images/grok-7.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=500,f=auto/v1/website/grok-bot-guides-grok-bot-101-chain-8599ce17.jpg"
+        },
+        {
+          "file": "images/grok-8.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=450,f=auto/v1/website/grok-bot-guides-grok-bot-101-crm-96fc9a9f.jpg"
+        },
+        {
+          "file": "images/grok-9.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=500,f=auto/v1/website/grok-bot-guides-grok-bot-101-arnold-51588c2d.jpg"
+        },
+        {
+          "file": "images/grok-10.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=450,f=auto/v1/website/grok-bot-guides-grok-bot-101-outer-loop-8d01a411.jpg"
+        },
+        {
+          "file": "images/grok-11.jpg",
+          "url": "https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,height=500,f=auto/v1/website/grok-bot-guides-grok-bot-101-search-e4c7ad20.jpg"
+        }
+      ],
+      "expect": "image",
+      "turns": 0
+    },
+    {
+      "id": "digest-qr",
+      "kind": "digest",
+      "url": "https://example.com/simulator/digest-qr",
+      "expect": "image",
+      "turns": 2
     }
   ]
 }
