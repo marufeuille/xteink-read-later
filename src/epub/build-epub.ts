@@ -233,12 +233,12 @@ export async function buildEpub(
     'META-INF/container.xml': strToU8(CONTAINER_XML),
     'OEBPS/content.opf': strToU8(contentOpf(article, bookId, modified, images, documents)),
     'OEBPS/nav.xhtml': strToU8(nav),
-    'OEBPS/style.css': strToU8(EPUB_CSS),
   }
   for (const [index, section] of converted.entries()) {
     const href = documents[index]?.href ?? 'chapter.xhtml'
     files[`OEBPS/${href}`] = strToU8(chapterXhtml(article, section.xhtml))
   }
+  files['OEBPS/style.css'] = strToU8(EPUB_CSS)
   for (const image of images) {
     files[`OEBPS/${image.href}`] = image.bytes
   }

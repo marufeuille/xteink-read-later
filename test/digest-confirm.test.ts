@@ -220,6 +220,17 @@ describe('digest EPUB QR images', () => {
     expect(left.opf).toContain('<itemref idref="section-1"/>')
     expect(left.opf).toContain('<itemref idref="section-2"/>')
     expect(left.opf).not.toContain('href="chapter.xhtml"')
+    expect(Object.keys(unzipSync(first.write.epub))).toEqual([
+      'mimetype',
+      'META-INF/container.xml',
+      'OEBPS/content.opf',
+      'OEBPS/nav.xhtml',
+      'OEBPS/section-1.xhtml',
+      'OEBPS/section-2.xhtml',
+      'OEBPS/style.css',
+      `OEBPS/images/qr-${CANDIDATE_A}.jpg`,
+      `OEBPS/images/qr-${CANDIDATE_B}.jpg`,
+    ])
     expect(left.chapter).not.toContain('photo.png')
     expect(left.chapter).toContain('写真')
     expect(left.chapter).not.toContain(SECRET)
