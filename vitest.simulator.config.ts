@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['simulator/run.test.ts'],
-    testTimeout: 600_000,
+    testTimeout: 1_800_000,
     fileParallelism: false,
   },
 })

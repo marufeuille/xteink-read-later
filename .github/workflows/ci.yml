@@ -38,23 +38,59 @@ jobs:
       - name: E2E tests
         run: npm run test:e2e
 
+  simulator-images:
+    name: simulator images
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install SDL2, OpenSSL, and xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            pkg-config \
+            libsdl2-dev \
+            libssl-dev \
+            xvfb \
+            curl \
+            python3-venv
+      - name: Install PlatformIO
+        run: |
+          python3 -m venv "$HOME/.platformio-venv"
+          "$HOME/.platformio-venv/bin/pip" install 'platformio==6.1.19'
+          echo "$HOME/.platformio-venv/bin" >> "$GITHUB_PATH"
+      - name: Check PlatformIO
+        run: pio --version
+      - name: Install
+        run: npm ci
+      - name: Native JPEGDEC image bands
+        run: npm run simulator:images
+
   merge-gate:
     name: merge-gate
     if: always()
-    needs: check
+    needs: [check, simulator-images]
     runs-on: ubuntu-latest
     timeout-minutes: 1
     steps:
-      - name: Require typecheck, unit, e2e success
+      - name: Require typecheck, unit, e2e, and simulator images success
         run: |
-          result='${{ needs.check.result }}'
-          echo "check job result: ${result}"
-          test "$result" = success
+          check='${{ needs.check.result }}'
+          simulator='${{ needs.simulator-images.result }}'
+          echo "check job result: ${check}"
+          echo "simulator-images job result: ${simulator}"
+          test "$check" = success
+          test "$simulator" = success
 
   deploy:
     name: deploy worker
-    needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [check, simulator-images]
+    if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

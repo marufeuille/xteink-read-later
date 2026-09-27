@@ -28,15 +28,35 @@ describe('GitHub merge gates', () => {
     expect(workflow).toContain('npm run test:e2e')
   })
 
-  it('fails merge-gate unless typecheck, unit, e2e succeeded', () => {
+  it('fails merge-gate unless typecheck, unit, e2e, and simulator images succeeded', () => {
+    const check = workflow.split('\n  check:')[1]?.split('\n  simulator-images:')[0] ?? ''
+    expect(check).toContain('name: typecheck, unit, e2e')
+    expect(check).toContain('timeout-minutes: 10')
+    expect(check).toContain('npm run typecheck')
+    expect(check).toContain('npm run test:unit')
+    expect(check).toContain('npm run test:e2e')
+    expect(check).not.toContain('simulator:images')
+
+    const simulator = workflow.split('\n  simulator-images:')[1]?.split('\n  merge-gate:')[0] ?? ''
+    expect(simulator).toContain('name: simulator images')
+    expect(simulator).toContain('timeout-minutes: 45')
+    expect(simulator).toContain('libsdl2-dev')
+    expect(simulator).toContain('libssl-dev')
+    expect(simulator).toContain('xvfb')
+    expect(simulator).toContain('platformio==6.1.19')
+    expect(simulator).toContain('npm run simulator:images')
+    expect(simulator).not.toMatch(/\n\s*if:/)
+
     const mergeGate = workflow.split('\n  merge-gate:')[1]?.split('\n  deploy:')[0] ?? ''
     expect(mergeGate).toContain('name: merge-gate')
     expect(mergeGate).toContain('if: always()')
-    expect(mergeGate).toContain('needs: check')
+    expect(mergeGate).toContain('needs: [check, simulator-images]')
     expect(mergeGate).toContain('needs.check.result')
-    expect(mergeGate).toContain('test "$result" = success')
+    expect(mergeGate).toContain('needs.simulator-images.result')
+    expect(mergeGate).toContain('test "$check" = success')
+    expect(mergeGate).toContain('test "$simulator" = success')
     expect(workflow).toContain(
-      "if: github.event_name == 'push' && github.ref == 'refs/heads/main'",
+      "if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}",
     )
   })
 

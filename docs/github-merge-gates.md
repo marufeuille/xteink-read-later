@@ -17,7 +17,8 @@ AGENTS.md の自律マージを、GitHub 側でも強制する。運用の正本
 - 変更は pull request 経由。人間の Approve は必須にしない（自律マージ用）
 - 未解決のレビュースレッドがあるとマージできない
 - 必須チェックは `merge-gate` だけ。発行元は GitHub Actions（App ID `15368`）
-- `merge-gate` は `typecheck, unit, e2e` が `success` のときだけ成功する。失敗・キャンセル・スキップは失敗にする
+- `merge-gate` は `typecheck, unit, e2e`（ジョブ `check`）と `simulator images`（ジョブ `simulator-images`）がどちらも `success` のときだけ成功する。失敗・キャンセル・スキップは失敗にする
+- `simulator images` は PR、`merge_group`、`main` で `npm run simulator:images` を実行する。upstream CrossPoint のピン止め SHA を `simulator_x3` でビルドし、デコードはネイティブ JPEGDEC（`CROSSPOINT_SIM_USE_NATIVE_DECODERS`）。SDL2 と OpenSSL を使い、`DISPLAY` が無いときは `xvfb` で起動する。帯の判定はその BMP を見る。ジョブは `check`（10 分）とは別で、上限は 45 分
 - workflow 全体が未実行（`[skip ci]` など）だと必須チェックが pending のまま残り、マージできない
 - GitHub Actions の GITHUB_TOKEN は `contents: read`。PR レビューの自己承認は不可
 
@@ -64,7 +65,7 @@ gh pr merge --auto --merge
 1. workflow にジョブを足す。`name` を安定させる（例: `high-risk-review`）。`continue-on-error` は付けない。
 2. そのジョブを GitHub Actions で走らせ、一度 success を出す。
 3. `.github/merge-gates/main-ruleset.json` の `required_status_checks` に `{ "context": "high-risk-review", "integration_id": 15368 }` を足す。これが必須化の本体。
-4. skip を success にしたくない場合は、`merge-gate` の `needs` に足すだけでなく、そのジョブの `result` も `success` 必須にする。`needs` だけ足しても `merge-gate` は今も `needs.check.result` しか見ない。
+4. skip を success にしたくない場合は、`merge-gate` の `needs` に足すだけでなく、そのジョブの `result` も `success` 必須にする。`merge-gate` は今 `needs.check.result` と `needs.simulator-images.result` を見ている。`needs` に足すだけでは、失敗したジョブを成功扱いのままにできる。
 5. `bash .github/scripts/apply-merge-gates.sh` を再実行する。
 
 チェック名を変えたら ruleset も同時に更新する。bypass actor は足さない。Actions の `can_approve_pull_request_reviews` は on にしない。書き込み権限のある主体が PR の workflow で同名ジョブを空成功に差し替える余地は、個人リポジトリでは残る。org の required workflows が使えるようになったらそれを足す。

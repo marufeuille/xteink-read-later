@@ -12,5 +12,5 @@ describe('CrossPoint simulator_x3 image bands', () => {
     expect(keep?.inkRatio).toBeGreaterThan(EMPTY_BAND_RATIO)
     expect(drop?.expect).toBe('empty')
     expect(drop?.inkRatio).toBeLessThan(EMPTY_BAND_RATIO)
-  }, 600_000)
+  })
 })
