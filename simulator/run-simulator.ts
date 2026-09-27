@@ -77,18 +77,29 @@ export async function ensureFirmwareCheckout(): Promise<string> {
     if (override !== undefined && override.length > 0) {
       throw new Error(`CROSSPOINT_FIRMWARE_DIR is not a CrossPoint checkout: ${dest}`)
     }
+    rmSync(dest, { recursive: true, force: true })
     mkdirSync(dirname(dest), { recursive: true })
-    await runCommand(
-      'git',
-      ['clone', '--recursive', '--depth', '1', '--branch', 'develop', FIRMWARE_REPO, dest],
-      { timeoutMs: 300_000 },
-    )
+    for (const args of pinnedFirmwareGitSteps(dest)) {
+      const slow = args.includes('fetch') || args.includes('submodule')
+      await runCommand('git', args, { timeoutMs: slow ? 300_000 : 30_000 })
+    }
   }
   const sha = (await runCommand('git', ['-C', dest, 'rev-parse', 'HEAD'], { timeoutMs: 30_000 })).trim()
   if (sha !== CROSSPOINT_FIRMWARE_SHA) {
     throw new Error(`CrossPoint checkout ${sha} is not pinned ${CROSSPOINT_FIRMWARE_SHA}`)
   }
   return dest
+}
+
+/** Git commands that fetch {@link CROSSPOINT_FIRMWARE_SHA} and its submodules. */
+export function pinnedFirmwareGitSteps(dest: string): readonly (readonly string[])[] {
+  return [
+    ['init', dest],
+    ['-C', dest, 'remote', 'add', 'origin', FIRMWARE_REPO],
+    ['-C', dest, 'fetch', '--depth', '1', 'origin', CROSSPOINT_FIRMWARE_SHA],
+    ['-C', dest, 'checkout', '--detach', 'FETCH_HEAD'],
+    ['-C', dest, 'submodule', 'update', '--init', '--recursive'],
+  ]
 }
 
 function pioBinary(): string {
@@ -117,7 +128,7 @@ async function buildSimulator(firmwareDir: string): Promise<string> {
   installNativeDecoderConfig(firmwareDir)
   await runCommand(pioBinary(), ['run', '-e', 'simulator_x3'], {
     cwd: firmwareDir,
-    timeoutMs: 600_000,
+    timeoutMs: 1_200_000,
   })
   const program = join(firmwareDir, '.pio', 'build', 'simulator_x3', 'program')
   if (!existsSync(program)) {

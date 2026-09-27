@@ -5,7 +5,7 @@ import { unzipSync, strFromU8 } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { isX3BaselineJpeg } from '../src/epub/x3-image'
 import { buildSimulatorEpubs, loadSimulatorPages } from '../simulator/build-epubs'
-import { openBookPlan } from '../simulator/run-simulator'
+import { CROSSPOINT_FIRMWARE_SHA, openBookPlan, pinnedFirmwareGitSteps } from '../simulator/run-simulator'
 import { checkImageBands } from '../simulator/check-bands'
 import { decodeBmp, encodeBmp, findImageBand, type RgbImage } from '../simulator/image-band'
 import { simulatorInputsDir } from '../simulator/paths'
@@ -82,6 +82,19 @@ describe('simulator image band', () => {
         { id: 'drop', expect: 'empty', bandFrom: 'keep', bmp: keep },
       ]),
     ).toThrow(/not empty/)
+  })
+})
+
+describe('pinned CrossPoint firmware', () => {
+  it('fetches the pinned sha and its submodules', () => {
+    const steps = pinnedFirmwareGitSteps('/tmp/crosspoint-reader').map((args) => args.join(' '))
+    expect(steps).toEqual([
+      'init /tmp/crosspoint-reader',
+      '-C /tmp/crosspoint-reader remote add origin https://github.com/crosspoint-reader/crosspoint-reader.git',
+      `-C /tmp/crosspoint-reader fetch --depth 1 origin ${CROSSPOINT_FIRMWARE_SHA}`,
+      '-C /tmp/crosspoint-reader checkout --detach FETCH_HEAD',
+      '-C /tmp/crosspoint-reader submodule update --init --recursive',
+    ])
   })
 })
 
