@@ -1,0 +1,24 @@
+{
+  "note": "短い HTML の置き場。実ページは同じディレクトリに HTML を足し、pages に 1 件追加する。turns は本を開いたあとのページ送り回数。",
+  "pages": [
+    {
+      "id": "keep-image",
+      "html": "keep-image.html",
+      "url": "https://example.com/simulator/keep-image",
+      "image": "images/keep.jpg",
+      "imageUrl": "https://cdn.example.com/simulator/keep.jpg",
+      "expect": "image",
+      "turns": 1
+    },
+    {
+      "id": "drop-image",
+      "html": "drop-image.html",
+      "url": "https://example.com/simulator/drop-image",
+      "image": "images/progressive.jpg",
+      "imageUrl": "https://cdn.example.com/simulator/progressive.jpg",
+      "expect": "empty",
+      "bandFrom": "keep-image",
+      "turns": 1
+    }
+  ]
+}
