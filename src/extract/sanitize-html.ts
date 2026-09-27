@@ -2,8 +2,8 @@ import { HTMLElement, NodeType, parse, type Node } from 'node-html-parser'
 import { assertFetchableCandidateUrl } from '../candidates/fetch-policy'
 import {
   X3_IMAGE_MAX_COUNT,
+  x3ImageFromLine,
   x3ImageMarker,
-  x3ImageUrlFromLine,
 } from '../images/x3-token'
 import { parseHttpUrl, type HttpUrl } from '../types'
 import { PARSE_HTML_OPTIONS } from './constants'
@@ -121,6 +121,7 @@ const BLOCK_TAGS = new Set([
 ])
 
 const HEADING_TAGS = new Set(['h1', 'h2', 'h3', 'h4', 'h5', 'h6'])
+const IMAGE_WRAPPER_TAGS = new Set(['div', 'span', 'picture', 'figure', 'p', 'section'])
 
 type FigureCounter = { count: number }
 
@@ -130,6 +131,7 @@ type SerializeCtx = {
   readonly list: 'ul' | 'ol' | null
   readonly index: number
   readonly figures: FigureCounter
+  readonly skip: WeakSet<Node>
 }
 
 function escapeText(value: string): string {
@@ -404,8 +406,80 @@ function markdownChildren(el: HTMLElement, ctx: SerializeCtx): string {
   return el.childNodes.map((child) => markdownNode(child, ctx)).join('')
 }
 
+function sameCaption(alt: string, text: string): boolean {
+  const collapsed = collapseText(text).trim()
+  return collapsed.length > 0 && collapsed === alt
+}
+
+function nextMeaningfulSibling(node: Node): Node | null {
+  const parent = node.parentNode
+  if (parent === null) {
+    return null
+  }
+  const index = parent.childNodes.indexOf(node)
+  if (index < 0) {
+    return null
+  }
+  for (let cursor = index + 1; cursor < parent.childNodes.length; cursor += 1) {
+    const sibling = parent.childNodes[cursor]
+    if (sibling === undefined) {
+      continue
+    }
+    if (sibling.nodeType === NodeType.TEXT_NODE && sibling.text.trim().length === 0) {
+      continue
+    }
+    return sibling
+  }
+  return null
+}
+
+function isThinImageWrapper(parent: HTMLElement, only: Node): boolean {
+  const tag = parent.rawTagName.toLowerCase()
+  if (!IMAGE_WRAPPER_TAGS.has(tag)) {
+    return false
+  }
+  for (const child of parent.childNodes) {
+    if (child === only) {
+      continue
+    }
+    if (child.nodeType === NodeType.TEXT_NODE && child.text.trim().length === 0) {
+      continue
+    }
+    return false
+  }
+  return true
+}
+
+/** Drop a following caption that repeats the image alt, including text left after span unwrapping. */
+function markDuplicateCaption(img: HTMLElement, alt: string, skip: WeakSet<Node>): void {
+  if (alt.length === 0) {
+    return
+  }
+  let current: Node = img
+  for (;;) {
+    const parent = current.parentNode
+    if (parent === null) {
+      return
+    }
+    const next = nextMeaningfulSibling(current)
+    if (next !== null) {
+      if (sameCaption(alt, next.text)) {
+        skip.add(next)
+      }
+      return
+    }
+    if (!isThinImageWrapper(parent, current)) {
+      return
+    }
+    current = parent
+  }
+}
+
 function markdownNode(node: Node, ctx: SerializeCtx): string {
   if (node.nodeType === NodeType.TEXT_NODE) {
+    if (ctx.skip.has(node)) {
+      return ''
+    }
     if (ctx.inPre) {
       return node.text
     }
@@ -419,7 +493,7 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
     return ''
   }
 
-  if (shouldDropElement(node)) {
+  if (ctx.skip.has(node) || shouldDropElement(node)) {
     return ''
   }
 
@@ -431,8 +505,10 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
     if (src === null) {
       return alt
     }
+    markDuplicateCaption(node, alt, ctx.skip)
     const marker = x3ImageMarker(ctx.figures.count, src)
-    return alt.length > 0 ? `${alt}\n\n${marker}` : marker
+    const lead = alt.length > 0 ? `${alt}\n\n` : ''
+    return `\n\n${lead}${marker}\n\n`
   }
 
   if (tag === 'br') {
@@ -520,7 +596,7 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
 }
 
 function rootCtx(base: HttpUrl): SerializeCtx {
-  return { base, inPre: false, list: null, index: 0, figures: { count: 0 } }
+  return { base, inPre: false, list: null, index: 0, figures: { count: 0 }, skip: new WeakSet() }
 }
 
 function positivePixel(value: string | undefined): number | null {
@@ -738,7 +814,7 @@ function isPipeTableStart(lines: readonly string[], index: number): boolean {
 }
 
 function isTableContinueRow(line: string): boolean {
-  if (line.trim() === '' || isFenceOpen(line) !== null) {
+  if (line.trim() === '' || isFenceOpen(line) !== null || x3ImageFromLine(line) !== null) {
     return false
   }
   if (/^(#{1,6})\s+\S/.test(line) || /^---+$/.test(line.trim()) || line.startsWith('<table')) {
@@ -769,6 +845,7 @@ function pipeTableHtml(header: readonly string[], rows: readonly string[][], bas
 function startsBlock(lines: readonly string[], index: number): boolean {
   const line = lines[index] ?? ''
   return (
+    x3ImageFromLine(line) !== null ||
     isFenceOpen(line) !== null ||
     /^(#{1,6})\s+\S/.test(line) ||
     /^---+$/.test(line.trim()) ||
@@ -794,9 +871,12 @@ export function markdownToHtml(markdown: string, base: HttpUrl): string {
       continue
     }
 
-    const figureUrl = x3ImageUrlFromLine(line)
-    if (figureUrl !== null) {
-      blocks.push(`<p><img src="${escapeAttr(figureUrl)}" alt=""/></p>`)
+    const figure = x3ImageFromLine(line)
+    if (figure !== null) {
+      blocks.push(`<p><img src="${escapeAttr(figure.url)}" alt=""/></p>`)
+      if (figure.rest.length > 0) {
+        blocks.push(`<p>${inlineMarkdown(figure.rest, base)}</p>`)
+      }
       index += 1
       continue
     }
@@ -880,6 +960,9 @@ export function markdownToHtml(markdown: string, base: HttpUrl): string {
       const items: string[] = []
       while (index < lines.length) {
         const current = lines[index] ?? ''
+        if (x3ImageFromLine(current) !== null) {
+          break
+        }
         const item = itemRe.exec(current)
         if (item?.[1] !== undefined) {
           items.push(item[1])
