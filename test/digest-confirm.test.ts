@@ -80,11 +80,22 @@ function listed(
   }
 }
 
-function epubParts(epub: Uint8Array): { readonly opf: string; readonly chapter: string; readonly jpgs: string[] } {
+function epubParts(epub: Uint8Array): {
+  readonly opf: string
+  readonly chapter: string
+  readonly chapters: readonly string[]
+  readonly jpgs: string[]
+} {
   const files = unzipSync(epub)
+  const sectionNames = Object.keys(files)
+    .filter((name) => /^OEBPS\/section-\d+\.xhtml$/.test(name))
+    .sort((left, right) => left.localeCompare(right, 'en', { numeric: true }))
+  const chapterNames = sectionNames.length > 0 ? sectionNames : ['OEBPS/chapter.xhtml']
+  const chapters = chapterNames.map((name) => strFromU8(files[name] ?? new Uint8Array()))
   return {
     opf: strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array()),
-    chapter: strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array()),
+    chapter: chapters.join('\n'),
+    chapters,
     jpgs: Object.keys(files).filter((name) => name.endsWith('.jpg')).sort(),
   }
 }
@@ -197,6 +208,29 @@ describe('digest EPUB QR images', () => {
     expect(left.opf).toContain(`href="images/qr-${CANDIDATE_B}.jpg"`)
     expect(left.chapter).toContain(`<img class="digest-qr" src="images/qr-${CANDIDATE_A}.jpg" alt="全文を送る"/>`)
     expect(left.chapter).toContain(`<img class="digest-qr" src="images/qr-${CANDIDATE_B}.jpg" alt="全文を送る"/>`)
+    expect(left.chapters).toHaveLength(2)
+    expect(left.chapters[0]).toContain(`images/qr-${CANDIDATE_A}.jpg`)
+    expect(left.chapters[0]).not.toContain(`images/qr-${CANDIDATE_B}.jpg`)
+    expect(left.chapters[1]).toContain(`images/qr-${CANDIDATE_B}.jpg`)
+    expect(left.chapters[1]).not.toContain(`images/qr-${CANDIDATE_A}.jpg`)
+    expect(left.chapters[0]?.match(/class="digest-qr"/g)).toHaveLength(1)
+    expect(left.chapters[1]?.match(/class="digest-qr"/g)).toHaveLength(1)
+    expect(left.chapters[1]?.indexOf('要約B')).toBeLessThan(left.chapters[1]?.indexOf('class="digest-qr"') ?? -1)
+    expect(left.chapters[1]).toContain(`id="send-${CANDIDATE_B}"`)
+    expect(left.opf).toContain('<itemref idref="section-1"/>')
+    expect(left.opf).toContain('<itemref idref="section-2"/>')
+    expect(left.opf).not.toContain('href="chapter.xhtml"')
+    expect(Object.keys(unzipSync(first.write.epub))).toEqual([
+      'mimetype',
+      'META-INF/container.xml',
+      'OEBPS/content.opf',
+      'OEBPS/nav.xhtml',
+      'OEBPS/section-1.xhtml',
+      'OEBPS/section-2.xhtml',
+      'OEBPS/style.css',
+      `OEBPS/images/qr-${CANDIDATE_A}.jpg`,
+      `OEBPS/images/qr-${CANDIDATE_B}.jpg`,
+    ])
     expect(left.chapter).not.toContain('photo.png')
     expect(left.chapter).toContain('写真')
     expect(left.chapter).not.toContain(SECRET)
@@ -213,6 +247,21 @@ describe('digest EPUB QR images', () => {
       expect(decoded.border[0]).toBeGreaterThan(240)
       expect(decoded.darkest).toBeLessThan(40)
     }
+  })
+
+  it('keeps the second QR outside an unclosed summary table', async () => {
+    const built = await buildDailyDigestWrite({
+      date: DATE,
+      items: [
+        item(CANDIDATE_A, '深い話', '<p>要約A</p>'),
+        item(CANDIDATE_B, '関連', '<table><tr><td>表'),
+      ],
+      qr: { publicOrigin: ORIGIN, secret: SECRET },
+    })
+    const second = epubParts(built.write.epub).chapters[1] ?? ''
+    expect(second.match(/class="digest-qr"/g)).toHaveLength(1)
+    expect(second).not.toMatch(/<td\b[^>]*>[\s\S]*class="digest-qr"/)
+    expect(second).toContain(`images/qr-${CANDIDATE_B}.jpg`)
   })
 
   it('leaves a digest without a public origin image-free', async () => {
@@ -431,6 +480,7 @@ describe('digest confirm HTTP', () => {
     const parts = epubParts((await store.getEpub(published.articleId!)) ?? new Uint8Array())
     expect(parts.jpgs).toHaveLength(1)
     expect(parts.opf.match(/media-type="image\/jpeg"/g)).toHaveLength(1)
+    expect(parts.opf).toContain('href="chapter.xhtml"')
     expect(parts.opf).not.toContain('image/png')
   })
 })

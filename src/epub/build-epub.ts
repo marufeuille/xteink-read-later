@@ -64,7 +64,7 @@ function assignHeadingId(existing: string | null, used: Set<string>): string {
   return id
 }
 
-function withHeadingIds(xhtml: string): { xhtml: string; entries: HeadingEntry[] } {
+function withHeadingIds(xhtml: string, fileHref = 'chapter.xhtml'): { xhtml: string; entries: HeadingEntry[] } {
   const used = new Set<string>()
   const entries: HeadingEntry[] = []
   const updated = xhtml.replace(
@@ -74,7 +74,7 @@ function withHeadingIds(xhtml: string): { xhtml: string; entries: HeadingEntry[]
       const label = inner.replace(/<[^>]+>/g, '').trim()
       const fallback = `Section ${entries.length + 1}`
       entries.push({
-        href: `chapter.xhtml#${id}`,
+        href: `${fileHref}#${id}`,
         label: label.length > 0 ? label : fallback,
       })
       return `<h${level}${stripIdAttr(attrs)} id="${xmlEscape(id)}">${inner}</h${level}>`
@@ -132,11 +132,21 @@ function chapterXhtml(article: TranslatedArticle, body: string): string {
 `
 }
 
+export type EpubSection = {
+  readonly html: string
+}
+
+type SpineDocument = {
+  readonly id: string
+  readonly href: string
+}
+
 function contentOpf(
   article: TranslatedArticle,
   bookId: string,
   modified: string,
   images: readonly EpubImage[],
+  documents: readonly SpineDocument[] = [{ id: 'chapter', href: 'chapter.xhtml' }],
 ): string {
   const creator =
     article.author !== null
@@ -159,7 +169,12 @@ function contentOpf(
   </metadata>
   <manifest>
     <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
-    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+    ${documents
+      .map(
+        (document) =>
+          `<item id="${xmlEscape(document.id)}" href="${xmlEscape(document.href)}" media-type="application/xhtml+xml"/>`,
+      )
+      .join('\n    ')}
     <item id="css" href="style.css" media-type="text/css"/>
     ${images
       .map(
@@ -169,7 +184,7 @@ function contentOpf(
       .join('\n    ')}
   </manifest>
   <spine>
-    <itemref idref="chapter"/>
+    ${documents.map((document) => `<itemref idref="${xmlEscape(document.id)}"/>`).join('\n    ')}
   </spine>
 </package>
 `
@@ -177,7 +192,11 @@ function contentOpf(
 
 export async function buildEpub(
   article: TranslatedArticle,
-  options: { readonly identifier?: string; readonly images?: readonly EpubImage[] } = {},
+  options: {
+    readonly identifier?: string
+    readonly images?: readonly EpubImage[]
+    readonly sections?: readonly EpubSection[]
+  } = {},
 ): Promise<EpubBytes> {
   const modified = isoNow()
   const bookId =
@@ -189,22 +208,37 @@ export async function buildEpub(
     assertImageHref(image.href)
   }
   const preserveImageSrcs = new Set(images.map((image) => image.href))
-  const converted = withHeadingIds(
-    htmlFragmentToXhtml(
-      article.contentHtml,
-      preserveImageSrcs.size > 0 ? { preserveImageSrcs } : {},
-    ),
+  const xhtmlOptions = preserveImageSrcs.size > 0 ? { preserveImageSrcs } : {}
+  const sections = options.sections ?? []
+  const documents: SpineDocument[] =
+    sections.length > 0
+      ? sections.map((_section, index) => ({
+          id: `section-${index + 1}`,
+          href: `section-${index + 1}.xhtml`,
+        }))
+      : [{ id: 'chapter', href: 'chapter.xhtml' }]
+  const converted = (sections.length > 0 ? sections.map((section) => section.html) : [article.contentHtml]).map(
+    (html, index) => {
+      const fileHref = documents[index]?.href ?? 'chapter.xhtml'
+      return withHeadingIds(htmlFragmentToXhtml(html, xhtmlOptions), fileHref)
+    },
   )
-  const nav = navXhtml(article.title, converted.entries)
+  const nav = navXhtml(
+    article.title,
+    converted.flatMap((section) => section.entries),
+  )
   const mimetype: [Uint8Array, ZipOptions] = [strToU8('application/epub+zip'), { level: 0 }]
   const files: Zippable = {
     mimetype,
     'META-INF/container.xml': strToU8(CONTAINER_XML),
-    'OEBPS/content.opf': strToU8(contentOpf(article, bookId, modified, images)),
+    'OEBPS/content.opf': strToU8(contentOpf(article, bookId, modified, images, documents)),
     'OEBPS/nav.xhtml': strToU8(nav),
-    'OEBPS/chapter.xhtml': strToU8(chapterXhtml(article, converted.xhtml)),
-    'OEBPS/style.css': strToU8(EPUB_CSS),
   }
+  for (const [index, section] of converted.entries()) {
+    const href = documents[index]?.href ?? 'chapter.xhtml'
+    files[`OEBPS/${href}`] = strToU8(chapterXhtml(article, section.xhtml))
+  }
+  files['OEBPS/style.css'] = strToU8(EPUB_CSS)
   for (const image of images) {
     files[`OEBPS/${image.href}`] = image.bytes
   }

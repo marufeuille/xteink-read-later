@@ -82,16 +82,14 @@ describe('buildEpub', () => {
     expect(first.method).toBe(0)
     const files = unzipSync(epub)
     const names = Object.keys(files)
-    expect(names).toEqual(
-      expect.arrayContaining([
-        'mimetype',
-        'META-INF/container.xml',
-        'OEBPS/content.opf',
-        'OEBPS/nav.xhtml',
-        'OEBPS/chapter.xhtml',
-        'OEBPS/style.css',
-      ]),
-    )
+    expect(names).toEqual([
+      'mimetype',
+      'META-INF/container.xml',
+      'OEBPS/content.opf',
+      'OEBPS/nav.xhtml',
+      'OEBPS/chapter.xhtml',
+      'OEBPS/style.css',
+    ])
     expect(strFromU8(files.mimetype ?? new Uint8Array())).toBe('application/epub+zip')
   })
 

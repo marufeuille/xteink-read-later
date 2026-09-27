@@ -43,7 +43,11 @@ function mustUrl(value: string): HttpUrl {
 
 function chapter(epub: Uint8Array): string {
   const files = unzipSync(epub)
-  return strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+  const sectionNames = Object.keys(files)
+    .filter((name) => /^OEBPS\/section-\d+\.xhtml$/.test(name))
+    .sort((left, right) => left.localeCompare(right, 'en', { numeric: true }))
+  const names = sectionNames.length > 0 ? sectionNames : ['OEBPS/chapter.xhtml']
+  return names.map((name) => strFromU8(files[name] ?? new Uint8Array())).join('\n')
 }
 
 function epubFiles(epub: Uint8Array): Record<string, Uint8Array> {
@@ -253,6 +257,15 @@ describe('daily digest fixture e2e', () => {
     expect(body).toContain('日本語の要約です')
     expect(body).not.toContain('DAY-2026-09-20')
     const files = epubFiles(epub)
+    const section1 = strFromU8(files['OEBPS/section-1.xhtml'] ?? new Uint8Array())
+    const section2 = strFromU8(files['OEBPS/section-2.xhtml'] ?? new Uint8Array())
+    expect(section1).toContain('パイプラインの深い話')
+    expect(section1).not.toContain('関連する実装メモ')
+    expect(section1.match(/class="digest-qr"/g)).toHaveLength(1)
+    expect(section2).toContain('関連する実装メモ')
+    expect(section2).not.toContain('パイプラインの深い話')
+    expect(section2.match(/class="digest-qr"/g)).toHaveLength(1)
+    expect(section2.indexOf('日本語の要約です')).toBeLessThan(section2.indexOf('class="digest-qr"'))
     const jpgs = Object.keys(files).filter((name) => name.endsWith('.jpg')).sort()
     expect(jpgs).toEqual([
       'OEBPS/images/qr-cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',
