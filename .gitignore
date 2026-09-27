@@ -3,6 +3,7 @@ node_modules/
 .wrangler/
 dist/
 tmp/
+simulator/out/
 *.tsbuildinfo
 .DS_Store
 pr-risk-judgment.json
