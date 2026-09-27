@@ -1,17 +1,26 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { buildDailyDigestWrite } from '../src/daily/issue'
+import { xmlEscape } from '../src/epub/xhtml'
 import { createClipPipeline } from '../src/pipeline/clip'
-import { parseHttpUrl, type HttpUrl } from '../src/types'
+import { translateArticle as defaultTranslateArticle } from '../src/translate/openai'
+import { asCandidateId, parseHttpUrl, type HttpUrl, type TranslateArticle } from '../src/types'
 import { simulatorInputsDir } from './paths'
 
 export type SimulatorExpect = 'image' | 'empty'
+export type SimulatorKind = 'clip' | 'digest'
+
+export type SimulatorImage = {
+  readonly file: string
+  readonly url: HttpUrl
+}
 
 export type SimulatorPage = {
   readonly id: string
-  readonly htmlFile: string
+  readonly kind: SimulatorKind
+  readonly htmlFile?: string
   readonly url: HttpUrl
-  readonly imageFile: string
-  readonly imageUrl: HttpUrl
+  readonly images: readonly SimulatorImage[]
   readonly expect: SimulatorExpect
   readonly turns: number
   readonly bandFrom?: string
@@ -24,13 +33,30 @@ export type BuiltSimulatorPage = {
 
 type ManifestPage = {
   readonly id?: unknown
+  readonly kind?: unknown
   readonly html?: unknown
   readonly url?: unknown
   readonly image?: unknown
   readonly imageUrl?: unknown
+  readonly images?: unknown
   readonly expect?: unknown
   readonly turns?: unknown
   readonly bandFrom?: unknown
+}
+
+const DIGEST_CANDIDATE = asCandidateId('cand_0000000000000000000000000000000a')
+const DIGEST_ORIGIN = 'https://xteink-read-later.marufeuille.workers.dev'
+const DIGEST_SECRET = 'simulator-digest-qr'
+
+/**
+ * Image-band pages do not call OpenAI.
+ * A finished translation has to keep each X3IMG line, which is what the Japanese path already does.
+ */
+const keepImagePlaceholders: TranslateArticle = (article, deps) => {
+  if (article.language === 'ja') {
+    return defaultTranslateArticle(article, deps)
+  }
+  return defaultTranslateArticle({ ...article, language: 'ja' }, deps)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,6 +78,59 @@ function httpUrl(value: string, label: string): HttpUrl {
   return url
 }
 
+function imageMediaType(bytes: Uint8Array, file: string): string {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg'
+  }
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return 'image/png'
+  }
+  throw new Error(`${file} is not a JPEG or PNG`)
+}
+
+function clipImages(
+  raw: ManifestPage,
+  index: number,
+  inputsDir: string,
+  htmlFile: string,
+  html: string,
+): readonly SimulatorImage[] {
+  const listed: { readonly file: string; readonly url: string }[] = []
+  if (Array.isArray(raw.images)) {
+    for (const [imageIndex, entry] of raw.images.entries()) {
+      if (!isRecord(entry)) {
+        throw new Error(`simulator manifest pages[${index}].images[${imageIndex}] is not an object`)
+      }
+      listed.push({
+        file: requiredString(entry.file, `pages[${index}].images[${imageIndex}].file`),
+        url: requiredString(entry.url, `pages[${index}].images[${imageIndex}].url`),
+      })
+    }
+  } else {
+    listed.push({
+      file: requiredString(raw.image, `pages[${index}].image`),
+      url: requiredString(raw.imageUrl, `pages[${index}].imageUrl`),
+    })
+  }
+  if (listed.length === 0) {
+    throw new Error(`simulator manifest pages[${index}] needs an image`)
+  }
+  return listed.map((image) => {
+    const url = httpUrl(image.url, `pages[${index}] image url`)
+    if (!html.includes(url)) {
+      throw new Error(`${htmlFile} does not reference ${url}`)
+    }
+    readFileSync(join(inputsDir, image.file))
+    return { file: image.file, url }
+  })
+}
+
 export function loadSimulatorPages(inputsDir = simulatorInputsDir()): readonly SimulatorPage[] {
   const manifestPath = join(inputsDir, 'manifest.json')
   const parsed: unknown = JSON.parse(readFileSync(manifestPath, 'utf8'))
@@ -68,14 +147,10 @@ export function loadSimulatorPages(inputsDir = simulatorInputsDir()): readonly S
     if (expect !== 'image' && expect !== 'empty') {
       throw new Error(`simulator manifest pages[${index}].expect must be image or empty`)
     }
-    const htmlFile = requiredString(raw.html, `pages[${index}].html`)
-    const imageFile = requiredString(raw.image, `pages[${index}].image`)
-    const html = readFileSync(join(inputsDir, htmlFile), 'utf8')
-    const imageUrl = httpUrl(requiredString(raw.imageUrl, `pages[${index}].imageUrl`), `pages[${index}].imageUrl`)
-    if (!html.includes(imageUrl)) {
-      throw new Error(`${htmlFile} does not reference ${imageUrl}`)
+    const kind = raw.kind === undefined ? 'clip' : requiredString(raw.kind, `pages[${index}].kind`)
+    if (kind !== 'clip' && kind !== 'digest') {
+      throw new Error(`simulator manifest pages[${index}].kind must be clip or digest`)
     }
-    readFileSync(join(inputsDir, imageFile))
     const turns = raw.turns === undefined ? 1 : raw.turns
     if (typeof turns !== 'number' || !Number.isInteger(turns) || turns < 0 || turns > 8) {
       throw new Error(`simulator manifest pages[${index}].turns must be an integer from 0 to 8`)
@@ -87,14 +162,23 @@ export function loadSimulatorPages(inputsDir = simulatorInputsDir()): readonly S
     if (expect === 'empty' && bandFrom === undefined) {
       throw new Error(`${String(raw.id)} needs bandFrom so the empty check uses that page's image band`)
     }
+    const url = httpUrl(requiredString(raw.url, `pages[${index}].url`), `pages[${index}].url`)
+    const htmlFile = kind === 'clip' ? requiredString(raw.html, `pages[${index}].html`) : undefined
+    const images =
+      kind === 'clip' && htmlFile !== undefined
+        ? clipImages(raw, index, inputsDir, htmlFile, readFileSync(join(inputsDir, htmlFile), 'utf8'))
+        : []
+    if (kind === 'digest' && (raw.html !== undefined || raw.image !== undefined || raw.images !== undefined)) {
+      throw new Error(`${String(raw.id)} is a digest page and does not take html or images`)
+    }
     const page: SimulatorPage = {
       id: requiredString(raw.id, `pages[${index}].id`),
-      htmlFile,
-      url: httpUrl(requiredString(raw.url, `pages[${index}].url`), `pages[${index}].url`),
-      imageFile,
-      imageUrl,
+      kind,
+      url,
+      images,
       expect,
       turns,
+      ...(htmlFile === undefined ? {} : { htmlFile }),
       ...(bandFrom === undefined ? {} : { bandFrom }),
     }
     pages.push(page)
@@ -133,14 +217,36 @@ function pipelineReason(error: { readonly kind: string; readonly reason?: string
   return error.reason === undefined ? error.kind : `${error.kind}: ${error.reason}`
 }
 
+async function buildDigestEpub(page: SimulatorPage): Promise<Uint8Array> {
+  const built = await buildDailyDigestWrite({
+    date: '2026-09-27',
+    items: [
+      {
+        candidateId: DIGEST_CANDIDATE,
+        canonicalUrl: page.url,
+        title: 'まとめのQR',
+        summaryHtml: `<p>${xmlEscape(page.id)} の QR が画像として出るかを見る。</p>`,
+      },
+    ],
+    qr: { publicOrigin: DIGEST_ORIGIN, secret: DIGEST_SECRET },
+  })
+  return built.write.epub
+}
+
 /** Clip the manifest pages with the existing pipeline. Local files stand in for the image URLs. */
 export async function buildSimulatorEpubs(inputsDir = simulatorInputsDir()): Promise<readonly BuiltSimulatorPage[]> {
   const pages = loadSimulatorPages(inputsDir)
   const htmlByUrl = new Map<string, string>()
-  const imageByUrl = new Map<string, Uint8Array>()
+  const imageByUrl = new Map<string, { readonly bytes: Uint8Array; readonly mediaType: string }>()
   for (const page of pages) {
+    if (page.kind !== 'clip' || page.htmlFile === undefined) {
+      continue
+    }
     htmlByUrl.set(page.url, readFileSync(join(inputsDir, page.htmlFile), 'utf8'))
-    imageByUrl.set(page.imageUrl, new Uint8Array(readFileSync(join(inputsDir, page.imageFile))))
+    for (const image of page.images) {
+      const bytes = new Uint8Array(readFileSync(join(inputsDir, image.file)))
+      imageByUrl.set(image.url, { bytes, mediaType: imageMediaType(bytes, image.file) })
+    }
   }
 
   const previous = globalThis.fetch
@@ -152,15 +258,19 @@ export async function buildSimulatorEpubs(inputsDir = simulatorInputsDir()): Pro
     }
     const image = imageByUrl.get(url)
     if (image !== undefined) {
-      return new Response(image, { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      return new Response(image.bytes, { status: 200, headers: { 'content-type': image.mediaType } })
     }
     throw new Error(`unexpected fetch while building simulator epubs: ${url}`)
   }
 
   try {
-    const pipeline = createClipPipeline()
+    const pipeline = createClipPipeline({ translateArticle: keepImagePlaceholders })
     const built: BuiltSimulatorPage[] = []
     for (const page of pages) {
+      if (page.kind === 'digest') {
+        built.push({ page, epub: await buildDigestEpub(page) })
+        continue
+      }
       const result = await pipeline(page.url, { OPENAI_API_KEY: 'simulator-pages-are-japanese' })
       if (!result.ok) {
         throw new Error(`${page.id} clip failed: ${pipelineReason(result.error)}`)

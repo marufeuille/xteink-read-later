@@ -1,5 +1,5 @@
 import { digestConfirmUrl, digestQrExpiresAt, signDigestQrToken } from '../digest/confirm-link'
-import { qrPng } from '../digest/qr-png'
+import { qrJpeg } from '../digest/qr-jpeg'
 import { buildEpub, type EpubImage } from '../epub/build-epub'
 import { xmlEscape } from '../epub/xhtml'
 import {
@@ -93,11 +93,11 @@ async function digestQrContent(
       candidateId: item.candidateId,
       expiresAt,
     })
-    const href = `images/qr-${item.candidateId}.png`
+    const href = `images/qr-${item.candidateId}.jpg`
     images.push({
       id: `qr-${item.candidateId}`,
       href,
-      bytes: qrPng(digestConfirmUrl(qr.publicOrigin, item.candidateId, expiresAt, token)),
+      bytes: qrJpeg(digestConfirmUrl(qr.publicOrigin, item.candidateId, expiresAt, token)),
     })
     sections.push(digestSectionHtml(item, href))
   }

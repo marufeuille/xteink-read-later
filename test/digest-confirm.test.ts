@@ -8,7 +8,7 @@ import {
   verifyDigestQrToken,
   workerPublicOrigin,
 } from '../src/digest/confirm-link'
-import { qrPng } from '../src/digest/qr-png'
+import { qrJpeg } from '../src/digest/qr-jpeg'
 import { buildDummyDailyWrite, buildDailyDigestWrite } from '../src/daily/issue'
 import { runDailyDigest } from '../src/daily/run'
 import { evaluatedRecommendation, unevaluatedRecommendation } from '../src/recommend/taxonomy'
@@ -28,7 +28,7 @@ import {
 } from '../src/types'
 import { TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
 import { createFakeQueue } from './fake-queue'
-import { readRgbPng } from './png-file'
+import { readQrJpeg } from './qr-jpeg'
 
 const ORIGIN = 'https://read.example.com'
 const DATE = '2026-09-21'
@@ -80,12 +80,12 @@ function listed(
   }
 }
 
-function epubParts(epub: Uint8Array): { readonly opf: string; readonly chapter: string; readonly pngs: string[] } {
+function epubParts(epub: Uint8Array): { readonly opf: string; readonly chapter: string; readonly jpgs: string[] } {
   const files = unzipSync(epub)
   return {
     opf: strFromU8(files['OEBPS/content.opf'] ?? new Uint8Array()),
     chapter: strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array()),
-    pngs: Object.keys(files).filter((name) => name.endsWith('.png')).sort(),
+    jpgs: Object.keys(files).filter((name) => name.endsWith('.jpg')).sort(),
   }
 }
 
@@ -160,23 +160,24 @@ describe('digest QR token', () => {
   })
 })
 
-describe('digest QR png', () => {
-  it('is a white non-interlaced RGB PNG and is deterministic', () => {
-    const first = qrPng('https://read.example.com/digest/send/example')
-    const second = qrPng('https://read.example.com/digest/send/example')
+describe('digest QR jpeg', () => {
+  it('is a baseline JPEG inside the X3 box and is deterministic', () => {
+    const first = qrJpeg('https://read.example.com/digest/send/example')
+    const second = qrJpeg('https://read.example.com/digest/send/example')
     expect(Buffer.from(first).equals(Buffer.from(second))).toBe(true)
-    const header = readRgbPng(first)
-    expect(header.bitDepth).toBe(8)
-    expect(header.colorType).toBe(2)
-    expect(header.interlace).toBe(0)
-    expect(header.rowFilter).toBe(0)
-    expect(header.firstPixel).toEqual([255, 255, 255])
-    expect(header.hasBlack).toBe(true)
+    const header = readQrJpeg(first)
+    expect(header.width).toBe(header.height)
+    expect(header.width).toBeGreaterThanOrEqual(24)
+    expect(header.width).toBeLessThanOrEqual(448)
+    expect(header.border[0]).toBeGreaterThan(240)
+    expect(header.border[1]).toBeGreaterThan(240)
+    expect(header.border[2]).toBeGreaterThan(240)
+    expect(header.darkest).toBeLessThan(40)
   })
 })
 
 describe('digest EPUB QR images', () => {
-  it('embeds one png and one manifest item per article, and keeps them identical on the same day', async () => {
+  it('embeds one jpeg and one manifest item per article, and keeps them identical on the same day', async () => {
     const items = [
       item(CANDIDATE_A, '深い話', '<p>要約A</p><p><img src="https://example.com/photo.png" alt="写真"/></p>'),
       item(CANDIDATE_B, '関連', '<p>要約B</p>'),
@@ -186,39 +187,39 @@ describe('digest EPUB QR images', () => {
     const second = await buildDailyDigestWrite({ date: DATE, items, qr })
     const left = epubParts(first.write.epub)
     const right = unzipSync(second.write.epub)
-    expect(left.pngs).toEqual([
-      `OEBPS/images/qr-${CANDIDATE_A}.png`,
-      `OEBPS/images/qr-${CANDIDATE_B}.png`,
+    expect(left.jpgs).toEqual([
+      `OEBPS/images/qr-${CANDIDATE_A}.jpg`,
+      `OEBPS/images/qr-${CANDIDATE_B}.jpg`,
     ])
-    expect(left.opf.match(/media-type="image\/png"/g)).toHaveLength(2)
-    expect(left.opf).toContain(`href="images/qr-${CANDIDATE_A}.png"`)
-    expect(left.opf).toContain(`href="images/qr-${CANDIDATE_B}.png"`)
-    expect(left.chapter).toContain(`<img class="digest-qr" src="images/qr-${CANDIDATE_A}.png" alt="全文を送る"/>`)
-    expect(left.chapter).toContain(`<img class="digest-qr" src="images/qr-${CANDIDATE_B}.png" alt="全文を送る"/>`)
+    expect(left.opf.match(/media-type="image\/jpeg"/g)).toHaveLength(2)
+    expect(left.opf).not.toContain('image/png')
+    expect(left.opf).toContain(`href="images/qr-${CANDIDATE_A}.jpg"`)
+    expect(left.opf).toContain(`href="images/qr-${CANDIDATE_B}.jpg"`)
+    expect(left.chapter).toContain(`<img class="digest-qr" src="images/qr-${CANDIDATE_A}.jpg" alt="全文を送る"/>`)
+    expect(left.chapter).toContain(`<img class="digest-qr" src="images/qr-${CANDIDATE_B}.jpg" alt="全文を送る"/>`)
     expect(left.chapter).not.toContain('photo.png')
     expect(left.chapter).toContain('写真')
     expect(left.chapter).not.toContain(SECRET)
     const urlA = await confirmUrl(CANDIDATE_A)
     const files = unzipSync(first.write.epub)
-    const png = files[`OEBPS/images/qr-${CANDIDATE_A}.png`] ?? new Uint8Array()
-    expect(Buffer.from(png).equals(Buffer.from(qrPng(urlA)))).toBe(true)
-    expect(Buffer.from(png).equals(Buffer.from(right[`OEBPS/images/qr-${CANDIDATE_A}.png`] ?? new Uint8Array()))).toBe(
+    const jpeg = files[`OEBPS/images/qr-${CANDIDATE_A}.jpg`] ?? new Uint8Array()
+    expect(Buffer.from(jpeg).equals(Buffer.from(qrJpeg(urlA)))).toBe(true)
+    expect(Buffer.from(jpeg).equals(Buffer.from(right[`OEBPS/images/qr-${CANDIDATE_A}.jpg`] ?? new Uint8Array()))).toBe(
       true,
     )
-    for (const name of left.pngs) {
-      const decoded = readRgbPng(files[name] ?? new Uint8Array())
-      expect(decoded.colorType).toBe(2)
-      expect(decoded.interlace).toBe(0)
-      expect(decoded.rowFilter).toBe(0)
-      expect(decoded.firstPixel).toEqual([255, 255, 255])
-      expect(decoded.hasBlack).toBe(true)
+    for (const name of left.jpgs) {
+      const decoded = readQrJpeg(files[name] ?? new Uint8Array())
+      expect(decoded.width).toBe(decoded.height)
+      expect(decoded.border[0]).toBeGreaterThan(240)
+      expect(decoded.darkest).toBeLessThan(40)
     }
   })
 
   it('leaves a digest without a public origin image-free', async () => {
     const built = await buildDummyDailyWrite({ date: DATE, origin: mustUrl(ORIGIN) })
     const parts = epubParts(built.write.epub)
-    expect(parts.pngs).toEqual([])
+    expect(parts.jpgs).toEqual([])
+    expect(parts.opf).not.toContain('image/jpeg')
     expect(parts.opf).not.toContain('image/png')
     expect(parts.chapter).not.toMatch(/<img\b/i)
   })
@@ -413,7 +414,7 @@ describe('digest confirm HTTP', () => {
     )
     expect(missing.qrCount).toBe(0)
     const missingEpub = epubParts((await store.getEpub(missing.articleId!)) ?? new Uint8Array())
-    expect(missingEpub.pngs).toEqual([])
+    expect(missingEpub.jpgs).toEqual([])
 
     const published = await runDailyDigest({ ...TEST_BINDINGS, PUBLIC_ORIGIN: ORIGIN, CLIP_TOKEN: SECRET } as Cloudflare.Env, {
       date: DATE,
@@ -428,7 +429,8 @@ describe('digest confirm HTTP', () => {
     })
     expect(published.qrCount).toBe(1)
     const parts = epubParts((await store.getEpub(published.articleId!)) ?? new Uint8Array())
-    expect(parts.pngs).toHaveLength(1)
-    expect(parts.opf.match(/media-type="image\/png"/g)).toHaveLength(1)
+    expect(parts.jpgs).toHaveLength(1)
+    expect(parts.opf.match(/media-type="image\/jpeg"/g)).toHaveLength(1)
+    expect(parts.opf).not.toContain('image/png')
   })
 })

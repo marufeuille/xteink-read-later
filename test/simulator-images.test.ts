@@ -101,9 +101,11 @@ describe('pinned CrossPoint firmware', () => {
 describe('simulator short HTML inputs', () => {
   it('clips one embedded baseline JPEG and drops the progressive JPEG', async () => {
     const pages = loadSimulatorPages()
-    expect(pages.map((page) => [page.id, page.expect, page.bandFrom, page.turns])).toEqual([
-      ['keep-image', 'image', undefined, 1],
-      ['drop-image', 'empty', 'keep-image', 1],
+    expect(pages.map((page) => [page.id, page.kind, page.expect, page.bandFrom, page.turns])).toEqual([
+      ['keep-image', 'clip', 'image', undefined, 1],
+      ['drop-image', 'clip', 'empty', 'keep-image', 1],
+      ['grok-bot-101', 'clip', 'image', undefined, 0],
+      ['digest-qr', 'digest', 'image', undefined, 2],
     ])
     expect(openBookPlan(1)).toEqual({
       script: '2000:ENTER;4000:ENTER;6000:ENTER;9000:DOWN;14000:QUIT',
@@ -128,6 +130,22 @@ describe('simulator short HTML inputs', () => {
     expect(drop['OEBPS/images/fig-1.jpg']).toBeUndefined()
     expect(dropChapter).toContain('画像の帯だけが違う')
     expect(keepChapter).toContain('画像の帯だけが違う')
+
+    const grok = built.find((item) => item.page.id === 'grok-bot-101')
+    const digest = built.find((item) => item.page.id === 'digest-qr')
+    const grokFiles = unzipSync(grok?.epub ?? new Uint8Array())
+    const digestFiles = unzipSync(digest?.epub ?? new Uint8Array())
+    const grokChapter = strFromU8(grokFiles['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    const digestChapter = strFromU8(digestFiles['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    const grokJpeg = grokFiles['OEBPS/images/fig-1.jpg'] ?? new Uint8Array()
+    expect(grokChapter).toContain('<img src="images/fig-1.jpg" alt=""/>')
+    expect(isX3BaselineJpeg(grokJpeg)).toBe(true)
+    expect(grokJpeg.byteLength).toBeGreaterThan(1000)
+    expect(digestChapter).toContain('class="digest-qr"')
+    expect(digestChapter).not.toContain('[Image:')
+    const digestNames = Object.keys(digestFiles).filter((name) => name.endsWith('.jpg'))
+    expect(digestNames).toEqual(['OEBPS/images/qr-cand_0000000000000000000000000000000a.jpg'])
+    expect(isX3BaselineJpeg(digestFiles[digestNames[0] ?? ''] ?? new Uint8Array())).toBe(true)
   })
 
   it('loads a page added next to the short HTML without a new code path', () => {
@@ -148,7 +166,13 @@ describe('simulator short HTML inputs', () => {
       expect: 'image',
     })
     writeFileSync(join(dir, 'manifest.json'), JSON.stringify(manifest))
-    expect(loadSimulatorPages(dir).map((page) => page.id)).toEqual(['keep-image', 'drop-image', 'later-page'])
+    expect(loadSimulatorPages(dir).map((page) => page.id)).toEqual([
+      'keep-image',
+      'drop-image',
+      'grok-bot-101',
+      'digest-qr',
+      'later-page',
+    ])
 
     const empty = manifest.pages[1]
     if (empty !== undefined) {
