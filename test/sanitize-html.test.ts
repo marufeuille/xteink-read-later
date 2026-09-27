@@ -193,12 +193,74 @@ describe('XML-illegal chars and img drop', () => {
     expect(markdown).not.toContain('example.com/chart.svg')
     expect(markdown).not.toContain('example.com/photo.png')
     expect(markdown).not.toContain('data:image/png')
-    expect(markdown).toContain('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png')
+    expect(markdown).toContain('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png|')
+    const marker = markdown.split('\n').find((line) => line.startsWith('X3IMG:'))
+    expect(marker).toBe('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png|')
   })
 
   it('turns an X3 placeholder into an img', () => {
+    const html = markdownToHtml('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png|', BASE)
+    expect(html).toBe('<p><img src="https://example.com/photo.png" alt=""/></p>')
+  })
+
+  it('still accepts a legacy placeholder line without a terminator', () => {
     const html = markdownToHtml('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png', BASE)
     expect(html).toBe('<p><img src="https://example.com/photo.png" alt=""/></p>')
+  })
+
+  it('splits a caption glued after the terminator into its own paragraph', () => {
+    const html = markdownToHtml(
+      "X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png|Grok Bot's cloud computer",
+      BASE,
+    )
+    expect(html).toBe(
+      '<p><img src="https://example.com/photo.png" alt=""/></p><p>Grok Bot\'s cloud computer</p>',
+    )
+  })
+
+  it('reads a raw http URL until whitespace', () => {
+    const html = markdownToHtml('X3IMG:1:https://example.com/photo.png cloud computer', BASE)
+    expect(html).toBe(
+      '<p><img src="https://example.com/photo.png" alt=""/></p><p>cloud computer</p>',
+    )
+  })
+
+  it('leaves an alphanumeric caption glued on without a terminator as text', () => {
+    const html = markdownToHtml(
+      'X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.pngGrok Bot',
+      BASE,
+    )
+    expect(html).not.toMatch(/<img\b/i)
+    expect(html).toContain('X3IMG:1:')
+  })
+
+  it('keeps one caption when the following element repeats the alt', () => {
+    const src =
+      'https://media.x.ai/cdn-cgi/image/fit=scale-down,onerror=redirect,width=800,f=auto/v1/website/a.jpg'
+    const html =
+      '<span><span><img alt="Grok Bot\'s cloud computer" src="' +
+      src +
+      '"></span><span>Grok Bot\'s cloud computer</span></span>'
+    const sanitized = sanitizeContentHtml(parse(html, PARSE_HTML_OPTIONS), BASE)
+    const markdown = htmlToMarkdown(sanitized, BASE)
+    const marker = markdown.split('\n').find((line) => line.startsWith('X3IMG:'))
+    expect(marker).toBe(`X3IMG:1:${encodeURIComponent(src)}|`)
+    expect(markdown.match(/Grok Bot's cloud computer/g)).toHaveLength(1)
+    const roundTrip = markdownToHtml(markdown, BASE)
+    expect(roundTrip).toBe(
+      `<p>Grok Bot's cloud computer</p><p><img src="${src}" alt=""/></p>`,
+    )
+    expect(roundTrip).not.toContain('X3IMG:')
+  })
+
+  it('keeps a caption that differs from the alt', () => {
+    const html =
+      '<p><img alt="Alt text" src="https://example.com/photo.png"></p><span>Different caption</span>'
+    const markdown = htmlToMarkdown(html, BASE)
+    expect(markdown).toContain('Alt text')
+    expect(markdown).toContain('Different caption')
+    const marker = markdown.split('\n').find((line) => line.startsWith('X3IMG:'))
+    expect(marker).toBe('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png|')
   })
 
   it('drops tracking pixels and private image hosts', () => {

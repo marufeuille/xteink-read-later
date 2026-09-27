@@ -7,21 +7,77 @@ export const X3_IMAGE_QUALITY = 72
 export const X3_IMAGE_MAX_COUNT = 12
 export const X3_IMAGE_MAX_BYTES = 400_000
 
-const TOKEN_RE = /^X3IMG:([1-9]\d{0,2}):([A-Za-z0-9\-_.!~*'()%]+)$/
+/** encodeURIComponent never emits `|`, so a caption can sit on the same line and still split off. */
+const ENCODED_URL = /^[A-Za-z0-9\-_.!~*'()%]+/
+
+export type X3ImageMatch = {
+  readonly url: HttpUrl
+  readonly rest: string
+}
 
 export function x3ImageMarker(index: number, url: string): string {
-  return `X3IMG:${index}:${encodeURIComponent(url)}`
+  return `X3IMG:${index}:${encodeURIComponent(url)}|`
+}
+
+/**
+ * Image placeholder at the start of a line.
+ * `X3IMG:n:encoded|caption` splits on `|`.
+ * `X3IMG:n:https://… caption` takes the raw URL until whitespace or `|`.
+ * A legacy line that is only `X3IMG:n:encoded` still matches.
+ * Alphanumeric caption glued on with no `|` or space stays text: the URL boundary is ambiguous.
+ */
+export function x3ImageFromLine(line: string): X3ImageMatch | null {
+  const header = /^X3IMG:([1-9]\d{0,2}):([\s\S]*)$/.exec(line.trim())
+  if (header === null) {
+    return null
+  }
+  const payload = header[2] ?? ''
+  const parts = splitImagePayload(payload)
+  if (parts === null) {
+    return null
+  }
+  const url = decodeImageUrl(parts.encoded)
+  if (url === null) {
+    return null
+  }
+  return { url, rest: parts.rest }
 }
 
 /** Absolute http(s) URL from a placeholder line, or null when the line is not one. */
 export function x3ImageUrlFromLine(line: string): HttpUrl | null {
-  const match = TOKEN_RE.exec(line.trim())
-  const encoded = match?.[2]
-  if (encoded === undefined) {
+  return x3ImageFromLine(line)?.url ?? null
+}
+
+function splitImagePayload(payload: string): { readonly encoded: string; readonly rest: string } | null {
+  if (payload.startsWith('http://') || payload.startsWith('https://')) {
+    const cut = payload.search(/[\s|]/)
+    if (cut === -1) {
+      return { encoded: payload, rest: '' }
+    }
+    const rest = payload.slice(cut).replace(/^\|/, '').trim()
+    return { encoded: payload.slice(0, cut), rest }
+  }
+  const encodedMatch = ENCODED_URL.exec(payload)
+  if (encodedMatch === null) {
     return null
   }
+  const encoded = encodedMatch[0]
+  const tail = payload.slice(encoded.length)
+  if (tail.length === 0) {
+    return { encoded, rest: '' }
+  }
+  if (tail.startsWith('|')) {
+    return { encoded, rest: tail.slice(1).trim() }
+  }
+  return null
+}
+
+function decodeImageUrl(value: string): HttpUrl | null {
+  if (value.startsWith('http://') || value.startsWith('https://')) {
+    return parseHttpUrl(value)
+  }
   try {
-    return parseHttpUrl(decodeURIComponent(encoded))
+    return parseHttpUrl(decodeURIComponent(value))
   } catch {
     return null
   }

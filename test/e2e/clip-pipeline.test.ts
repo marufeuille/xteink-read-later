@@ -469,6 +469,41 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(files['OEBPS/images/fig-1.jpg']).toEqual(new Uint8Array(jpeg))
   })
 
+  it('embeds an X3 JPEG when the translator leaves a caption on the placeholder line', async () => {
+    const pageUrl = 'https://example.com/en/compatibility-date'
+    const imageUrl = 'https://cdn.example.com/photo.jpg'
+    const jpeg = readFileSync(join(fixtures, '..', 'fixtures', 'x3-baseline.jpg'))
+    installNetworkMock({
+      pages: {
+        [pageUrl]: { html: fixtureHtml('en-tech.html') },
+        [imageUrl]: { html: jpeg, contentType: 'image/jpeg' },
+      },
+      openai: async () =>
+        openaiMessageResponse(
+          'ダミー見出し',
+          '本文のあと。\n\nX3IMG:1:https%3A%2F%2Fcdn.example.com%2Fphoto.jpg|クラウドの画面',
+        ),
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('<img src="images/fig-1.jpg" alt=""/>')
+    expect(chapter).toContain('クラウドの画面')
+    expect(chapter).not.toContain('X3IMG:')
+    expect(chapter).not.toContain('cdn.example.com')
+    expect(files['OEBPS/images/fig-1.jpg']).toEqual(new Uint8Array(jpeg))
+  })
+
   it('keeps translate_failed off the HTTP response and off the job body', async () => {
     const pageUrl = 'https://example.com/en/compatibility-date'
     installNetworkMock({
