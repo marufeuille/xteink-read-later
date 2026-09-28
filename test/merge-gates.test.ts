@@ -45,7 +45,10 @@ describe('GitHub merge gates', () => {
     expect(simulator).toContain('xvfb')
     expect(simulator).toContain('platformio==6.1.19')
     expect(simulator).toContain('npm run simulator:images')
-    expect(simulator).not.toMatch(/\n\s*if:/)
+    expect(simulator).toContain('name: Upload simulator screenshots')
+    expect(simulator).toContain('path: simulator/out')
+    const withoutFailedUpload = simulator.replace('\n        if: failure()\n', '\n')
+    expect(withoutFailedUpload).not.toMatch(/\n\s*if:/)
 
     const mergeGate = workflow.split('\n  merge-gate:')[1]?.split('\n  deploy:')[0] ?? ''
     expect(mergeGate).toContain('name: merge-gate')

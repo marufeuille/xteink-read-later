@@ -27,6 +27,11 @@ function sameSize(left: RgbImage, right: RgbImage): boolean {
   return left.width === right.width && left.height === right.height
 }
 
+function whiteImageError(id: string, image: RgbImage): Error {
+  const pageInk = inkRatio(image, { x: 0, y: 0, width: image.width, height: image.height })
+  return new Error(`${id}: image band is still white (page ink ${pageInk.toFixed(3)})`)
+}
+
 /** Image pages must show a non-white band. Empty pages must leave that band white. */
 export function checkImageBands(pages: readonly ShotPage[]): readonly CheckedPage[] {
   const byId = new Map(pages.map((page) => [page.id, page]))
@@ -35,7 +40,7 @@ export function checkImageBands(pages: readonly ShotPage[]): readonly CheckedPag
     if (page.expect === 'image') {
       const band = findImageBand(page.bmp)
       if (band === null) {
-        throw new Error(`${page.id}: image band is still white`)
+        throw whiteImageError(page.id, page.bmp)
       }
       const ratio = inkRatio(page.bmp, band)
       if (ratio < EMPTY_BAND_RATIO) {
@@ -52,7 +57,7 @@ export function checkImageBands(pages: readonly ShotPage[]): readonly CheckedPag
     }
     const band = findImageBand(source.bmp)
     if (band === null) {
-      throw new Error(`${source.id}: image band is still white`)
+      throw whiteImageError(source.id, source.bmp)
     }
     if (!sameSize(page.bmp, source.bmp)) {
       throw new Error(

@@ -2,8 +2,9 @@ import { spawn } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { buildSimulatorEpubs } from './build-epubs'
+import { buildSimulatorEpubs, type SimulatorExpect } from './build-epubs'
 import { checkScreenshotFiles, type CheckedPage } from './check-bands'
+import { decodeBmp, findImageBand } from './image-band'
 import { repoRoot, simulatorOutDir } from './paths'
 
 /** develop @ 2026-09-27. Image drawing is the upstream X3 simulator, not a fork. */
@@ -12,22 +13,61 @@ const FIRMWARE_REPO = 'https://github.com/crosspoint-reader/crosspoint-reader.gi
 
 export type OpenBookPlan = {
   readonly script: string
+  readonly fileBrowserShotMs: number
+  readonly booksShotMs: number
+  readonly openingShotMs: number
   readonly pageShotMs: number
   readonly quitMs: number
 }
 
-/** Home, file browser, books/, then `turns` side-button page turns. */
-export function openBookPlan(turns: number): OpenBookPlan {
-  const events = ['2000:ENTER', '4000:ENTER', '6000:ENTER']
-  let ms = 6000
+const NAV_STEP_MS = 2_000
+const TURN_STEP_MS = 3_000
+const QUIT_AFTER_SHOT_MS = 2_000
+
+/**
+ * First screenshot attempt. Scale 1 fires while a slow runner is still drawing,
+ * so keep-image stays white and merge-gate skips the deploy.
+ */
+export const SIMULATOR_INPUT_SCALE = 2
+/** Second attempt after an image page is still white. */
+export const SIMULATOR_INPUT_RETRY_SCALE = 3
+
+/**
+ * Home, file browser, books/, then `turns` side-button page turns.
+ * Input and screenshots use milliseconds from process start, so `scale`
+ * stretches every gap when the runner is slow to draw.
+ */
+export function openBookPlan(turns: number, scale = 1): OpenBookPlan {
+  if (!Number.isInteger(scale) || scale < 1 || scale > 4) {
+    throw new Error('openBookPlan scale must be an integer from 1 to 4')
+  }
+  const nav = NAV_STEP_MS * scale
+  const turnGap = TURN_STEP_MS * scale
+  const events = [`${nav}:ENTER`, `${nav * 2}:ENTER`, `${nav * 3}:ENTER`]
+  let ms = nav * 3
   for (let turn = 0; turn < turns; turn += 1) {
-    ms += 3000
+    ms += turnGap
     events.push(`${ms}:DOWN`)
   }
-  const pageShotMs = ms + 3000
-  const quitMs = pageShotMs + 2000
+  const pageShotMs = ms + turnGap
+  const quitMs = pageShotMs + QUIT_AFTER_SHOT_MS * scale
   events.push(`${quitMs}:QUIT`)
-  return { script: events.join(';'), pageShotMs, quitMs }
+  return {
+    script: events.join(';'),
+    fileBrowserShotMs: nav + 1_000 * scale,
+    booksShotMs: nav * 2 + 1_000 * scale,
+    openingShotMs: nav * 3 + 1_500 * scale,
+    pageShotMs,
+    quitMs,
+  }
+}
+
+/** Image pages get one slower retry. Empty pages stay on the first schedule. */
+export function inputScalesFor(expect: SimulatorExpect): readonly number[] {
+  if (expect === 'image') {
+    return [SIMULATOR_INPUT_SCALE, SIMULATOR_INPUT_RETRY_SCALE]
+  }
+  return [SIMULATOR_INPUT_SCALE]
 }
 
 function runCommand(
@@ -144,21 +184,20 @@ async function openEpub(
   outDir: string,
   id: string,
   turns: number,
+  scale: number,
 ): Promise<string> {
   rmSync(join(firmwareDir, 'fs_'), { recursive: true, force: true })
   mkdirSync(join(firmwareDir, 'fs_', 'books'), { recursive: true })
   writeFileSync(join(firmwareDir, 'fs_', 'books', 'article.epub'), epub)
   mkdirSync(outDir, { recursive: true })
-  const plan = openBookPlan(turns)
+  const plan = openBookPlan(turns, scale)
   const page = join(outDir, `${id}.bmp`)
   const shots = [
-    `3000:${join(outDir, `${id}-file-browser.bmp`)}`,
-    `5000:${join(outDir, `${id}-books.bmp`)}`,
+    `${plan.fileBrowserShotMs}:${join(outDir, `${id}-file-browser.bmp`)}`,
+    `${plan.booksShotMs}:${join(outDir, `${id}-books.bmp`)}`,
+    `${plan.openingShotMs}:${join(outDir, `${id}-opening.bmp`)}`,
+    `${plan.pageShotMs}:${page}`,
   ]
-  if (plan.pageShotMs > 8000) {
-    shots.push(`7500:${join(outDir, `${id}-opening.bmp`)}`)
-  }
-  shots.push(`${plan.pageShotMs}:${page}`)
   const screenshots = shots.join(';')
   const display = process.env.DISPLAY
   const headless = display === undefined || display.length === 0
@@ -177,6 +216,47 @@ async function openEpub(
   return page
 }
 
+function pageStillWhite(path: string): boolean {
+  return findImageBand(decodeBmp(new Uint8Array(readFileSync(path)))) === null
+}
+
+function simulatorLogTail(outDir: string, id: string): string {
+  const logPath = join(outDir, `${id}.log`)
+  if (!existsSync(logPath)) {
+    return ''
+  }
+  const log = readFileSync(logPath, 'utf8').trim()
+  if (log.length === 0) {
+    return ''
+  }
+  return `\n${log.length > 4_000 ? log.slice(-4_000) : log}`
+}
+
+async function capturePage(
+  firmwareDir: string,
+  program: string,
+  epub: Uint8Array,
+  outDir: string,
+  id: string,
+  turns: number,
+  expect: SimulatorExpect,
+): Promise<string> {
+  const scales = inputScalesFor(expect)
+  let path = ''
+  for (let index = 0; index < scales.length; index += 1) {
+    const scale = scales[index] ?? SIMULATOR_INPUT_SCALE
+    path = await openEpub(firmwareDir, program, epub, outDir, id, turns, scale)
+    if (expect !== 'image' || !pageStillWhite(path)) {
+      return path
+    }
+    const retry = scales[index + 1]
+    if (retry !== undefined) {
+      console.log(`${id}: image band is still white at scale ${scale}; opening again at scale ${retry}`)
+    }
+  }
+  return path
+}
+
 export async function runSimulatorImageCheck(): Promise<readonly CheckedPage[]> {
   const built = await buildSimulatorEpubs()
   const firmwareDir = await ensureFirmwareCheckout()
@@ -184,12 +264,20 @@ export async function runSimulatorImageCheck(): Promise<readonly CheckedPage[]> 
   const outDir = simulatorOutDir()
   const shots: {
     readonly id: string
-    readonly expect: 'image' | 'empty'
+    readonly expect: SimulatorExpect
     readonly path: string
     readonly bandFrom?: string
   }[] = []
   for (const item of built) {
-    const path = await openEpub(firmwareDir, program, item.epub, outDir, item.page.id, item.page.turns)
+    const path = await capturePage(
+      firmwareDir,
+      program,
+      item.epub,
+      outDir,
+      item.page.id,
+      item.page.turns,
+      item.page.expect,
+    )
     shots.push({
       id: item.page.id,
       expect: item.page.expect,
@@ -197,7 +285,15 @@ export async function runSimulatorImageCheck(): Promise<readonly CheckedPage[]> 
       ...(item.page.bandFrom === undefined ? {} : { bandFrom: item.page.bandFrom }),
     })
   }
-  const checked = checkScreenshotFiles(shots)
+  let checked: readonly CheckedPage[]
+  try {
+    checked = checkScreenshotFiles(shots)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const id = shots.find((shot) => message.startsWith(`${shot.id}:`))?.id
+    const log = id === undefined ? '' : simulatorLogTail(outDir, id)
+    throw new Error(`${message}${log}`, { cause: error })
+  }
   for (const page of checked) {
     const band = page.band
     const where = band === null ? 'none' : `${band.x},${band.y} ${band.width}x${band.height}`
