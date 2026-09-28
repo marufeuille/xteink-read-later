@@ -5,7 +5,12 @@ import { unzipSync, strFromU8 } from 'fflate'
 import { describe, expect, it } from 'vitest'
 import { isX3BaselineJpeg } from '../src/epub/x3-image'
 import { buildSimulatorEpubs, loadSimulatorPages } from '../simulator/build-epubs'
-import { CROSSPOINT_FIRMWARE_SHA, openBookPlan, pinnedFirmwareGitSteps } from '../simulator/run-simulator'
+import {
+  CROSSPOINT_FIRMWARE_SHA,
+  inputScalesFor,
+  openBookPlan,
+  pinnedFirmwareGitSteps,
+} from '../simulator/run-simulator'
 import { checkImageBands } from '../simulator/check-bands'
 import { decodeBmp, encodeBmp, findImageBand, type RgbImage } from '../simulator/image-band'
 import { simulatorInputsDir } from '../simulator/paths'
@@ -82,6 +87,10 @@ describe('simulator image band', () => {
         { id: 'drop', expect: 'empty', bandFrom: 'keep', bmp: keep },
       ]),
     ).toThrow(/not empty/)
+    const white = fill(80, 40, () => [255, 255, 255])
+    expect(() => checkImageBands([{ id: 'keep-image', expect: 'image', bmp: white }])).toThrow(
+      'keep-image: image band is still white (page ink 0.000)',
+    )
   })
 })
 
@@ -109,9 +118,23 @@ describe('simulator short HTML inputs', () => {
     ])
     expect(openBookPlan(1)).toEqual({
       script: '2000:ENTER;4000:ENTER;6000:ENTER;9000:DOWN;14000:QUIT',
+      fileBrowserShotMs: 3000,
+      booksShotMs: 5000,
+      openingShotMs: 7500,
       pageShotMs: 12000,
       quitMs: 14000,
     })
+    expect(openBookPlan(1, 2)).toEqual({
+      script: '4000:ENTER;8000:ENTER;12000:ENTER;18000:DOWN;28000:QUIT',
+      fileBrowserShotMs: 6000,
+      booksShotMs: 10000,
+      openingShotMs: 15000,
+      pageShotMs: 24000,
+      quitMs: 28000,
+    })
+    expect(inputScalesFor('image')).toEqual([2, 3])
+    expect(inputScalesFor('empty')).toEqual([2])
+    expect(() => openBookPlan(1, 0)).toThrow(/scale/)
     const keepHtml = readFileSync(join(simulatorInputsDir(), 'keep-image.html'), 'utf8')
     const dropHtml = readFileSync(join(simulatorInputsDir(), 'drop-image.html'), 'utf8')
     const visible = (html: string): string => html.replace(/<img\b[^>]*>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()

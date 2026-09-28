@@ -70,6 +70,13 @@ jobs:
         run: npm ci
       - name: Native JPEGDEC image bands
         run: npm run simulator:images
+      - name: Upload simulator screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshots
+          path: simulator/out
+          if-no-files-found: ignore
 
   merge-gate:
     name: merge-gate
