@@ -10,7 +10,7 @@ export type StoredArticle = {
   readonly epub: EpubBytes
 }
 
-export type ArticleWrite = Omit<ArticleMeta, 'createdAt' | 'updatedAt' | 'classification'> & {
+export type ArticleWrite = Omit<ArticleMeta, 'createdAt' | 'clippedAt' | 'updatedAt' | 'classification'> & {
   readonly epub: EpubBytes
   readonly classification?: ArticleClassification
 }

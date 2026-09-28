@@ -102,7 +102,13 @@ export function parseOpdsCatalogPath(pathname: string): OpdsLocation | null {
   return { kind: 'date', shelf, date }
 }
 
-export function opdsClipCalendarDate(article: Pick<ArticleMeta, 'createdAt'>): string | null {
+export function opdsClipCalendarDate(
+  article: Pick<ArticleMeta, 'createdAt'> & Partial<Pick<ArticleMeta, 'clippedAt'>>,
+): string | null {
+  const clippedAt = article.clippedAt?.trim() ?? ''
+  if (clippedAt.length > 0) {
+    return calendarDateOf(clippedAt)
+  }
   return calendarDateOf(article.createdAt)
 }
 

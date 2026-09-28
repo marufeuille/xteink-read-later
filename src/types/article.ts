@@ -30,6 +30,7 @@ export type ArticleMeta = ArticleFields & {
   readonly translated: boolean
   readonly classification: ArticleClassification
   readonly createdAt: string
+  readonly clippedAt: string
   readonly updatedAt: string
 }
 

@@ -43,7 +43,7 @@ javascript:(function(){location.href='WORKER/clip/web?url='+encodeURIComponent(l
 
 ### 2. Xteink で読む
 
-CrossPoint JP に OPDS カタログを **一度だけ** 登録する。ルートは棚の入口なので、`clip`（Web 記事）か `ebook`（買った本）を開き、その日のフォルダから EPUB を取る。`clip` の日付は Clip した日（初回保存の日本時間）、`ebook` の日付は本の公開日（読めなければ投入した日）です。日付の中は新しいものが上。まとめは最新 1 冊だけルートに出る。
+CrossPoint JP に OPDS カタログを **一度だけ** 登録する。ルートは棚の入口なので、`clip`（Web 記事）か `ebook`（買った本）を開き、その日のフォルダから EPUB を取る。`clip` の日付は最後に Clip して保存した日（日本時間）です。同じ記事をもう一度 Clip するとその日のフォルダへ移り、分類だけの更新では動きません。`ebook` の日付は本の公開日（読めなければ投入した日）です。日付の中は新しいものが上。まとめは最新 1 冊だけルートに出る。
 
 登録する URL:
 
@@ -157,7 +157,7 @@ npm run dev
 
 `wrangler dev` は既定で `http://localhost:8787` を開く。管理画面は wrangler の Access 開発用 identity（`wrangler.jsonc` の `access.dev`、email `dev@localhost`）で入る。`.dev.vars` の `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。`OPENROUTER_API_KEY` が無いときは記事分類とおすすめ判定をスキップし、未分類・未判定のまま載せる。
 
-`POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は canonical URL で決まり、`createdAt` は初回のまま `updatedAt` だけ更新する。古い `runId` の再配信は状態を `running` に戻さない。
+`POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は canonical URL で決まり、`createdAt` は初回のまま、再保存では `clippedAt` と `updatedAt` を更新する。分類結果の書き込みは `updatedAt` だけを更新し、clip 棚の日付は動かさない。古い `runId` の再配信は状態を `running` に戻さない。
 
 認証は経路で分かれる。比較は timing-safe。Access は **Worker 全体には掛けない**（OPDS と `POST /clip` を壊す）。
 

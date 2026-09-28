@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { classifiedClassification, lowConfidenceClassification } from '../src/classify/taxonomy'
+import { opdsClipCalendarDate } from '../src/opds/catalog'
 import { createR2Store } from '../src/store/r2'
 import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asClipRunId, asEpubBytes, clipCheckpointKey, clipJobKey, parseHttpUrl } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
@@ -135,6 +136,8 @@ describe('createR2Store', () => {
       epub: asEpubBytes(new Uint8Array([2])),
     })
     expect(second.createdAt).toBe(first.createdAt)
+    expect(first.clippedAt).toBe(first.createdAt)
+    expect(second.clippedAt).toBe(second.updatedAt)
     expect(second.updatedAt >= first.updatedAt).toBe(true)
     expect(second.title).toBe('上書き')
     expect(second.translated).toBe(true)
@@ -249,6 +252,68 @@ describe('createR2Store', () => {
     expect((await store.listMeta())[0]?.classification.status).toBe('skipped')
   })
 
+  it('keeps an unreclipped article on its original clip day without rewriting meta', async () => {
+    const bucket = createFakeR2Bucket()
+    const store = createR2Store({ ARTICLES: bucket })
+    const id = asArticleId('art_18181818181818181818181818181818')
+    const createdAt = '2026-09-20T14:59:59.000Z'
+    await bucket.put(
+      articleMetaKey(id),
+      JSON.stringify({
+        id,
+        title: '既存記事',
+        author: null,
+        publishedAt: '2026-03-01T00:00:00.000Z',
+        sourceUrl: 'https://example.com/existing',
+        canonicalUrl: 'https://example.com/existing',
+        language: 'ja',
+        translated: false,
+        createdAt,
+        updatedAt: '2026-09-22T00:00:00.000Z',
+      }),
+    )
+    await bucket.put(articleEpubKey(id), new Uint8Array([1]))
+    const meta = await store.getMeta(id)
+    expect(meta?.clippedAt).toBe(createdAt)
+    expect(meta === null ? null : opdsClipCalendarDate(meta)).toBe('2026-09-20')
+    const raw = (await (await bucket.get(articleMetaKey(id)))?.json()) as { clippedAt?: string }
+    expect(raw.clippedAt).toBeUndefined()
+  })
+
+  it('moves clippedAt across the JST boundary on resave and keeps it when classifying', async () => {
+    const store = createR2Store({ ARTICLES: createFakeR2Bucket() })
+    const article = jaArticle('art_19191919191919191919191919191919', '境界', 'boundary')
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-20T14:59:59.000Z'))
+      const first = await store.put(article)
+      vi.setSystemTime(new Date('2026-09-20T15:00:00.000Z'))
+      const second = await store.put({ ...article, title: '翌日' })
+      expect(second.createdAt).toBe(first.createdAt)
+      expect(second.clippedAt).toBe('2026-09-20T15:00:00.000Z')
+      expect(opdsClipCalendarDate(second)).toBe('2026-09-21')
+      vi.setSystemTime(new Date('2026-09-22T03:00:00.000Z'))
+      const classified = await store.putClassification(
+        article.id,
+        classifiedClassification({
+          model: 'jev-1.13.0',
+          durationMs: 90,
+          inputTokens: 410,
+          topic: 'tech',
+          kind: 'explainer',
+          topicConfidence: 0.94,
+          kindConfidence: 0.91,
+        }),
+      )
+      expect(classified?.clippedAt).toBe(second.clippedAt)
+      expect(classified?.createdAt).toBe(first.createdAt)
+      expect(classified?.updatedAt).toBe('2026-09-22T03:00:00.000Z')
+      expect(classified === null ? null : opdsClipCalendarDate(classified)).toBe('2026-09-21')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('round-trips classified meta.json and updates classification without rewriting EPUB', async () => {
     const bucket = createFakeR2Bucket()
     const store = createR2Store({ ARTICLES: bucket })
@@ -287,6 +352,9 @@ describe('createR2Store', () => {
       }),
     )
     expect(updated?.classification.status).toBe('low_confidence')
+    expect(updated?.clippedAt).toBe(first.clippedAt)
+    expect(updated?.createdAt).toBe(first.createdAt)
+    expect(updated !== null && updated.updatedAt >= first.updatedAt).toBe(true)
     expect(await store.getEpub(article.id)).toEqual(article.epub)
     expect(bucket.putOrder().slice(writesBeforeUpdate)).toEqual([articleMetaKey(article.id)])
     expect(await store.putClassification(asArticleId('art_17171717171717171717171717171717'), first.classification)).toBeNull()

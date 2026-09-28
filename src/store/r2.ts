@@ -29,6 +29,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function clipInstant(value: unknown, createdAt: string): string {
+  return typeof value === 'string' && value.trim().length > 0 ? value : createdAt
+}
+
 const JSON_HTTP_METADATA = { httpMetadata: { contentType: 'application/json; charset=utf-8' } }
 
 async function writeArticleMeta(bucket: R2Bucket, meta: ArticleMeta): Promise<void> {
@@ -70,6 +74,7 @@ export function parseArticleMeta(value: unknown): ArticleMeta | null {
     translated: value.translated,
     classification: parseArticleClassification(value.classification),
     createdAt: value.createdAt,
+    clippedAt: clipInstant(value.clippedAt, value.createdAt),
     updatedAt: value.updatedAt,
   }
 }

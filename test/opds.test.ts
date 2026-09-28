@@ -51,7 +51,10 @@ function article(partial: Pick<ArticleWrite, 'id' | 'title'> & Partial<ArticleWr
 }
 
 function meta(
-  partial: Pick<ArticleWrite, 'id' | 'title'> & Partial<ArticleWrite> & Pick<ArticleMeta, 'createdAt' | 'updatedAt'>,
+  partial: Pick<ArticleWrite, 'id' | 'title'> &
+    Partial<ArticleWrite> &
+    Pick<ArticleMeta, 'createdAt' | 'updatedAt'> &
+    Partial<Pick<ArticleMeta, 'clippedAt'>>,
 ): ArticleMeta {
   const written = article(partial)
   return {
@@ -65,6 +68,7 @@ function meta(
     translated: written.translated,
     classification: written.classification ?? unavailableClassification('skipped'),
     createdAt: partial.createdAt,
+    clippedAt: partial.clippedAt ?? partial.createdAt,
     updatedAt: partial.updatedAt,
   }
 }
@@ -112,6 +116,29 @@ describe('opds shelf dates', () => {
     expect(opdsClipCalendarDate({ createdAt: '2026-09-20T15:00:00.000Z' })).toBe('2026-09-21')
     expect(opdsClipCalendarDate({ createdAt: '  2026-04-12  ' })).toBe('2026-04-12')
     expect(opdsClipCalendarDate({ createdAt: 'not-a-date' })).toBeNull()
+  })
+
+  it('uses the last clip instant, including a JST midnight boundary, and keeps the first day when clippedAt is blank', () => {
+    expect(
+      opdsClipCalendarDate({
+        createdAt: '2026-09-20T01:00:00.000Z',
+        clippedAt: '2026-09-21T01:00:00.000Z',
+      }),
+    ).toBe('2026-09-21')
+    expect(
+      opdsClipCalendarDate({
+        createdAt: '2026-09-20T14:59:59.000Z',
+        clippedAt: '2026-09-20T15:00:00.000Z',
+      }),
+    ).toBe('2026-09-21')
+    expect(
+      opdsClipCalendarDate({
+        createdAt: '2026-09-20T01:00:00.000Z',
+        clippedAt: '2026-09-20T14:00:00.000Z',
+      }),
+    ).toBe('2026-09-20')
+    expect(opdsClipCalendarDate({ createdAt: '2026-09-20T15:00:00.000Z', clippedAt: '   ' })).toBe('2026-09-21')
+    expect(opdsClipCalendarDate({ createdAt: '2026-09-20T15:00:00.000Z', clippedAt: 'not-a-date' })).toBeNull()
   })
 
   it('places ebooks on a readable publishedAt and falls back to createdAt', () => {
@@ -297,6 +324,42 @@ describe('buildOpdsCatalog', () => {
     expect(catalogXml(articles, { kind: 'date', shelf: 'clip', date: '2026-09-21' })).toContain('残す記事')
     expect(buildOpdsCatalog(articles, origin, { kind: 'shelf', shelf: 'ebook' })).toBeNull()
     expect(buildOpdsCatalog([olderDaily, newerDaily], origin, { kind: 'shelf', shelf: 'clip' })).toBeNull()
+  })
+
+  it('moves a reclipped web article to the last clip day without touching publishedAt or ebook dates', () => {
+    const reclipped = meta({
+      id: asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      title: '再クリップ',
+      publishedAt: '2026-03-01T00:00:00.000Z',
+      createdAt: '2026-09-20T14:59:59.000Z',
+      clippedAt: '2026-09-20T15:00:00.000Z',
+      updatedAt: '2026-09-22T00:00:00.000Z',
+    })
+    const purchasedId = asArticleId('art_dddddddddddddddddddddddddddddddd')
+    const purchased = meta({
+      id: purchasedId,
+      title: '購入本',
+      publishedAt: '2026-08-01T00:00:00.000Z',
+      sourceUrl: purchasedCanonicalUrl(purchasedId),
+      canonicalUrl: purchasedCanonicalUrl(purchasedId),
+      createdAt: '2026-09-01T00:00:00.000Z',
+      clippedAt: '2026-09-21T00:00:00.000Z',
+      updatedAt: '2026-09-22T00:00:00.000Z',
+    })
+    const articles = [reclipped, purchased]
+    expect(subsectionHrefs(catalogXml(articles, { kind: 'shelf', shelf: 'clip' }))).toEqual([
+      'https://opds.example.com/opds/clip/2026-09-21',
+    ])
+    expect(buildOpdsCatalog(articles, origin, { kind: 'date', shelf: 'clip', date: '2026-09-20' })).toBeNull()
+    const day = catalogXml(articles, { kind: 'date', shelf: 'clip', date: '2026-09-21' })
+    expect(day.match(/<entry>/g)?.length).toBe(1)
+    expect(day).toContain('再クリップ')
+    expect(day).toContain('<published>2026-03-01T00:00:00.000Z</published>')
+    expect(day).not.toContain('購入本')
+    expect(subsectionHrefs(catalogXml(articles, { kind: 'shelf', shelf: 'ebook' }))).toEqual([
+      'https://opds.example.com/opds/ebook/2026-08-01',
+    ])
+    expect(opdsEbookCalendarDate(purchased)).toBe('2026-08-01')
   })
 
   it('omits an empty shelf when the other shelf has books', () => {

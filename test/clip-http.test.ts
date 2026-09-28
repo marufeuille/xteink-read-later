@@ -240,8 +240,9 @@ describe('POST /clip', () => {
     const secondReady = await readJson(await getJob(app, secondQueued.jobId ?? '', env))
     expect(secondReady.id).toBe(ready.id)
     const secondMetaRes = await opdsGet(app, `/articles/${secondReady.id}`, env)
-    const secondMeta = (await secondMetaRes.json()) as { createdAt: string; updatedAt: string }
+    const secondMeta = (await secondMetaRes.json()) as { createdAt: string; clippedAt: string; updatedAt: string }
     expect(secondMeta.createdAt).toBe(firstMeta.createdAt)
+    expect(secondMeta.clippedAt).toBe(secondMeta.updatedAt)
 
     const epubRes = await opdsGet(app, secondReady.epubPath ?? '', env)
     expect(epubRes.status).toBe(200)
