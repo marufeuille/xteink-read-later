@@ -176,7 +176,7 @@ Bearer 必須。R2 上の当該記事を削除。MAR-35 の手動削除。
 
 ### `GET /opds`
 
-OPDS の入り口。`GET /opds` と `GET /opds/` は同じナビゲーションで、中身があるときだけ `clip` と `ebook` に入る。その下は Asia/Tokyo の暦日（`/opds/clip/YYYY-MM-DD`、`/opds/ebook/YYYY-MM-DD`）の取得フィードで、その日の本だけ、新しいものが上。`clip` の暦日は初回保存の `createdAt`（Clip した日）で、記事の `publishedAt` では分けない。`ebook` は読める `publishedAt` を優先し、読めなければ `createdAt`。本が無い日と空の棚は出さない。まとめは最新 1 冊だけルートの取得エントリで、日付棚には入らない。取得 URL は `/opds/download/:id.epub` のまま。棚はリクエスト時に meta から組む。
+OPDS の入り口。`GET /opds` と `GET /opds/` は同じナビゲーションで、中身があるときだけ `clip` と `ebook` に入る。その下は Asia/Tokyo の暦日（`/opds/clip/YYYY-MM-DD`、`/opds/ebook/YYYY-MM-DD`）の取得フィードで、その日の本だけ、新しいものが上。`clip` の暦日は最後に Clip して保存した `clippedAt`（Asia/Tokyo）で、記事の `publishedAt` では分けない。`clippedAt` が無い既存記事は `createdAt` のまま読み、分類結果の書き込みでは動かさない。`ebook` は読める `publishedAt` を優先し、読めなければ `createdAt`。本が無い日と空の棚は出さない。まとめは最新 1 冊だけルートの取得エントリで、日付棚には入らない。取得 URL は `/opds/download/:id.epub` のまま。棚はリクエスト時に meta から組む。
 
 CrossPoint 登録の注意: 本番は https、カタログ URL は `/opds`（origin だけや `/opds/` は端末に入れない）、HTTP Basic のみ（`CLIP_TOKEN` は使わない）、空パスワード不可。
 
@@ -199,7 +199,7 @@ articles/{id}/meta.json
 articles/{id}/book.epub
 ```
 
-`id` は clip では canonical URL の SHA-256 先頭、購入 EPUB ではファイルバイトの SHA-256 先頭（推測困難な固定長）。同一キーの再送は **上書き**（最新 EPUB が残る。`createdAt` は初回を維持し `updatedAt` を更新）。購入 EPUB の canonical は `https://purchased.invalid/books/{id}`（外部ショップは fetch しない）。
+`id` は clip では canonical URL の SHA-256 先頭、購入 EPUB ではファイルバイトの SHA-256 先頭（推測困難な固定長）。同一キーの再送は **上書き**（最新 EPUB が残る。`createdAt` は初回を維持し、再保存では `clippedAt` と `updatedAt` を更新する。分類結果の書き込みは `updatedAt` だけ）。購入 EPUB の canonical は `https://purchased.invalid/books/{id}`（外部ショップは fetch しない）。
 
 `meta.json`:
 
@@ -212,6 +212,7 @@ articles/{id}/book.epub
   "canonicalUrl": "https://…",
   "publishedAt": null,
   "createdAt": "…",
+  "clippedAt": "…",
   "updatedAt": "…",
   "language": "ja",
   "translated": false

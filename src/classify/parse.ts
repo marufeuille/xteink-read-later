@@ -74,6 +74,7 @@ export function articleMetaFromWrite(
     translated: article.translated,
     classification: article.classification ?? unavailableClassification('skipped'),
     createdAt: existing?.createdAt ?? now,
+    clippedAt: now,
     updatedAt: now,
   }
 }

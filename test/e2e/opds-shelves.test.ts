@@ -4,7 +4,7 @@ import { dailyCanonicalUrl, dailyIssueIdentity } from '../../src/daily/identity'
 import { buildDummyDailyWrite } from '../../src/daily/issue'
 import { publishLatestDaily } from '../../src/daily/publish'
 import { OPDS_CACHE_CONTROL, OPDS_CATALOG_TYPE, OPDS_NAVIGATION_TYPE } from '../../src/opds/catalog'
-import { unavailableClassification } from '../../src/classify/taxonomy'
+import { classifiedClassification, unavailableClassification } from '../../src/classify/taxonomy'
 import { createMemoryStore } from '../../src/store/memory'
 import {
   asArticleId,
@@ -201,5 +201,92 @@ describe('OPDS date shelves', () => {
     expect(today.identity.acquisitionUrl).toBe(identity.acquisitionUrl)
     expect(today.identity.filename).toBe(identity.filename)
     expect(dailyCanonicalUrl('2026-09-21')).toBe(today.write.canonicalUrl)
+  })
+
+  it('moves a reclipped article onto the later JST day and leaves classification and untouched articles in place', async () => {
+    const store = createMemoryStore()
+    const id = asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+    const stayed = asArticleId('art_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')
+    const write = book({
+      id,
+      title: '再クリップ',
+      publishedAt: '2026-03-01T00:00:00.000Z',
+      canonicalUrl: mustUrl('https://example.com/reclip'),
+      sourceUrl: mustUrl('https://example.com/reclip'),
+    })
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-20T10:00:00.000Z'))
+      await store.put(
+        book({
+          id: stayed,
+          title: '動かさない記事',
+          publishedAt: '2026-04-01T00:00:00.000Z',
+        }),
+      )
+      await store.put(write)
+      vi.setSystemTime(new Date('2026-09-20T12:00:00.000Z'))
+      await store.put({ ...write, title: '同じ日' })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const app = createApp({ store })
+    const headers = { authorization: basicAuthorization() }
+    const sameDay = await app.request('https://read.example.com/opds/clip/2026-09-20', { headers }, TEST_BINDINGS)
+    const sameDayXml = await sameDay.text()
+    expect(sameDayXml.match(/<entry>/g)?.length).toBe(2)
+    expect(sameDayXml).toContain('同じ日')
+    expect(sameDayXml).toContain('動かさない記事')
+    expect(sameDayXml).toContain('<published>2026-03-01T00:00:00.000Z</published>')
+    expect(sameDayXml).not.toContain('まとめ')
+
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date('2026-09-20T15:00:00.000Z'))
+      await store.put({ ...write, title: '翌日' })
+      vi.setSystemTime(new Date('2026-09-22T03:00:00.000Z'))
+      const classified = await store.putClassification(
+        id,
+        classifiedClassification({
+          model: 'jev-1.13.0',
+          durationMs: 90,
+          inputTokens: 410,
+          topic: 'tech',
+          kind: 'explainer',
+          topicConfidence: 0.94,
+          kindConfidence: 0.91,
+        }),
+      )
+      expect(classified?.createdAt).toBe('2026-09-20T10:00:00.000Z')
+      expect(classified?.clippedAt).toBe('2026-09-20T15:00:00.000Z')
+      expect(classified?.updatedAt).toBe('2026-09-22T03:00:00.000Z')
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const clip = await app.request('https://read.example.com/opds/clip', { headers }, TEST_BINDINGS)
+    expect(subsectionHrefs(await clip.text())).toEqual([
+      'https://read.example.com/opds/clip/2026-09-21',
+      'https://read.example.com/opds/clip/2026-09-20',
+    ])
+    const oldDay = await app.request('https://read.example.com/opds/clip/2026-09-20', { headers }, TEST_BINDINGS)
+    const oldXml = await oldDay.text()
+    expect(oldXml.match(/<entry>/g)?.length).toBe(1)
+    expect(oldXml).toContain('動かさない記事')
+    expect(oldXml).toContain('<published>2026-04-01T00:00:00.000Z</published>')
+    expect(oldXml).not.toContain('翌日')
+    expect(oldXml).not.toContain('同じ日')
+    const newDay = await app.request('https://read.example.com/opds/clip/2026-09-21', { headers }, TEST_BINDINGS)
+    const newXml = await newDay.text()
+    expect(newXml.match(/<entry>/g)?.length).toBe(1)
+    expect(newXml).toContain('翌日')
+    expect(newXml).toContain('<published>2026-03-01T00:00:00.000Z</published>')
+    expect(
+      await app.request('https://read.example.com/opds/clip/2026-09-22', { headers }, TEST_BINDINGS),
+    ).toMatchObject({ status: 404 })
+    expect(await app.request('https://read.example.com/opds/ebook', { headers }, TEST_BINDINGS)).toMatchObject({
+      status: 404,
+    })
   })
 })

@@ -109,6 +109,10 @@ type _metaKeepsIdentity = Assert<Equals<ArticleMeta['id'], ArticleId>>
 
 type _metaHasClassification = Assert<Equals<ArticleMeta['classification'], ArticleClassification>>
 
+type _metaHasClippedAt = Assert<Equals<ArticleMeta['clippedAt'], string>>
+
+type _articleWriteOmitsClippedAt = Assert<'clippedAt' extends keyof ArticleWrite ? false : true>
+
 type _articleWriteClassificationOptional = Assert<
   Equals<ArticleWrite['classification'], ArticleClassification | undefined>
 >
@@ -454,6 +458,8 @@ export type CompileChecks = {
   readonly extractedContentHasNoLanguage: _extractedContentHasNoLanguage
   readonly metaKeepsIdentity: _metaKeepsIdentity
   readonly metaHasClassification: _metaHasClassification
+  readonly metaHasClippedAt: _metaHasClippedAt
+  readonly articleWriteOmitsClippedAt: _articleWriteOmitsClippedAt
   readonly articleWriteClassificationOptional: _articleWriteClassificationOptional
   readonly classifiedHasDecidedShelves: _classifiedHasDecidedShelves
   readonly skippedIsUnavailable: _skippedIsUnavailable
