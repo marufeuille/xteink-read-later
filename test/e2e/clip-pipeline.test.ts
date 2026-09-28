@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/app'
+import { isX3BaselineJpeg } from '../../src/epub/x3-image'
 import { MAX_HTML_BYTES } from '../../src/extract/constants'
 import { buildEpub } from '../../src/epub/build-epub'
 import { createClipPipeline } from '../../src/pipeline/clip'
@@ -467,6 +468,41 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).toContain('本文のあと。')
     expect(opf).toContain('media-type="image/jpeg"')
     expect(files['OEBPS/images/fig-1.jpg']).toEqual(new Uint8Array(jpeg))
+  })
+
+  it('re-encodes a progressive JPEG the translator kept', async () => {
+    const pageUrl = 'https://example.com/en/compatibility-date'
+    const imageUrl = 'https://cdn.example.com/progressive.jpg'
+    const jpeg = readFileSync(join(fixtures, '..', 'fixtures', 'x3-progressive.jpg'))
+    installNetworkMock({
+      pages: {
+        [pageUrl]: { html: fixtureHtml('en-tech.html') },
+        [imageUrl]: { html: jpeg, contentType: 'image/jpeg' },
+      },
+      openai: async () =>
+        openaiMessageResponse(
+          'ダミー見出し',
+          '本文のあと。\n\nX3IMG:1:https%3A%2F%2Fcdn.example.com%2Fprogressive.jpg|',
+        ),
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    const embedded = files['OEBPS/images/fig-1.jpg'] ?? new Uint8Array()
+    expect(chapter).toContain('<img src="images/fig-1.jpg" alt=""/>')
+    expect(chapter).not.toContain('cdn.example.com')
+    expect(isX3BaselineJpeg(embedded)).toBe(true)
+    expect(embedded).not.toEqual(new Uint8Array(jpeg))
   })
 
   it('embeds an X3 JPEG when the translator leaves a caption on the placeholder line', async () => {
