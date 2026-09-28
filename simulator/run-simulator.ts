@@ -24,13 +24,10 @@ const NAV_STEP_MS = 2_000
 const TURN_STEP_MS = 3_000
 const QUIT_AFTER_SHOT_MS = 2_000
 
-/**
- * First screenshot attempt. Scale 1 fires while a slow runner is still drawing,
- * so keep-image stays white and merge-gate skips the deploy.
- */
-export const SIMULATOR_INPUT_SCALE = 2
-/** Second attempt after an image page is still white. */
-export const SIMULATOR_INPUT_RETRY_SCALE = 3
+/** First attempt. This is the original gap and stays fast when the page is already drawn. */
+export const SIMULATOR_INPUT_SCALE = 1
+/** One slower reopen, only after an image page is still white. */
+export const SIMULATOR_INPUT_RETRY_SCALE = 2
 
 /**
  * Home, file browser, books/, then `turns` side-button page turns.
@@ -62,7 +59,7 @@ export function openBookPlan(turns: number, scale = 1): OpenBookPlan {
   }
 }
 
-/** Image pages get one slower retry. Empty pages stay on the first schedule. */
+/** Image pages retry once, more slowly, only when the first shot is still white. */
 export function inputScalesFor(expect: SimulatorExpect): readonly number[] {
   if (expect === 'image') {
     return [SIMULATOR_INPUT_SCALE, SIMULATOR_INPUT_RETRY_SCALE]

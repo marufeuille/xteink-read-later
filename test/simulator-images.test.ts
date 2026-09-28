@@ -132,8 +132,8 @@ describe('simulator short HTML inputs', () => {
       pageShotMs: 24000,
       quitMs: 28000,
     })
-    expect(inputScalesFor('image')).toEqual([2, 3])
-    expect(inputScalesFor('empty')).toEqual([2])
+    expect(inputScalesFor('image')).toEqual([1, 2])
+    expect(inputScalesFor('empty')).toEqual([1])
     expect(() => openBookPlan(1, 0)).toThrow(/scale/)
     const keepHtml = readFileSync(join(simulatorInputsDir(), 'keep-image.html'), 'utf8')
     const dropHtml = readFileSync(join(simulatorInputsDir(), 'drop-image.html'), 'utf8')
