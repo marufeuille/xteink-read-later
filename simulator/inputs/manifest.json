@@ -14,8 +14,8 @@
       "id": "drop-image",
       "html": "drop-image.html",
       "url": "https://example.com/simulator/drop-image",
-      "image": "images/progressive.jpg",
-      "imageUrl": "https://cdn.example.com/simulator/progressive.jpg",
+      "image": "images/drop.png",
+      "imageUrl": "https://cdn.example.com/simulator/drop.png",
       "expect": "empty",
       "bandFrom": "keep-image",
       "turns": 1

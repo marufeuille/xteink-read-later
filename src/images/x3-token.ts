@@ -6,6 +6,8 @@ export const X3_IMAGE_MAX_HEIGHT = 640
 export const X3_IMAGE_QUALITY = 72
 export const X3_IMAGE_MAX_COUNT = 12
 export const X3_IMAGE_MAX_BYTES = 400_000
+/** Raw response cap. The embedded file still has to fit in {@link X3_IMAGE_MAX_BYTES}. */
+export const X3_IMAGE_SOURCE_MAX_BYTES = 8_000_000
 
 /** encodeURIComponent never emits `|`, so a caption can sit on the same line and still split off. */
 const ENCODED_URL = /^[A-Za-z0-9\-_.!~*'()%]+/

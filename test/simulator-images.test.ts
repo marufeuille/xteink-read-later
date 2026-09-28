@@ -99,7 +99,7 @@ describe('pinned CrossPoint firmware', () => {
 })
 
 describe('simulator short HTML inputs', () => {
-  it('clips one embedded baseline JPEG and drops the progressive JPEG', async () => {
+  it('clips baseline and re-encoded progressive JPEGs, and drops a PNG', async () => {
     const pages = loadSimulatorPages()
     expect(pages.map((page) => [page.id, page.kind, page.expect, page.bandFrom, page.turns])).toEqual([
       ['keep-image', 'clip', 'image', undefined, 1],
@@ -137,10 +137,18 @@ describe('simulator short HTML inputs', () => {
     const digestFiles = unzipSync(digest?.epub ?? new Uint8Array())
     const grokChapter = strFromU8(grokFiles['OEBPS/chapter.xhtml'] ?? new Uint8Array())
     const digestChapter = strFromU8(digestFiles['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    const grokSource = new Uint8Array(readFileSync(join(simulatorInputsDir(), 'images/grok-1.jpg')))
     const grokJpeg = grokFiles['OEBPS/images/fig-1.jpg'] ?? new Uint8Array()
+    const grokNames = Object.keys(grokFiles).filter((name) => name.endsWith('.jpg'))
     expect(grokChapter).toContain('<img src="images/fig-1.jpg" alt=""/>')
+    expect(isX3BaselineJpeg(grokSource)).toBe(false)
     expect(isX3BaselineJpeg(grokJpeg)).toBe(true)
+    expect(grokJpeg).not.toEqual(grokSource)
     expect(grokJpeg.byteLength).toBeGreaterThan(1000)
+    expect(grokNames).toHaveLength(11)
+    for (const name of grokNames) {
+      expect(isX3BaselineJpeg(grokFiles[name] ?? new Uint8Array())).toBe(true)
+    }
     expect(digestChapter).toContain('class="digest-qr"')
     expect(digestChapter).not.toContain('[Image:')
     const digestNames = Object.keys(digestFiles).filter((name) => name.endsWith('.jpg'))

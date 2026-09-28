@@ -1,13 +1,16 @@
 import { assertFetchableCandidateUrl } from '../candidates/fetch-policy'
 import type { EpubImage } from './build-epub'
+import { toX3BaselineJpeg } from '../images/baseline-jpeg'
 import {
-  X3_IMAGE_MAX_BYTES,
   X3_IMAGE_MAX_COUNT,
   X3_IMAGE_MAX_HEIGHT,
   X3_IMAGE_MAX_WIDTH,
   X3_IMAGE_QUALITY,
+  X3_IMAGE_SOURCE_MAX_BYTES,
 } from '../images/x3-token'
 import { parseHttpUrl, type HttpUrl } from '../types'
+
+export { isX3BaselineJpeg } from '../images/baseline-jpeg'
 
 const FIGURE_BLOCK = /<p><img src="([^"]+)" alt=""\/><\/p>/g
 
@@ -19,56 +22,40 @@ function unescapeAttr(value: string): string {
     .replaceAll('&amp;', '&')
 }
 const FETCH_TIMEOUT_MS = 8_000
+const JPEG_ACCEPT = 'image/jpeg,image/*;q=0.8'
 
 type ImageFetch = (input: string, init?: RequestInit) => Promise<Response>
 
-function jpegSize(bytes: Uint8Array): { readonly width: number; readonly height: number } | null {
-  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) {
-    return null
-  }
-  let index = 2
-  while (index + 4 < bytes.length) {
-    if (bytes[index] !== 0xff) {
-      index += 1
-      continue
-    }
-    const marker = bytes[index + 1] ?? 0
-    if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) {
-      index += 2
-      continue
-    }
-    if (marker === 0xda) {
-      return null
-    }
-    const length = ((bytes[index + 2] ?? 0) << 8) | (bytes[index + 3] ?? 0)
-    if (length < 2 || index + 2 + length > bytes.length) {
-      return null
-    }
-    // SOF2 is progressive. CrossPoint draws baseline JPEG; progressive stays blank or coarse.
-    if (marker === 0xc2) {
-      return null
-    }
-    if (marker === 0xc0) {
-      if (length < 7) {
-        return null
-      }
-      const height = ((bytes[index + 5] ?? 0) << 8) | (bytes[index + 6] ?? 0)
-      const width = ((bytes[index + 7] ?? 0) << 8) | (bytes[index + 8] ?? 0)
-      if (width < 1 || height < 1) {
-        return null
-      }
-      if (width > X3_IMAGE_MAX_WIDTH || height > X3_IMAGE_MAX_HEIGHT) {
-        return null
-      }
-      return { width, height }
-    }
-    index += 2 + length
-  }
-  return null
+const cloudflareResize = {
+  redirect: 'follow' as const,
+  headers: { Accept: JPEG_ACCEPT },
+  cf: {
+    image: {
+      width: X3_IMAGE_MAX_WIDTH,
+      height: X3_IMAGE_MAX_HEIGHT,
+      fit: 'scale-down' as const,
+      format: 'baseline-jpeg' as const,
+      quality: X3_IMAGE_QUALITY,
+    },
+  },
 }
 
-export function isX3BaselineJpeg(bytes: Uint8Array): boolean {
-  return jpegSize(bytes) !== null
+async function jpegFromResponse(response: Response): Promise<Uint8Array | null> {
+  if (!response.ok) {
+    return null
+  }
+  if (response.url.length > 0) {
+    const finalUrl = parseHttpUrl(response.url)
+    if (finalUrl === null || !assertFetchableCandidateUrl(finalUrl).ok) {
+      return null
+    }
+  }
+  const declared = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > X3_IMAGE_SOURCE_MAX_BYTES) {
+    return null
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  return toX3BaselineJpeg(bytes)
 }
 
 async function fetchX3Jpeg(url: HttpUrl, fetchImage: ImageFetch): Promise<Uint8Array | null> {
@@ -76,33 +63,25 @@ async function fetchX3Jpeg(url: HttpUrl, fetchImage: ImageFetch): Promise<Uint8A
     return null
   }
   try {
-    const response = await fetchImage(url, {
-      redirect: 'follow',
+    const resized = await fetchImage(url, {
+      ...cloudflareResize,
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      cf: {
-        image: {
-          width: X3_IMAGE_MAX_WIDTH,
-          height: X3_IMAGE_MAX_HEIGHT,
-          fit: 'scale-down',
-          format: 'baseline-jpeg',
-          quality: X3_IMAGE_QUALITY,
-        },
-      },
     })
-    if (!response.ok) {
-      return null
+    const fromResize = await jpegFromResponse(resized)
+    // A /cdn-cgi/image/ URL can fail image resizing and still be a progressive JPEG.
+    if (fromResize !== null || resized.ok) {
+      return fromResize
     }
-    if (response.url.length > 0) {
-      const finalUrl = parseHttpUrl(response.url)
-      if (finalUrl === null || !assertFetchableCandidateUrl(finalUrl).ok) {
-        return null
-      }
-    }
-    const bytes = new Uint8Array(await response.arrayBuffer())
-    if (bytes.byteLength === 0 || bytes.byteLength > X3_IMAGE_MAX_BYTES) {
-      return null
-    }
-    return isX3BaselineJpeg(bytes) ? bytes : null
+  } catch {
+    // The resize request failed. The raw response may still be a JPEG we can rewrite.
+  }
+  try {
+    const raw = await fetchImage(url, {
+      redirect: 'follow',
+      headers: { Accept: JPEG_ACCEPT },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    })
+    return await jpegFromResponse(raw)
   } catch {
     return null
   }
