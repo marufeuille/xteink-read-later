@@ -1,3 +1,4 @@
+import { compareRecentJobs, recentClipLimit } from '../clip/recent'
 import { articleMetaFromWrite, articleMetaWithClassification } from '../classify/parse'
 import type {
   ArticleId,
@@ -58,6 +59,9 @@ export function createMemoryStore(): ArticleStore {
     },
     async putJob(job: ClipJobRecord) {
       jobs.set(job.jobId, job)
+    },
+    async listRecentJobs(limit) {
+      return [...jobs.values()].sort(compareRecentJobs).slice(0, recentClipLimit(limit))
     },
     async getClipCheckpoint(id) {
       return checkpoints.get(id) ?? null
