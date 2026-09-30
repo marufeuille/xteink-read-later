@@ -9,6 +9,7 @@ import type {
 } from '../types'
 import { err, ok, parseHttpUrl } from '../types'
 import { firstUsableHeading, pickArticleTitle } from './article-title'
+import { publishedDateFallback } from './published-at'
 import { CONTENT_SELECTORS, MIN_CONTENT_CHARS, NOISE_SELECTOR, PARSE_HTML_OPTIONS } from './constants'
 import { documentIsPaywalled, hasPaywallCopy, PAYWALL_EXTRACT_REASON } from './paywall'
 import { substackArticleBody, substackPaywallReason } from './sites/substack'
@@ -318,7 +319,12 @@ export const extractArticle: ExtractArticle = async (
   const publishedRaw = firstNonEmpty(
     typeof jsonLdArticle?.datePublished === 'string' ? jsonLdArticle.datePublished : null,
     metaValue(root, ['article:published_time', 'og:article:published_time', 'date', 'pubdate']),
-    root.querySelector('time[datetime]')?.getAttribute('datetime'),
+    publishedDateFallback({
+      requestedUrl: page.requestedUrl,
+      finalUrl: page.finalUrl,
+      html: page.html,
+      timeDatetime: root.querySelector('time[datetime]')?.getAttribute('datetime') ?? null,
+    }),
   )
   const publishedAt = publishedRaw !== null ? toIsoDate(publishedRaw) : null
   const canonicalUrl = canonicalFrom(root, page.finalUrl)

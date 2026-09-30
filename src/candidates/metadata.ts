@@ -1,6 +1,7 @@
 import { parse, type HTMLElement } from 'node-html-parser'
 import { firstUsableHeading, pickArticleTitle } from '../extract/article-title'
 import { PARSE_HTML_OPTIONS } from '../extract/constants'
+import { publishedDateFallback } from '../extract/published-at'
 import { documentIsPaywalled } from '../extract/paywall'
 import { parseHttpUrl, type FetchedPage, type HttpUrl } from '../types'
 
@@ -154,7 +155,12 @@ export function extractCandidateMetadata(page: FetchedPage): CandidatePageMetada
   const publishedRaw = firstNonEmpty(
     typeof jsonLdArticle?.datePublished === 'string' ? jsonLdArticle.datePublished : null,
     metaValue(root, ['article:published_time', 'og:article:published_time', 'date', 'pubdate']),
-    root.querySelector('time[datetime]')?.getAttribute('datetime'),
+    publishedDateFallback({
+      requestedUrl: page.requestedUrl,
+      finalUrl: page.finalUrl,
+      html: page.html,
+      timeDatetime: root.querySelector('time[datetime]')?.getAttribute('datetime') ?? null,
+    }),
   )
   const title =
     pickArticleTitle({

@@ -163,3 +163,29 @@ export function logDailyDigest(entry: Omit<DailyDigestLog, 'event'>): void {
     } satisfies DailyDigestLog),
   )
 }
+
+export type PublishedRepairLog = {
+  readonly event: 'published_repair'
+  readonly examined: number
+  readonly dated: number
+  readonly cleared: number
+  readonly durationMs: number
+  readonly errorKind?: 'repair_failed'
+}
+
+export function logPublishedRepair(entry: Omit<PublishedRepairLog, 'event' | 'errorKind'>): void {
+  console.log(JSON.stringify({ event: 'published_repair', ...entry } satisfies PublishedRepairLog))
+}
+
+export function logPublishedRepairFailure(durationMs: number): void {
+  console.log(
+    JSON.stringify({
+      event: 'published_repair',
+      examined: 0,
+      dated: 0,
+      cleared: 0,
+      durationMs,
+      errorKind: 'repair_failed',
+    } satisfies PublishedRepairLog),
+  )
+}

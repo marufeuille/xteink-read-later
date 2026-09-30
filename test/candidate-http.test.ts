@@ -436,6 +436,86 @@ describe('candidate JSON API', () => {
     const none = await app.request('/candidates.json?title=Workers&outlet=Zenn', { headers }, env)
     expect(((await none.json()) as { total: number }).total).toBe(0)
   })
+
+  it('repairs a stored DevelopersIO event date before listing so it does not sort as a future publication', async () => {
+    const candidateStore = createMemoryCandidateStore()
+    const queue = createFakeQueue()
+    const articleUrl = parseHttpUrl('https://dev.classmethod.jp/articles/reona-omarchy-try-on-mac/')
+    const otherUrl = parseHttpUrl('https://example.com/older')
+    if (articleUrl === null || otherUrl === null) {
+      throw new Error('url')
+    }
+    const discoveredAt = '2026-09-01T00:00:00.000Z'
+    await candidateStore.put({
+      id: asCandidateId('cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      canonicalUrl: articleUrl,
+      sourceUrl: articleUrl,
+      title: 'Omarchy を macOS で試してみる',
+      outlet: 'DevelopersIO',
+      publishedAt: '2026-10-27T06:00:00.000Z',
+      discoveredAt,
+      fetchStatus: 'fetched',
+      listingState: 'listed',
+      exclusionReason: null,
+      fullTextState: 'unconfirmed',
+      completedArticleId: null,
+      clipJobId: null,
+      clipRunId: null,
+      selectedAt: null,
+      recommendation: unevaluatedRecommendation(),
+      createdAt: discoveredAt,
+      updatedAt: discoveredAt,
+    })
+    await candidateStore.put({
+      id: asCandidateId('cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+      canonicalUrl: otherUrl,
+      sourceUrl: otherUrl,
+      title: 'より古い記事',
+      outlet: 'Example',
+      publishedAt: '2026-09-20T00:00:00.000Z',
+      discoveredAt,
+      fetchStatus: 'fetched',
+      listingState: 'listed',
+      exclusionReason: null,
+      fullTextState: 'unconfirmed',
+      completedArticleId: null,
+      clipJobId: null,
+      clipRunId: null,
+      selectedAt: null,
+      recommendation: unevaluatedRecommendation(),
+      createdAt: discoveredAt,
+      updatedAt: discoveredAt,
+    })
+    let repaired = false
+    const app = createApp({
+      store: createMemoryStore(),
+      queue,
+      candidateStore,
+      repairPublishedDates: async () => {
+        repaired = true
+        const current = await candidateStore.getByCanonicalUrl(articleUrl)
+        if (current === null) {
+          throw new Error('missing DevelopersIO candidate')
+        }
+        await candidateStore.put({ ...current, publishedAt: '2026-09-28T08:43:42.110Z' })
+      },
+    })
+    const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+    const listed = await app.request(
+      '/candidates.json',
+      { headers: { authorization: bearerAuthorization() } },
+      env,
+    )
+    expect(listed.status).toBe(200)
+    expect(repaired).toBe(true)
+    const body = (await listed.json()) as {
+      groups: { date: string | null; items: { title: string; publishedAt: string | null }[] }[]
+    }
+    expect(body.groups.map((group) => group.date)).toEqual(['2026-09-28', '2026-09-20'])
+    expect(body.groups[0]?.items[0]?.title).toBe('Omarchy を macOS で試してみる')
+    expect(body.groups[0]?.items[0]?.publishedAt).toBe('2026-09-28T08:43:42.110Z')
+    expect(JSON.stringify(body)).not.toContain('2026-10-27')
+  })
 })
 
 describe('candidate HTML form', () => {
