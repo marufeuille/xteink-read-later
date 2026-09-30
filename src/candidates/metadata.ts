@@ -1,6 +1,7 @@
 import { parse, type HTMLElement } from 'node-html-parser'
 import { firstUsableHeading, pickArticleTitle } from '../extract/article-title'
 import { PARSE_HTML_OPTIONS } from '../extract/constants'
+import { documentIsPaywalled } from '../extract/paywall'
 import { parseHttpUrl, type FetchedPage, type HttpUrl } from '../types'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -137,20 +138,6 @@ function outletFrom(root: HTMLElement, jsonLd: Record<string, unknown>[], canoni
   return new URL(canonicalUrl).hostname
 }
 
-function jsonLdAccessibleForFreeFalse(value: unknown): boolean {
-  if (Array.isArray(value)) {
-    return value.some((item) => jsonLdAccessibleForFreeFalse(item))
-  }
-  if (!isRecord(value)) {
-    return false
-  }
-  const free = value.isAccessibleForFree
-  if (free === false || free === 'False' || free === 'false') {
-    return true
-  }
-  return jsonLdAccessibleForFreeFalse(value.hasPart)
-}
-
 export type CandidatePageMetadata = {
   readonly title: string
   readonly publishedAt: string | null
@@ -177,13 +164,7 @@ export function extractCandidateMetadata(page: FetchedPage): CandidatePageMetada
       heading: firstUsableHeading([...root.querySelectorAll('h1')].map((el) => el.text)),
       ogDescription: metaValue(root, ['og:description']),
     }) ?? new URL(canonicalUrl).hostname
-  const contentTier = (metaValue(root, ['article:content_tier']) ?? '').toLowerCase()
-  const paywalled =
-    jsonLd.some((node) => jsonLdAccessibleForFreeFalse(node)) ||
-    contentTier === 'locked' ||
-    contentTier === 'paid' ||
-    contentTier === 'subscriber' ||
-    contentTier === 'members-only'
+  const paywalled = documentIsPaywalled(root)
   return {
     title,
     publishedAt: publishedRaw !== null ? toIsoDate(publishedRaw) : null,

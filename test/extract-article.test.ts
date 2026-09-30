@@ -13,9 +13,13 @@ function html(name: string): string {
 }
 
 function page(path: string, file: string) {
-  const url = parseHttpUrl(`https://example.com${path}`)
+  return pageAt(`https://example.com${path}`, file)
+}
+
+function pageAt(urlString: string, file: string) {
+  const url = parseHttpUrl(urlString)
   if (url === null) {
-    throw new Error('fixture url')
+    throw new Error(urlString)
   }
   return {
     requestedUrl: url,
@@ -282,5 +286,192 @@ describe('extractArticle', () => {
     expect(result.value.title).toBe(
       'Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)',
     )
+  })
+
+  it('extracts a Substack post from .body.markup instead of the short page chrome', async () => {
+    const result = await extractArticle(
+      pageAt('https://addyo.substack.com/p/the-code-nobody-reads', 'substack-free.html'),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.title).toBe('The Code Nobody Reads')
+    expect(result.value.author).toBe('Addy Osmani')
+    expect(result.value.publishedAt).toBe('2026-09-28T14:31:32.000Z')
+    expect(result.value.canonicalUrl).toBe('https://addyo.substack.com/p/the-code-nobody-reads')
+    expect(result.value.contentHtml).toContain('unique-substack-body')
+    expect(result.value.contentHtml).toContain('owns the decision to ship it')
+    expect(result.value.contentHtml).not.toContain('Discussion about this post')
+    expect(result.value.contentHtml).not.toContain('Ready for more?')
+    expect(result.value.contentHtml).not.toContain('weekly newsletter')
+    expect(result.value.contentHtml).not.toContain('No posts')
+  })
+
+  it('keeps a Substack article whose class is newsletter-post', async () => {
+    const result = await extractArticle(
+      pageAt('https://example.substack.com/p/notes-from-the-post', 'substack-newsletter-post.html'),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('unique-newsletter-post-body')
+    expect(result.value.contentHtml).not.toContain('Ready for more?')
+  })
+
+  it('fails a paywalled Substack preview with a subscriber reason', async () => {
+    const result = await extractArticle(
+      pageAt('https://www.lennysnewsletter.com/p/advanced-evals', 'substack-paywall.html'),
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.kind).toBe('extract_failed')
+    expect(result.error.reason).toMatch(/Substack/i)
+    expect(result.error.reason).toMatch(/paid subscribers/i)
+    expect(result.error.reason).not.toMatch(/too short|No article body found/i)
+  })
+
+  it('fails a long Substack preview when only the paid-subscriber copy marks the gate', async () => {
+    const source = pageAt('https://www.lennysnewsletter.com/p/advanced-evals', 'substack-paywall.html')
+    const result = await extractArticle({
+      ...source,
+      html: source.html.replace(' data-testid="paywall"', '').replace(' data-component-name="Paywall"', ''),
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.kind).toBe('extract_failed')
+    expect(result.error.reason).toMatch(/paid subscribers/i)
+    expect(result.error.reason).not.toMatch(/too short|No article body found/i)
+  })
+
+  it.each([
+    ['data-testid="paywall"', ' data-component-name="Paywall"'],
+    ['data-component-name="Paywall"', ' data-testid="paywall"'],
+  ])('fails a long Substack preview when only %s marks the gate', async (_kept, removed) => {
+    const source = pageAt('https://www.lennysnewsletter.com/p/advanced-evals', 'substack-paywall.html')
+    const result = await extractArticle({
+      ...source,
+      html: source.html
+        .replace(removed, '')
+        .replace('cut off for paid subscribers', 'cut off for readers')
+        .replace('This post is for paid subscribers', 'This post is for readers'),
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.reason).toMatch(/paid subscribers/i)
+    expect(result.error.reason).not.toMatch(/too short|No article body found/i)
+  })
+
+  it('extracts a full Substack post marked isAccessibleForFree false when there is no paywall gate', async () => {
+    const result = await extractArticle(
+      pageAt('https://addyo.substack.com/p/notes-that-shipped-anyway', 'substack-full-not-free.html'),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.title).toBe('Notes that shipped anyway')
+    expect(result.value.author).toBe('Addy Osmani')
+    expect(result.value.publishedAt).toBe('2026-09-29T10:00:00.000Z')
+    expect(result.value.canonicalUrl).toBe('https://addyo.substack.com/p/notes-that-shipped-anyway')
+    expect(result.value.contentHtml).toContain('unique-substack-full-not-free')
+    expect(result.value.contentHtml).toContain('no paywall gate')
+    expect(result.value.contentHtml).not.toContain('Ready for more?')
+  })
+
+  it('extracts a full Substack post when only article:content_tier says it is locked', async () => {
+    const source = pageAt('https://addyo.substack.com/p/notes-that-shipped-anyway', 'substack-full-not-free.html')
+    const result = await extractArticle({
+      ...source,
+      html: source.html
+        .replace('"isAccessibleForFree": false,', '"isAccessibleForFree": true,')
+        .replace(
+          '<meta charset="utf-8" />',
+          '<meta charset="utf-8" />\n    <meta property="article:content_tier" content="locked" />',
+        ),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('unique-substack-full-not-free')
+  })
+
+  it.each([
+    ['isAccessibleForFree false', (html: string) => html],
+    [
+      'article:content_tier locked',
+      (html: string) =>
+        html
+          .replace('"isAccessibleForFree": false,', '"isAccessibleForFree": true,')
+          .replace(
+            '<meta charset="utf-8" />',
+            '<meta charset="utf-8" />\n    <meta property="article:content_tier" content="locked" />',
+          ),
+    ],
+  ])('keeps the subscriber reason when %s and the Substack body is not usable', async (_label, markPaywalled) => {
+    const source = pageAt('https://addyo.substack.com/p/notes-that-shipped-anyway', 'substack-full-not-free.html')
+    const result = await extractArticle({
+      ...source,
+      html: markPaywalled(source.html).replace(
+        /<div dir="auto" class="body markup">[\s\S]*?<\/div>/,
+        '<div dir="auto" class="body markup"><p>Preview.</p></div>',
+      ),
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.kind).toBe('extract_failed')
+    expect(result.error.reason).toMatch(/Substack/i)
+    expect(result.error.reason).toMatch(/paid subscribers/i)
+    expect(result.error.reason).not.toMatch(/too short|No article body found/i)
+  })
+
+  it('names a paywall when a locked page has no full article', async () => {
+    const result = await extractArticle(page('/members', 'candidate-paywall.html'))
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.kind).toBe('extract_failed')
+    expect(result.error.reason).toMatch(/paywall/i)
+    expect(result.error.reason).not.toMatch(/too short|No article body found/i)
+  })
+
+  it('names a paywall when the only text is a subscribe prompt', async () => {
+    const fetched = page('/teaser', 'too-short.html')
+    const result = await extractArticle({
+      ...fetched,
+      html: `<!DOCTYPE html><html><head><title>Teaser</title></head><body><article><h1>Teaser</h1><p>Subscribe to keep reading this story.</p></article></body></html>`,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.reason).toMatch(/paywall/i)
+    expect(result.error.reason).not.toMatch(/too short/i)
+  })
+
+  it('still extracts a full article that is marked isAccessibleForFree false', async () => {
+    const result = await extractArticle({
+      ...page('/full', 'en-tech.html'),
+      html: html('en-tech.html').replace(
+        '"datePublished": "2026-04-12"',
+        '"datePublished": "2026-04-12", "isAccessibleForFree": false',
+      ),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('nodejs_compat')
   })
 })

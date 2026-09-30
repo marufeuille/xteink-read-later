@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   htmlToMarkdown,
+  isAdsLikeClass,
   markdownToHtml,
   sanitizeContentHtml,
 } from '../src/extract/sanitize-html'
@@ -402,6 +403,21 @@ describe('tables and nested lists', () => {
     expect(markdown).not.toContain('Join Waitlist')
     expect(markdown).not.toContain('Manifesto')
     expect(markdown).not.toContain('∵ Back')
+  })
+
+  it('does not treat a Substack newsletter-post article as an ad widget', () => {
+    const article = parse(
+      '<article class="typography newsletter-post post"></article>',
+      PARSE_HTML_OPTIONS,
+    ).querySelector('article')
+    const signup = parse('<div class="newsletter-signup">Weekly</div>', PARSE_HTML_OPTIONS).querySelector(
+      'div',
+    )
+    if (article === null || signup === null) {
+      throw new Error('fixture')
+    }
+    expect(isAdsLikeClass(article)).toBe(false)
+    expect(isAdsLikeClass(signup)).toBe(true)
   })
 
   it('keeps nested list items through Markdown and back to HTML', () => {
