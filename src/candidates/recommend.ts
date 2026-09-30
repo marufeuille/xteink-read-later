@@ -44,17 +44,34 @@ export type ResolveRecommendInput = {
 export type ResolveRecommendResult = {
   readonly recommendation: CandidateRecommendation
   readonly reused: boolean
+  /**
+   * A call was not made because the budget was exhausted or Jev deps were absent,
+   * and the stored status stayed unevaluated. Those rows are not logged per candidate.
+   */
+  readonly budgetSkippedUnevaluated: boolean
 }
 
 function reusedOf(recommendation: CandidateRecommendation): ResolveRecommendResult {
-  return { recommendation, reused: true }
+  return { recommendation, reused: true, budgetSkippedUnevaluated: false }
 }
 
 function freshOf(recommendation: CandidateRecommendation): ResolveRecommendResult {
-  return { recommendation, reused: false }
+  return { recommendation, reused: false, budgetSkippedUnevaluated: false }
 }
 
-export function logResolvedRecommendation(candidate: CandidateArticle, reused: boolean): void {
+function budgetSkipOf(existing: CandidateRecommendation): ResolveRecommendResult {
+  const unevaluated = existing.status === 'unevaluated'
+  return {
+    recommendation: existing,
+    reused: !unevaluated,
+    budgetSkippedUnevaluated: unevaluated,
+  }
+}
+
+export function logResolvedRecommendation(candidate: CandidateArticle, resolved: ResolveRecommendResult): void {
+  if (resolved.budgetSkippedUnevaluated) {
+    return
+  }
   const { recommendation } = candidate
   logCandidateRecommend({
     candidateId: candidate.id,
@@ -63,7 +80,7 @@ export function logResolvedRecommendation(candidate: CandidateArticle, reused: b
     version: recommendation.version,
     durationMs: recommendation.durationMs,
     inputTokens: recommendation.inputTokens,
-    reused,
+    reused: resolved.reused,
     errorCode: recommendation.errorCode,
   })
 }
@@ -97,10 +114,7 @@ export async function resolveDeRecommendation(input: ResolveRecommendInput): Pro
   }
 
   if (input.budget.remainingCalls < RECOMMEND_MAX_CALLS_PER_EVALUATION || input.jevDeps === undefined) {
-    return {
-      recommendation: input.existing,
-      reused: input.existing.status !== 'unevaluated',
-    }
+    return budgetSkipOf(input.existing)
   }
 
   input.budget.remainingCalls -= RECOMMEND_MAX_CALLS_PER_EVALUATION
@@ -180,6 +194,6 @@ export async function reevaluateCandidate(
     updatedAt: now.toISOString(),
   }
   await input.store.put(updated)
-  logResolvedRecommendation(updated, resolved.reused)
+  logResolvedRecommendation(updated, resolved)
   return ok({ candidate: updated, reused: resolved.reused })
 }

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { collectFeed } from '../src/feeds/collect'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import {
@@ -333,5 +333,76 @@ describe('collectFeed', () => {
     expect(failed.status).toBe('failed')
     expect(okResult.status).toBe('ready')
     expect(okResult.itemsRegistered).toBeGreaterThan(0)
+  })
+})
+
+describe('collectFeed recommend logs', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function recommendLogs(): Record<string, unknown>[] {
+    return vi
+      .mocked(console.log)
+      .mock.calls.map((call) => call[0] as Record<string, unknown>)
+      .filter((entry) => entry.event === 'candidate_recommend')
+  }
+
+  it('does not emit unevaluated candidate_recommend lines when the feed budget skips Jev', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const candidates = createMemoryCandidateStore()
+    const result = await collectFeed(
+      source({
+        id: ZENN_ID,
+        name: 'Zenn Cloudflare',
+        siteUrl: mustUrl('https://zenn.dev/topics/cloudflare'),
+        feedUrl: mustUrl('https://zenn.dev/topics/cloudflare/feed'),
+      }),
+      RUN,
+      {
+        candidateStore: candidates,
+        fetchFeed: fetchXml({ 'https://zenn.dev/topics/cloudflare/feed': xml('zenn-topic-feed.xml') }),
+        fetchPage: fetchHtml(articlePages),
+      },
+    )
+    expect(result.status).toBe('ready')
+    expect(result.itemsRegistered).toBe(2)
+    const listed = await candidates.listListed({ limit: 10, offset: 0 })
+    expect(listed.items.map((item) => item.recommendation.status)).toEqual(['unevaluated', 'unevaluated'])
+    expect(recommendLogs()).toEqual([])
+  })
+
+  it('still logs insufficient material and stays quiet for budget-skipped excerpts', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const candidates = createMemoryCandidateStore()
+    const pages = {
+      ...articlePages,
+      'https://zenn.dev/example/articles/durable-intro': readFileSync(
+        join(fixtures, 'fixtures', 'too-short.html'),
+        'utf8',
+      ),
+    }
+    const result = await collectFeed(
+      source({
+        id: ZENN_ID,
+        name: 'Zenn Cloudflare',
+        siteUrl: mustUrl('https://zenn.dev/topics/cloudflare'),
+        feedUrl: mustUrl('https://zenn.dev/topics/cloudflare/feed'),
+      }),
+      RUN,
+      {
+        candidateStore: candidates,
+        fetchFeed: fetchXml({ 'https://zenn.dev/topics/cloudflare/feed': xml('zenn-topic-feed.xml') }),
+        fetchPage: fetchHtml(pages),
+      },
+    )
+    expect(result.itemsRegistered).toBe(2)
+    const listed = await candidates.listListed({ limit: 10, offset: 0 })
+    expect(listed.items.map((item) => item.recommendation.status).sort()).toEqual([
+      'insufficient_material',
+      'unevaluated',
+    ])
+    expect(recommendLogs().map((entry) => entry.status)).toEqual(['insufficient_material'])
+    expect(JSON.stringify(recommendLogs())).not.toContain('https://')
   })
 })

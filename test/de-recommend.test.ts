@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { evaluateDeRecommendation } from '../src/recommend/evaluate'
 import { parseCandidateRecommendation, recommendBindValues } from '../src/recommend/parse'
 import {
@@ -350,6 +350,7 @@ describe('resolveDeRecommendation budget', () => {
     })
     expect(resolved.recommendation.status).toBe('unevaluated')
     expect(resolved.reused).toBe(false)
+    expect(resolved.budgetSkippedUnevaluated).toBe(true)
   })
 
   it('keeps a judged grade when a later fetch has no excerpt', async () => {
@@ -380,6 +381,186 @@ describe('resolveDeRecommendation budget', () => {
     })
     expect(resolved.recommendation).toEqual(judged)
     expect(resolved.reused).toBe(true)
+    expect(resolved.budgetSkippedUnevaluated).toBe(false)
+  })
+})
+
+describe('candidate_recommend logs', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function recommendLogs(): Record<string, unknown>[] {
+    return vi
+      .mocked(console.log)
+      .mock.calls.map((call) => call[0] as Record<string, unknown>)
+      .filter((entry) => entry.event === 'candidate_recommend')
+  }
+
+  function spyLog(): void {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+  }
+
+  it('omits a per-candidate line when the feed budget leaves an excerpt unevaluated', async () => {
+    spyLog()
+    let calls = 0
+    const evaluate: EvaluateSystemOne = async (request, deps) => {
+      calls += 1
+      return successfulEvaluate()(request, deps)
+    }
+    const result = await registerCandidate(mustUrl('https://example.com/ja/workers-cpu'), {
+      store: createMemoryCandidateStore(),
+      fetchPage: fetchHtml({ 'https://example.com/ja/workers-cpu': { html: html('ja-tech.html') } }),
+      now: () => new Date('2026-09-21T03:00:00.000Z'),
+      jevDeps: { OPENROUTER_API_KEY: 'or-test' },
+      evaluateRecommend: evaluate,
+      maxJevCalls: 0,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.candidate.recommendation.status).toBe('unevaluated')
+    expect(calls).toBe(0)
+    expect(recommendLogs()).toEqual([])
+  })
+
+  it('omits the line when Jev deps are absent and the candidate stays unevaluated', async () => {
+    spyLog()
+    const result = await registerCandidate(mustUrl('https://example.com/ja/workers-cpu'), {
+      store: createMemoryCandidateStore(),
+      fetchPage: fetchHtml({ 'https://example.com/ja/workers-cpu': { html: html('ja-tech.html') } }),
+      maxJevCalls: 1,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.candidate.recommendation.status).toBe('unevaluated')
+    expect(recommendLogs()).toEqual([])
+  })
+
+  it('still logs insufficient material when the feed budget is zero', async () => {
+    spyLog()
+    const evaluate: EvaluateSystemOne = async () => {
+      throw new Error('evaluate should not run')
+    }
+    const short = await registerCandidate(mustUrl('https://example.com/tiny'), {
+      store: createMemoryCandidateStore(),
+      fetchPage: fetchHtml({ 'https://example.com/tiny': { html: html('too-short.html') } }),
+      jevDeps: { OPENROUTER_API_KEY: 'or-test' },
+      evaluateRecommend: evaluate,
+      maxJevCalls: 0,
+    })
+    expect(short.ok).toBe(true)
+    if (!short.ok) {
+      return
+    }
+    expect(short.value.candidate.recommendation.status).toBe('insufficient_material')
+    expect(recommendLogs().map((entry) => entry.status)).toEqual(['insufficient_material'])
+    expect(JSON.stringify(recommendLogs())).not.toContain('https://')
+  })
+
+  it('still logs paywalled unevaluated results that are not a budget skip', async () => {
+    spyLog()
+    const result = await registerCandidate(mustUrl('https://paywall.example.com/essay'), {
+      store: createMemoryCandidateStore(),
+      fetchPage: fetchHtml({ 'https://paywall.example.com/essay': { html: html('candidate-paywall.html') } }),
+      jevDeps: { OPENROUTER_API_KEY: 'or-test' },
+      evaluateRecommend: async () => {
+        throw new Error('evaluate should not run')
+      },
+      maxJevCalls: 0,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.candidate.recommendation.status).toBe('unevaluated')
+    expect(recommendLogs()).toEqual([
+      expect.objectContaining({
+        event: 'candidate_recommend',
+        message: 'candidate_recommend unevaluated',
+        status: 'unevaluated',
+        reused: true,
+        grade: null,
+        errorCode: null,
+      }),
+    ])
+  })
+
+  it('logs evaluated, low confidence, failed, and skipped outcomes', async () => {
+    spyLog()
+    const register = (
+      url: string,
+      evaluateRecommend: EvaluateSystemOne,
+      apiKey = 'or-test',
+    ) =>
+      registerCandidate(mustUrl(url), {
+        store: createMemoryCandidateStore(),
+        fetchPage: fetchHtml({
+          [url]: { html: html(url.endsWith('compatibility-date') ? 'en-tech.html' : 'ja-tech.html') },
+        }),
+        jevDeps: { OPENROUTER_API_KEY: apiKey },
+        evaluateRecommend,
+      })
+    const evaluated = await register('https://example.com/ja/workers-cpu', successfulEvaluate())
+    const low = await register(
+      'https://example.com/ja/workers-cpu',
+      successfulEvaluate('low_priority', 0.2),
+    )
+    const failed = await register('https://example.com/en/compatibility-date', async () => ({
+      ok: false,
+      error: { kind: 'jev_failed', code: 'timeout', reason: 'deadline' },
+    }))
+    const skipped = await register(
+      'https://example.com/ja/workers-cpu',
+      async () => {
+        throw new Error('evaluate should not run')
+      },
+      '',
+    )
+    expect(evaluated.ok && low.ok && failed.ok && skipped.ok).toBe(true)
+    if (!evaluated.ok || !low.ok || !failed.ok || !skipped.ok) {
+      return
+    }
+    expect(evaluated.value.candidate.recommendation.status).toBe('evaluated')
+    expect(low.value.candidate.recommendation.status).toBe('low_confidence')
+    expect(failed.value.candidate.recommendation.status).toBe('failed')
+    expect(skipped.value.candidate.recommendation.status).toBe('skipped')
+    expect(recommendLogs().map((entry) => entry.status)).toEqual([
+      'evaluated',
+      'low_confidence',
+      'failed',
+      'skipped',
+    ])
+    expect(recommendLogs()[2]).toMatchObject({ errorCode: 'recommend_timeout', grade: null })
+    expect(JSON.stringify(recommendLogs())).not.toContain('https://')
+    expect(JSON.stringify(recommendLogs())).not.toContain('or-test')
+  })
+
+  it('keeps a failed log on a later budget skip without calling Jev again', async () => {
+    spyLog()
+    let calls = 0
+    const evaluate: EvaluateSystemOne = async () => {
+      calls += 1
+      return { ok: false, error: { kind: 'jev_failed', code: 'http', reason: '503' } }
+    }
+    const deps = {
+      store: createMemoryCandidateStore(),
+      fetchPage: fetchHtml({ 'https://example.com/ja/workers-cpu': { html: html('ja-tech.html') } }),
+      jevDeps: { OPENROUTER_API_KEY: 'or-test' },
+      evaluateRecommend: evaluate,
+    }
+    const first = await registerCandidate(mustUrl('https://example.com/ja/workers-cpu'), deps)
+    const second = await registerCandidate(mustUrl('https://example.com/ja/workers-cpu'), {
+      ...deps,
+      maxJevCalls: 0,
+    })
+    expect(first.ok && second.ok).toBe(true)
+    expect(calls).toBe(1)
+    expect(recommendLogs().map((entry) => entry.status)).toEqual(['failed', 'failed'])
+    expect(recommendLogs()[1]).toMatchObject({ reused: true, errorCode: 'recommend_http' })
   })
 })
 
