@@ -123,6 +123,8 @@ Access のログイン（`marufeuille.cloudflareaccess.com`）に飛ばないこ
 
 `/digest*` は今 Access の対象だが、フェーズ1では外さない。外れたように見えても、この骨格の apply でパスを削らない。`/books` は対象外。
 
+ステータスだけの合否は [health-checks.md](health-checks.md)。朝晩と、Access を変えていないデプロイではそこの朝晩の 2 行だけ。経路を変えたときだけ追加の 2 行も見る。`POST /clip` が Access に飛ばないことはこの節のまま（ヘルス表には載せない）。
+
 ## ファイル
 
 | ファイル | 役割 |
