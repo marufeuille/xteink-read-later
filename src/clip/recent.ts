@@ -91,6 +91,11 @@ const RECENT_STYLES = `<style>
     padding: 0.7rem 0;
     border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
   }
+  .reclip-hint {
+    font-weight: 500;
+    font-size: 0.9rem;
+    margin: 0.6rem 0 0;
+  }
 </style>`
 
 function recentClipRow(job: RecentClip): string {
@@ -98,6 +103,9 @@ function recentClipRow(job: RecentClip): string {
   const error =
     job.error === undefined ? '' : `<p>error.code: ${escapeHtml(job.error.code)}</p>`
   const badge = failed ? '<p><span class="fail-badge">失敗</span></p>' : ''
+  const hint = failed
+    ? '<p class="reclip-hint">再クリップは Shortcuts で同じ記事を送り直す。</p>'
+    : ''
   const articleClass = failed ? 'clip-failed' : 'clip-row'
   const alert = failed ? ' role="alert"' : ''
   return `<article class="${articleClass}" data-status="${escapeHtml(job.status)}"${alert}>
@@ -106,6 +114,7 @@ function recentClipRow(job: RecentClip): string {
   <p>status: ${escapeHtml(job.status)}</p>
   <p>stage: ${escapeHtml(stageLabel(job.stage))}</p>
   ${error}
+  ${hint}
 </article>`
 }
 
