@@ -170,5 +170,6 @@ describe('daily workers logs query', () => {
     expect(doc).toContain('payload_too_large')
     expect(doc).toContain('internal_error')
     expect(doc).toContain('feed_schedule')
+    expect(doc).toContain('予算スキップのまま残る `unevaluated` は候補ごとに出さない')
   })
 })

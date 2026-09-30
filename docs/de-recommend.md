@@ -46,7 +46,7 @@ LLM/AI 記事も DE の仕事との関係で評価する。企業ブログであ
 - 入力は翻訳前の抽出 HTML を Markdown にした excerpt（HTML 16000 字、excerpt 6000 字）。
 - 1 判定あたり Jev は最大 1 回。通信リトライはしない（タイムアウト 8 秒）。
 - 手動 `POST /candidates` は本文を確認できたとき最大 1 回呼ぶ。
-- フィード収集は時間予算のため Jev を呼ばない（`unevaluated` または材料不足）。一覧の「判定する」で明示評価する。
+- フィード収集は時間予算のため Jev を呼ばない（`unevaluated` または材料不足）。一覧の「判定する」で明示評価する。予算切れか Jev 依存が無いために残った `unevaluated` は、`candidate_recommend` を候補ごとに出さない。`evaluated` / `low_confidence` / `insufficient_material` / `skipped` / `failed` は出す。有料記事などで予算スキップ以外の理由で残る `unevaluated` も出す。
 - 同じ `de-recommend-v1` と excerpt ハッシュなら再呼び出ししない。失敗は再試行する。基準バージョンが変われば再評価する。`POST /candidates/:id/recommend` の `force` で明示再評価する。
 - 本文は D1 に置かない。ハッシュだけ保存する。再評価時は再取得して抽出する。
 

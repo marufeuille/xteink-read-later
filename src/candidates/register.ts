@@ -133,7 +133,7 @@ async function persistJudged(
   })
   const judged: CandidateArticle = { ...saved, recommendation: resolved.recommendation }
   await persist(input.deps.store, input.submittedUrl, input.discoveredAt, judged, input.sourceKind)
-  logResolvedRecommendation(judged, resolved.reused)
+  logResolvedRecommendation(judged, resolved)
   return judged
 }
 
