@@ -164,6 +164,7 @@ describe('GET /clip/recent', () => {
     expect(html).toContain('href="/clip/recent"')
     expect(html).not.toContain('class="clip-failed"')
     expect(html).not.toContain('class="fail-banner"')
+    expect(html).not.toContain('再クリップ')
     expect(html).not.toContain(TEST_CLIP_TOKEN)
   })
 
@@ -216,6 +217,13 @@ describe('GET /clip/recent', () => {
       expect(failedBlock).toContain('status: failed')
       expect(failedBlock).toContain('stage: fetch')
       expect(failedBlock).toContain('error.code: fetch_failed')
+      expect(failedBlock).toContain('class="reclip"')
+      expect(failedBlock).toContain('再クリップは Shortcuts で同じ記事を送り直す。jobId は上に表示。')
+      expect(failedBlock.indexOf(`jobId: ${failed.jobId}`)).toBeLessThan(failedBlock.indexOf('class="reclip"'))
+      expect(failedBlock).not.toMatch(/https?:\/\//)
+      expect(block(running.jobId)).not.toContain('再クリップ')
+      expect(block(ready.jobId)).not.toContain('再クリップ')
+      expect(html.match(/class="reclip"/g)).toHaveLength(1)
       expect(html).toContain('status: running')
       expect(html).toContain('stage: translate')
       expect(html).toContain('status: ready')
@@ -229,6 +237,56 @@ describe('GET /clip/recent', () => {
     } finally {
       logSpy.mockRestore()
     }
+  })
+
+  it('repeats the re-clip note under each failed row without a URL or body', async () => {
+    const { app, store, env } = appWith()
+    const first = job({
+      n: 21,
+      status: 'failed',
+      stage: 'fetch',
+      updatedAt: stamp(1),
+      sourceUrl: SECRET_URL,
+      message: SECRET_MESSAGE,
+    })
+    const second = job({
+      n: 22,
+      status: 'failed',
+      stage: 'extract',
+      updatedAt: stamp(2),
+      sourceUrl: 'https://other.example/hidden-article',
+      message: SECRET_TITLE,
+    })
+    const ready = job({ n: 23, status: 'ready', stage: 'store', updatedAt: stamp(3) })
+    await store.putJob(first)
+    await store.putJob(second)
+    await store.putJob(ready)
+
+    const response = await app.request('/clip/recent', {}, env)
+    const html = await response.text()
+    const block = (id: string) => {
+      const at = html.indexOf(`jobId: ${id}`)
+      const start = html.lastIndexOf('<article', at)
+      const end = html.indexOf('</article>', at)
+      return html.slice(start, end)
+    }
+    const note = '再クリップは Shortcuts で同じ記事を送り直す。jobId は上に表示。'
+    for (const failed of [first, second]) {
+      const failedBlock = block(failed.jobId)
+      expect(failedBlock).toContain('class="reclip"')
+      expect(failedBlock).toContain(note)
+      expect(failedBlock.indexOf(`jobId: ${failed.jobId}`)).toBeLessThan(failedBlock.indexOf(note))
+    }
+    expect(block(ready.jobId)).not.toContain(note)
+    expect(html.match(/class="reclip"/g)).toHaveLength(2)
+    expect(html).toContain('失敗が 2 件あります')
+    expect(html).not.toMatch(/https?:\/\//)
+    expect(html).not.toContain('secret.example')
+    expect(html).not.toContain('other.example')
+    expect(html).not.toContain(SECRET_MESSAGE)
+    expect(html).not.toContain(SECRET_TITLE)
+    expect(html).not.toContain(SECRET_BODY)
+    expect(html).not.toContain(TEST_CLIP_TOKEN)
   })
 
   it('returns the same safe JSON for Bearer without article fields', async () => {
@@ -273,6 +331,8 @@ describe('GET /clip/recent', () => {
     expect(text).not.toContain(SECRET_MESSAGE)
     expect(text).not.toContain(TEST_CLIP_TOKEN)
     expect(text).not.toContain('sourceUrl')
+    expect(text).not.toContain('再クリップ')
+    expect(text).not.toContain('Shortcuts')
     if (typeof body !== 'object' || body === null || !('jobs' in body) || !Array.isArray(body.jobs)) {
       throw new Error('jobs')
     }
@@ -347,6 +407,7 @@ describe('GET /clip/recent', () => {
     expect(html).toContain(hidden.jobId)
     expect(html).toContain('error.code: fetch_failed')
     expect(html).toContain('class="clip-failed"')
+    expect(html).toContain('再クリップは Shortcuts で同じ記事を送り直す。jobId は上に表示。')
     expect(html).not.toContain(SECRET_TITLE)
     expect(html).not.toContain(SECRET_BODY)
     expect(html).not.toContain('secret.example')

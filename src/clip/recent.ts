@@ -91,13 +91,21 @@ const RECENT_STYLES = `<style>
     padding: 0.7rem 0;
     border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
   }
+  .reclip {
+    font-weight: 400;
+    margin: 0.7rem 0 0;
+  }
 </style>`
+
+/** Under each failed row. Names the re-clip step without a URL or article body. */
+const RECLIP_NOTE = '再クリップは Shortcuts で同じ記事を送り直す。jobId は上に表示。'
 
 function recentClipRow(job: RecentClip): string {
   const failed = job.status === 'failed'
   const error =
     job.error === undefined ? '' : `<p>error.code: ${escapeHtml(job.error.code)}</p>`
   const badge = failed ? '<p><span class="fail-badge">失敗</span></p>' : ''
+  const reclip = failed ? `<p class="reclip">${RECLIP_NOTE}</p>` : ''
   const articleClass = failed ? 'clip-failed' : 'clip-row'
   const alert = failed ? ' role="alert"' : ''
   return `<article class="${articleClass}" data-status="${escapeHtml(job.status)}"${alert}>
@@ -106,6 +114,7 @@ function recentClipRow(job: RecentClip): string {
   <p>status: ${escapeHtml(job.status)}</p>
   <p>stage: ${escapeHtml(stageLabel(job.stage))}</p>
   ${error}
+  ${reclip}
 </article>`
 }
 
