@@ -12,6 +12,7 @@
 | [docs/de-recommend.md](docs/de-recommend.md) | 候補のおすすめ度（現行） |
 | [docs/daily-opds.md](docs/daily-opds.md) | まとめ EPUB の識別子と旧号（現行） |
 | [docs/workers-logs.md](docs/workers-logs.md) | Workers Logs のフィールドと日次の保存クエリ（現行） |
+| [docs/health-checks.md](docs/health-checks.md) | 本番スモークのステータス合否（朝晩と、Access 経路を変えたとき） |
 | [docs/github-merge-gates.md](docs/github-merge-gates.md) | `main` のマージ条件（現行） |
 | [docs/access-as-code.md](docs/access-as-code.md) | Cloudflare Access の Terraform（手元で import / plan。CI では適用しない） |
 | [docs/pr-risk.md](docs/pr-risk.md) | PR リスク分類の試行（記録のみ） |
