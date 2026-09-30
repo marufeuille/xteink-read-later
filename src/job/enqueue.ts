@@ -63,7 +63,10 @@ export async function enqueueClipJob(input: {
       kind: 'queue_failed',
       reason: cause instanceof Error ? cause.message : 'queue send failed',
     }
-    logPipeline({ stage: 'queue', durationMs: Date.now() - started, errorKind: error.kind }, queueLog)
+    logPipeline(
+      { stage: 'queue', durationMs: Date.now() - started, errorKind: error.kind, clipOutcome: 'failed' },
+      queueLog,
+    )
     const failed: ClipFailedJob = {
       ...queued,
       status: 'failed',

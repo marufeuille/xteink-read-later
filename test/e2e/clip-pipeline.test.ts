@@ -14,6 +14,7 @@ import { opdsClipCalendarDate } from '../../src/opds/catalog'
 import { articleIdFromCanonicalUrl, asClipJobId, parseHttpUrl, type BuildEpub } from '../../src/types'
 import { basicAuthorization, bearerAuthorization, TEST_BINDINGS } from '../bindings'
 import { createFakeQueue } from '../fake-queue'
+import { loggedText } from '../logged-text'
 import { installNetworkMock, openaiMessageResponse } from './mock-network'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
@@ -179,7 +180,7 @@ describe('clip pipeline E2E (fixture network)', () => {
     })
     const logs: string[] = []
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
-      logs.push(String(line))
+      logs.push(loggedText(line))
     })
     try {
       const ctx = app()

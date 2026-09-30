@@ -34,6 +34,7 @@ import {
   TEST_BINDINGS,
   TEST_CLIP_TOKEN,
 } from './bindings'
+import { loggedText } from './logged-text'
 
 const fixtures = dirname(fileURLToPath(import.meta.url))
 const BINDINGS = TEST_BINDINGS
@@ -303,7 +304,7 @@ describe('POST /clip', () => {
     const second = await clip(failing.app, 'https://example.com/ja/workers-cpu', failing.env)
     const logs: string[] = []
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
-      logs.push(String(line))
+      logs.push(loggedText(line))
     })
     try {
       await failing.queue.drain(failing.env, {
@@ -453,33 +454,48 @@ describe('POST /clip', () => {
   })
 
   it('does not fetch in the HTTP handler; fetch_failed lands on the job', async () => {
-    let fetched = 0
-    const ctx = appWithFetch(async (url) => {
-      fetched += 1
-      return err({ kind: 'fetch_failed', url, reason: 'HTTP 404' })
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(loggedText(line))
     })
-    const response = await clip(ctx.app, 'https://example.com/missing', ctx.env)
-    expect(response.status).toBe(202)
-    expect(fetched).toBe(0)
-    await drain(ctx.queue, ctx.env, ctx)
-    expect(fetched).toBe(4)
-    const body = await readJson(response)
-    const job = await readJson(await getJob(ctx.app, body.jobId ?? '', ctx.env))
-    expect(job.status).toBe('failed')
-    expect(job.error?.code).toBe('fetch_failed')
-    expect(job.error?.extracted).toBeUndefined()
-    const fetches = (job.stages ?? []).filter(
-      (stage) => stage.stage === 'fetch' && stage.errorKind === 'fetch_failed',
-    )
-    expect(fetches).toHaveLength(4)
-    expect(fetches.map((stage) => stage.attempt)).toEqual([1, 2, 3, 4])
-    expect(JSON.stringify(job.stages)).not.toContain('example.com')
+    try {
+      let fetched = 0
+      const ctx = appWithFetch(async (url) => {
+        fetched += 1
+        return err({ kind: 'fetch_failed', url, reason: 'HTTP 404' })
+      })
+      const response = await clip(ctx.app, 'https://example.com/missing', ctx.env)
+      expect(response.status).toBe(202)
+      expect(fetched).toBe(0)
+      await drain(ctx.queue, ctx.env, ctx)
+      expect(fetched).toBe(4)
+      const body = await readJson(response)
+      const job = await readJson(await getJob(ctx.app, body.jobId ?? '', ctx.env))
+      expect(job.status).toBe('failed')
+      expect(job.error?.code).toBe('fetch_failed')
+      expect(job.error?.extracted).toBeUndefined()
+      const fetches = (job.stages ?? []).filter(
+        (stage) => stage.stage === 'fetch' && stage.errorKind === 'fetch_failed',
+      )
+      expect(fetches).toHaveLength(4)
+      expect(fetches.map((stage) => stage.attempt)).toEqual([1, 2, 3, 4])
+      expect(JSON.stringify(job.stages)).not.toContain('example.com')
+      expect(JSON.stringify(job.stages)).not.toContain('clipOutcome')
+      const outcomes = logs
+        .map((line) => JSON.parse(line) as { event?: string; stage?: string; clipOutcome?: string; errorKind?: string })
+        .filter((entry) => entry.event === 'pipeline' && entry.clipOutcome !== undefined)
+      expect(outcomes).toEqual([
+        expect.objectContaining({ stage: 'queue', clipOutcome: 'failed', errorKind: 'fetch_failed' }),
+      ])
 
-    const again = await clip(ctx.app, 'https://example.com/missing', ctx.env)
-    const againBody = await readJson(again)
-    const reset = await readJson(await getJob(ctx.app, againBody.jobId ?? '', ctx.env))
-    expect(reset.stages?.map((stage) => stage.stage)).toEqual(['queue'])
-    expect(reset.stages?.[0]?.errorKind).toBeUndefined()
+      const again = await clip(ctx.app, 'https://example.com/missing', ctx.env)
+      const againBody = await readJson(again)
+      const reset = await readJson(await getJob(ctx.app, againBody.jobId ?? '', ctx.env))
+      expect(reset.stages?.map((stage) => stage.stage)).toEqual(['queue'])
+      expect(reset.stages?.[0]?.errorKind).toBeUndefined()
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('records extract_failed on the job without extracted HTML', async () => {
@@ -618,7 +634,7 @@ describe('POST /clip', () => {
   it('records epub_failed on the job after one retry', async () => {
     const logs: string[] = []
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
-      logs.push(String(line))
+      logs.push(loggedText(line))
     })
     try {
       const store = createMemoryStore()
@@ -655,6 +671,12 @@ describe('POST /clip', () => {
       expect(logs.some((line) => line.includes('"stage":"epub"') && line.includes('epub_failed'))).toBe(
         true,
       )
+      const outcomes = logs
+        .map((line) => JSON.parse(line) as { event?: string; stage?: string; clipOutcome?: string; errorKind?: string })
+        .filter((entry) => entry.event === 'pipeline' && entry.clipOutcome !== undefined)
+      expect(outcomes).toEqual([
+        expect.objectContaining({ stage: 'queue', clipOutcome: 'failed', errorKind: 'epub_failed' }),
+      ])
       expect(
         logs.some(
           (line) =>
@@ -753,7 +775,7 @@ describe('POST /clip', () => {
   it('writes the same jobId on every pipeline stage log', async () => {
     const logs: string[] = []
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
-      logs.push(String(line))
+      logs.push(loggedText(line))
     })
     try {
       const bucket = createFakeR2Bucket()
@@ -777,7 +799,17 @@ describe('POST /clip', () => {
       await queue.drain(env, { clipPipeline, createStore: createR2Store })
       const queued = await readJson(response)
       const events = logs
-        .map((line) => JSON.parse(line) as { event?: string; stage?: string; jobId?: string; runId?: string })
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              event?: string
+              stage?: string
+              jobId?: string
+              runId?: string
+              clipOutcome?: string
+              errorKind?: string
+            },
+        )
         .filter((entry) => entry.event === 'pipeline')
       expect(events.map((entry) => entry.stage)).toEqual([
         'queue',
@@ -788,6 +820,11 @@ describe('POST /clip', () => {
         'store',
         'classify',
         'queue',
+      ])
+      expect(events[0]).not.toHaveProperty('clipOutcome')
+      expect(events.at(-1)).toMatchObject({ stage: 'queue', clipOutcome: 'ready' })
+      expect(events.filter((entry) => entry.clipOutcome !== undefined)).toEqual([
+        expect.objectContaining({ clipOutcome: 'ready' }),
       ])
       for (const entry of events) {
         expect(entry.jobId).toBe(queued.jobId)
@@ -827,36 +864,52 @@ describe('POST /clip', () => {
   })
 
   it('marks queue_failed and allows the same URL to be re-enqueued', async () => {
-    let failSend = true
-    const store = createMemoryStore()
-    const queue = createFakeQueue({
-      onSend: () => {
-        if (failSend) {
-          failSend = false
-          throw new Error('queue unavailable')
-        }
-      },
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(loggedText(line))
     })
-    const clipPipeline = createClipPipeline({
-      extractPipeline: createExtractPipeline({ fetchPage: jaTechPage }),
-      translateArticle: jaTranslate,
-    })
-    const app = createApp({ store, queue })
-    const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
-    const failed = await clip(app, 'https://example.com/ja/workers-cpu', env)
-    expect(failed.status).toBe(503)
-    expect((await readJson(failed)).error?.code).toBe('queue_failed')
-    const jobId = await clipJobIdFromUrl(mustUrl('https://example.com/ja/workers-cpu'))
-    const failedJob = await store.getJob(jobId)
-    expect(failedJob?.status).toBe('failed')
-    expect(failedJob?.error?.code).toBe('queue_failed')
-    expect(queue.size).toBe(0)
+    try {
+      let failSend = true
+      const store = createMemoryStore()
+      const queue = createFakeQueue({
+        onSend: () => {
+          if (failSend) {
+            failSend = false
+            throw new Error('queue unavailable')
+          }
+        },
+      })
+      const clipPipeline = createClipPipeline({
+        extractPipeline: createExtractPipeline({ fetchPage: jaTechPage }),
+        translateArticle: jaTranslate,
+      })
+      const app = createApp({ store, queue })
+      const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue } as Cloudflare.Env
+      const failed = await clip(app, 'https://example.com/ja/workers-cpu', env)
+      expect(failed.status).toBe(503)
+      expect((await readJson(failed)).error?.code).toBe('queue_failed')
+      const jobId = await clipJobIdFromUrl(mustUrl('https://example.com/ja/workers-cpu'))
+      const failedJob = await store.getJob(jobId)
+      expect(failedJob?.status).toBe('failed')
+      expect(failedJob?.error?.code).toBe('queue_failed')
+      expect(queue.size).toBe(0)
 
-    const retry = await clip(app, 'https://example.com/ja/workers-cpu', env)
-    expect(retry.status).toBe(202)
-    expect(queue.size).toBe(1)
-    await drain(queue, env, { clipPipeline, store })
-    expect((await store.getJob(jobId))?.status).toBe('ready')
+      const retry = await clip(app, 'https://example.com/ja/workers-cpu', env)
+      expect(retry.status).toBe(202)
+      expect(queue.size).toBe(1)
+      await drain(queue, env, { clipPipeline, store })
+      expect((await store.getJob(jobId))?.status).toBe('ready')
+      const outcomes = logs
+        .map((line) => JSON.parse(line) as { event?: string; clipOutcome?: string; errorKind?: string })
+        .filter((entry) => entry.event === 'pipeline' && entry.clipOutcome !== undefined)
+      expect(outcomes.map((entry) => entry.clipOutcome)).toEqual(['failed', 'ready'])
+      expect(outcomes[0]).toMatchObject({ clipOutcome: 'failed', errorKind: 'queue_failed' })
+      expect(outcomes[1]).toMatchObject({ clipOutcome: 'ready' })
+      expect(outcomes[1]).not.toHaveProperty('errorKind')
+      expect(logs.join('\n')).not.toContain('https://example.com/ja/workers-cpu')
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('re-enqueues a queued job that has not been updated for 15 minutes', async () => {

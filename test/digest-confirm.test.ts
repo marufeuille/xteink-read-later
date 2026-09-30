@@ -27,6 +27,7 @@ import {
   type HttpUrl,
 } from '../src/types'
 import { TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
+import { loggedText } from './logged-text'
 import { createFakeQueue } from './fake-queue'
 import { readQrJpeg } from './qr-jpeg'
 
@@ -286,7 +287,7 @@ describe('digest confirm HTTP', () => {
     await candidateStore.put(candidate)
     const logs: string[] = []
     vi.spyOn(console, 'log').mockImplementation((message?: unknown) => {
-      logs.push(String(message))
+      logs.push(loggedText(message))
     })
     const app = createApp({
       store,

@@ -183,4 +183,6 @@ export type PipelineLog = {
   readonly stage: PipelineStage
   readonly durationMs: number
   readonly errorKind?: ErrorKind | ClassifyErrorCode
+  /** Set only on the log for a clip job that reached ready or failed. Retries omit it. */
+  readonly clipOutcome?: 'ready' | 'failed'
 }

@@ -8,6 +8,7 @@ import { resolveCandidateDelivery } from '../src/candidates/delivery'
 import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
 import { logCandidateClip, logOpdsDownload } from '../src/log'
+import { loggedText } from './logged-text'
 import { unevaluatedRecommendation } from '../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import { createMemoryStore } from '../src/store/memory'
@@ -446,7 +447,7 @@ describe('candidate and OPDS logs', () => {
       articleId: asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
       durationMs: 12,
     })
-    const lines = spy.mock.calls.map((call) => String(call[0]))
+    const lines = spy.mock.calls.map((call) => loggedText(call[0]))
     expect(lines.join('\n')).not.toContain('https://')
     expect(lines.join('\n')).not.toContain('<p>')
     expect(lines.join('\n')).not.toContain(TEST_CLIP_TOKEN)
