@@ -10,6 +10,8 @@ import type {
 import { err, ok, parseHttpUrl } from '../types'
 import { firstUsableHeading, pickArticleTitle } from './article-title'
 import { CONTENT_SELECTORS, MIN_CONTENT_CHARS, NOISE_SELECTOR, PARSE_HTML_OPTIONS } from './constants'
+import { documentIsPaywalled, hasPaywallCopy, PAYWALL_EXTRACT_REASON } from './paywall'
+import { substackArticleBody, substackPaywallReason } from './sites/substack'
 import {
   isAdsLikeClass,
   isAriaHidden,
@@ -272,6 +274,17 @@ function pickContentNode(root: HTMLElement): HTMLElement | null {
   return bestScore >= MIN_CONTENT_CHARS ? best : null
 }
 
+function withheldBodyReason(
+  metadataPaywalled: boolean,
+  root: HTMLElement,
+  fallback: 'No article body found' | 'Extracted body was too short',
+): string {
+  if (metadataPaywalled || hasPaywallCopy(root)) {
+    return PAYWALL_EXTRACT_REASON
+  }
+  return fallback
+}
+
 function documentBaseUrl(root: HTMLElement, finalUrl: HttpUrl): HttpUrl {
   const href = root.querySelector('base')?.getAttribute('href')?.trim()
   if (href === undefined || href.length === 0) {
@@ -310,14 +323,25 @@ export const extractArticle: ExtractArticle = async (
   const publishedAt = publishedRaw !== null ? toIsoDate(publishedRaw) : null
   const canonicalUrl = canonicalFrom(root, page.finalUrl)
   const baseUrl = documentBaseUrl(root, page.finalUrl)
+  const substackReason = substackPaywallReason(root, page.finalUrl)
+  if (substackReason !== null) {
+    return err({
+      kind: 'extract_failed',
+      url: page.finalUrl,
+      reason: substackReason,
+    })
+  }
+  const metadataPaywalled = documentIsPaywalled(root)
 
   stripNoise(root)
-  const contentNode = pickContentNode(root)
+  // Prefer Substack's `.body.markup`. `[role=main]` scores slightly higher and
+  // used to win, after which `newsletter-post` was removed as a signup widget.
+  const contentNode = substackArticleBody(root, page.finalUrl) ?? pickContentNode(root)
   if (contentNode === null) {
     return err({
       kind: 'extract_failed',
       url: page.finalUrl,
-      reason: 'No article body found',
+      reason: withheldBodyReason(metadataPaywalled, root, 'No article body found'),
     })
   }
 
@@ -343,7 +367,7 @@ export const extractArticle: ExtractArticle = async (
     return err({
       kind: 'extract_failed',
       url: page.finalUrl,
-      reason: 'Extracted body was too short',
+      reason: withheldBodyReason(metadataPaywalled, root, 'Extracted body was too short'),
     })
   }
 

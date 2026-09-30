@@ -643,4 +643,58 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(job.error?.message).toContain('Medium feed did not include the full article')
     expect(fetchedUrls).toEqual([pageUrl, 'https://medium.com/feed/@Ada'])
   })
+
+  it('clips a Substack post whose article class would otherwise be dropped as chrome', async () => {
+    const pageUrl = 'https://addyo.substack.com/p/the-code-nobody-reads'
+    const { fetchedUrls } = installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('substack-free.html') } },
+      openai: async () =>
+        openaiMessageResponse(
+          '誰も読まないコード',
+          'unique-substack-body を訳した本文。出荷の判断は人が持つ。',
+        ),
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(job.error).toBeUndefined()
+    expect(fetchedUrls).toEqual([pageUrl, OPENAI_CHAT_URL])
+
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(epubResponse.status).toBe(200)
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('unique-substack-body')
+    expect(chapter).toContain('出荷の判断は人が持つ')
+    expect(chapter).not.toContain('Ready for more?')
+    expect(chapter).not.toContain('Discussion about this post')
+  })
+
+  it('fails a paywalled Substack preview with a subscriber reason', async () => {
+    const pageUrl = 'https://www.lennysnewsletter.com/p/advanced-evals'
+    const { fetchedUrls } = installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('substack-paywall.html') } },
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('failed')
+    expect(job.error?.code).toBe('extract_failed')
+    expect(job.error?.message).toContain('paid subscribers')
+    expect(job.error?.message).toContain(pageUrl)
+    expect(job.error?.message).not.toContain('too short')
+    expect(job.stages?.some((stage) => stage.stage === 'extract' && stage.errorKind === 'extract_failed')).toBe(
+      true,
+    )
+    expect(fetchedUrls).toEqual([pageUrl])
+  })
 })

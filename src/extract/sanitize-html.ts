@@ -163,7 +163,12 @@ function resolveHref(base: HttpUrl, href: string): string | null {
 }
 
 export function isAdsLikeClass(el: HTMLElement): boolean {
-  const haystack = `${el.getAttribute('class') ?? ''} ${el.id}`.toLowerCase()
+  // Substack marks the article itself `newsletter-post`. The ads token
+  // `newsletter` would otherwise treat that article as a signup widget.
+  const className = (el.getAttribute('class') ?? '')
+    .toLowerCase()
+    .replace(/(?:^|\s)newsletter-post(?=\s|$)/g, ' ')
+  const haystack = `${className} ${el.id}`.toLowerCase()
   return ADS_CLASS_RE.test(haystack)
 }
 

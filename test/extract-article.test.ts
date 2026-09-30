@@ -13,9 +13,13 @@ function html(name: string): string {
 }
 
 function page(path: string, file: string) {
-  const url = parseHttpUrl(`https://example.com${path}`)
+  return pageAt(`https://example.com${path}`, file)
+}
+
+function pageAt(urlString: string, file: string) {
+  const url = parseHttpUrl(urlString)
   if (url === null) {
-    throw new Error('fixture url')
+    throw new Error(urlString)
   }
   return {
     requestedUrl: url,
@@ -282,5 +286,91 @@ describe('extractArticle', () => {
     expect(result.value.title).toBe(
       'Jev Engineering: Full 10-Step Roadmap to Set Up and Use a New Brain for AI (from scratch)',
     )
+  })
+
+  it('extracts a Substack post from .body.markup instead of the short page chrome', async () => {
+    const result = await extractArticle(
+      pageAt('https://addyo.substack.com/p/the-code-nobody-reads', 'substack-free.html'),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.title).toBe('The Code Nobody Reads')
+    expect(result.value.author).toBe('Addy Osmani')
+    expect(result.value.publishedAt).toBe('2026-09-28T14:31:32.000Z')
+    expect(result.value.canonicalUrl).toBe('https://addyo.substack.com/p/the-code-nobody-reads')
+    expect(result.value.contentHtml).toContain('unique-substack-body')
+    expect(result.value.contentHtml).toContain('owns the decision to ship it')
+    expect(result.value.contentHtml).not.toContain('Discussion about this post')
+    expect(result.value.contentHtml).not.toContain('Ready for more?')
+    expect(result.value.contentHtml).not.toContain('weekly newsletter')
+    expect(result.value.contentHtml).not.toContain('No posts')
+  })
+
+  it('keeps a Substack article whose class is newsletter-post', async () => {
+    const result = await extractArticle(
+      pageAt('https://example.substack.com/p/notes-from-the-post', 'substack-newsletter-post.html'),
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('unique-newsletter-post-body')
+    expect(result.value.contentHtml).not.toContain('Ready for more?')
+  })
+
+  it('fails a paywalled Substack preview with a subscriber reason', async () => {
+    const result = await extractArticle(
+      pageAt('https://www.lennysnewsletter.com/p/advanced-evals', 'substack-paywall.html'),
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.kind).toBe('extract_failed')
+    expect(result.error.reason).toMatch(/Substack/i)
+    expect(result.error.reason).toMatch(/paid subscribers/i)
+    expect(result.error.reason).not.toMatch(/too short|No article body found/i)
+  })
+
+  it('names a paywall when a locked page has no full article', async () => {
+    const result = await extractArticle(page('/members', 'candidate-paywall.html'))
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.kind).toBe('extract_failed')
+    expect(result.error.reason).toMatch(/paywall/i)
+    expect(result.error.reason).not.toMatch(/too short|No article body found/i)
+  })
+
+  it('names a paywall when the only text is a subscribe prompt', async () => {
+    const fetched = page('/teaser', 'too-short.html')
+    const result = await extractArticle({
+      ...fetched,
+      html: `<!DOCTYPE html><html><head><title>Teaser</title></head><body><article><h1>Teaser</h1><p>Subscribe to keep reading this story.</p></article></body></html>`,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) {
+      return
+    }
+    expect(result.error.reason).toMatch(/paywall/i)
+    expect(result.error.reason).not.toMatch(/too short/i)
+  })
+
+  it('still extracts a full article that is marked isAccessibleForFree false', async () => {
+    const result = await extractArticle({
+      ...page('/full', 'en-tech.html'),
+      html: html('en-tech.html').replace(
+        '"datePublished": "2026-04-12"',
+        '"datePublished": "2026-04-12", "isAccessibleForFree": false',
+      ),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.contentHtml).toContain('nodejs_compat')
   })
 })
