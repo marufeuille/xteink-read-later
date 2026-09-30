@@ -677,6 +677,38 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(chapter).not.toContain('Discussion about this post')
   })
 
+  it('clips a full Substack post that is marked isAccessibleForFree false and has no paywall gate', async () => {
+    const pageUrl = 'https://addyo.substack.com/p/notes-that-shipped-anyway'
+    const { fetchedUrls } = installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('substack-full-not-free.html') } },
+      openai: async () =>
+        openaiMessageResponse(
+          'それでも出荷したノート',
+          'unique-substack-full-not-free を訳した本文。全文はページに載っている。',
+        ),
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(job.error).toBeUndefined()
+    expect(fetchedUrls).toEqual([pageUrl, OPENAI_CHAT_URL])
+
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(epubResponse.status).toBe(200)
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('unique-substack-full-not-free')
+    expect(chapter).toContain('全文はページに載っている')
+    expect(chapter).not.toContain('Ready for more?')
+  })
+
   it('fails a paywalled Substack preview with a subscriber reason', async () => {
     const pageUrl = 'https://www.lennysnewsletter.com/p/advanced-evals'
     const { fetchedUrls } = installNetworkMock({

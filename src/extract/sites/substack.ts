@@ -46,7 +46,13 @@ export function substackPaywallReason(root: HTMLElement, pageUrl: HttpUrl): stri
   if (!isSubstackPost(root, pageUrl)) {
     return null
   }
-  if (hasSubstackPaywallGate(root) || documentIsPaywalled(root)) {
+  // A paywall component or paid-subscriber prompt is a preview, even when that preview is long.
+  if (hasSubstackPaywallGate(root)) {
+    return SUBSTACK_PAYWALL_REASON
+  }
+  // isAccessibleForFree: false, and other paywall metadata, is not a gate by itself.
+  // Fail only when that metadata is set and the page has no usable article body.
+  if (documentIsPaywalled(root) && substackArticleBody(root, pageUrl) === null) {
     return SUBSTACK_PAYWALL_REASON
   }
   return null
