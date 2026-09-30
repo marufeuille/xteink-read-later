@@ -19,7 +19,7 @@
 | 分類なし | clip 後に Jev で topic / kind（[classification.md](../classification.md)）。失敗しても掲載は残す |
 | 候補のおすすめなし | 候補ごとに de-recommend（[de-recommend.md](../de-recommend.md)）。まとめの枠分けに使う |
 
-CI は PR と `main` で typecheck・単体・fixture E2E を回し、緑の `main` だけ `wrangler deploy` する。読む側は CrossPoint JP / Xteink の OPDS。購入 EPUB は `POST /books` で手元ファイルを載せる（書店からは取らない）。CrossPoint で棚を辿って EPUB を取る実機確認は未実施。
+CI は PR と `main` で typecheck・単体・fixture E2E を回し、緑の `main` だけ `wrangler deploy` する。読む側は CrossPoint JP / Xteink の OPDS。購入 EPUB は `POST /books` で手元ファイルを載せる（書店からは取らない）。2026-09-30 に CrossPoint 実機で、https の `/opds` 登録、`clip` と `ebook` の日付棚、最新 digest の閲覧、EPUB 取得、再クリップ後の日付棚掲載まで通った。
 
 以下のフェーズ表は着手当時の順。MVP としては実装済み。第 5 節以降を現行仕様として読まない。
 

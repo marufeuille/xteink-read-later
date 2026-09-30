@@ -63,7 +63,7 @@ https://xteink-read-later.<account>.workers.dev/opds
 - CrossPoint には **末尾スラッシュなし** で入れる（サーバは `/opds/` も同じルートだが、端末側の取り違えを避ける）
 - 認証は **HTTP Basic**（`OPDS_USERNAME` / `OPDS_PASSWORD`）。**`CLIP_TOKEN` や Bearer は使わない**
 - 空パスワードは使わない（端末が username-only を送らない）
-- 棚を辿って EPUB を取る CrossPoint 実機確認は未実施
+- 2026-09-30 に CrossPoint 実機で通った。https の `/opds` を端末に登録でき、`clip` と `ebook` の日付棚が出て、最新の digest を開け、EPUB を取得できた。再クリップ後は日付棚に載った。
 
 英語記事を共有したあとは、その日の `clip` にある EPUB が日本語になっていることを端末で確認する。
 
