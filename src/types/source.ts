@@ -10,7 +10,8 @@ export type FeedCollectionStatus = (typeof FEED_COLLECTION_STATUSES)[number]
 
 export const MAX_FEED_ITEMS = 20
 export const MAX_FEED_PARSE_ITEMS = 50
-export const MAX_FEED_BYTES = 1_000_000
+/** Decoded feed body cap. 3_000_000 covers measured ~2.0MB feeds with headroom. */
+export const MAX_FEED_BYTES = 3_000_000
 export const COLLECT_TIME_BUDGET_MS = 20_000
 export const FEED_COLLECTION_STALE_MS = 15 * 60 * 1000
 export const MAX_FEED_TOPIC_TAGS = 8
