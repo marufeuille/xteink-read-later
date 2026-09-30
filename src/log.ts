@@ -13,6 +13,42 @@ export function pipelineLogFields(
   }
 }
 
+// Workers Logs indexes fields when console.log receives an object. A JSON string stays one message.
+function definedEntries(entry: object): Record<string, unknown> {
+  const fields: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(entry)) {
+    if (value !== undefined) {
+      fields[key] = value
+    }
+  }
+  return fields
+}
+
+const SUMMARY_KEYS = ['stage', 'clipOutcome', 'status', 'result', 'action', 'outcome', 'errorKind'] as const
+
+function summaryToken(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_]+$/.test(value)) {
+    return null
+  }
+  return value
+}
+
+function summaryMessage(fields: Record<string, unknown>): string {
+  const parts = [summaryToken(fields.event) ?? 'log']
+  for (const key of SUMMARY_KEYS) {
+    const token = summaryToken(fields[key])
+    if (token !== null) {
+      parts.push(token)
+    }
+  }
+  return parts.join(' ')
+}
+
+function writeStructuredLog(entry: object): void {
+  const fields = definedEntries(entry)
+  console.log({ message: summaryMessage(fields), ...fields })
+}
+
 export function logPipeline(entry: PipelineLog, ctx?: PipelineLogContext): void {
   if (ctx?.stages !== undefined) {
     ctx.stages.push({
@@ -22,7 +58,7 @@ export function logPipeline(entry: PipelineLog, ctx?: PipelineLogContext): void 
       ...(entry.errorKind === undefined ? {} : { errorKind: entry.errorKind }),
     })
   }
-  console.log(JSON.stringify({ event: 'pipeline', ...pipelineLogFields(ctx), ...entry }))
+  writeStructuredLog({ event: 'pipeline', ...pipelineLogFields(ctx), ...entry })
 }
 
 export type SiteRecoveryLog = {
@@ -33,7 +69,7 @@ export type SiteRecoveryLog = {
 }
 
 export function logSiteRecovery(entry: Omit<SiteRecoveryLog, 'event'>): void {
-  console.log(JSON.stringify({ event: 'site_recovery', ...entry } satisfies SiteRecoveryLog))
+  writeStructuredLog({ event: 'site_recovery', ...entry } satisfies SiteRecoveryLog)
 }
 
 export type CandidateClipLog = {
@@ -57,11 +93,11 @@ export type OpdsDownloadLog = {
 }
 
 export function logCandidateClip(entry: Omit<CandidateClipLog, 'event'>): void {
-  console.log(JSON.stringify({ event: 'candidate_clip', ...entry } satisfies CandidateClipLog))
+  writeStructuredLog({ event: 'candidate_clip', ...entry } satisfies CandidateClipLog)
 }
 
 export function logOpdsDownload(entry: Omit<OpdsDownloadLog, 'event'>): void {
-  console.log(JSON.stringify({ event: 'opds_download', ...entry } satisfies OpdsDownloadLog))
+  writeStructuredLog({ event: 'opds_download', ...entry } satisfies OpdsDownloadLog)
 }
 
 export type DigestConfirmResult = 'view' | 'rejected' | 'unsendable' | 'reused' | 'queued' | 'failed'
@@ -84,7 +120,7 @@ export type DigestConfirmLog = {
 }
 
 export function logDigestConfirm(entry: Omit<DigestConfirmLog, 'event'>): void {
-  console.log(JSON.stringify({ event: 'digest_confirm', ...entry } satisfies DigestConfirmLog))
+  writeStructuredLog({ event: 'digest_confirm', ...entry } satisfies DigestConfirmLog)
 }
 
 export type CandidateRecommendLog = {
@@ -100,7 +136,7 @@ export type CandidateRecommendLog = {
 }
 
 export function logCandidateRecommend(entry: Omit<CandidateRecommendLog, 'event'>): void {
-  console.log(JSON.stringify({ event: 'candidate_recommend', ...entry } satisfies CandidateRecommendLog))
+  writeStructuredLog({ event: 'candidate_recommend', ...entry } satisfies CandidateRecommendLog)
 }
 
 export type FeedLog = {
@@ -113,7 +149,7 @@ export type FeedLog = {
 }
 
 export function logFeed(entry: FeedLog): void {
-  console.log(JSON.stringify({ event: 'feed', ...entry }))
+  writeStructuredLog({ event: 'feed', ...entry })
 }
 
 export type FeedScheduleLog = {
@@ -125,7 +161,7 @@ export type FeedScheduleLog = {
 }
 
 export function logFeedSchedule(entry: Omit<FeedScheduleLog, 'event'>): void {
-  console.log(JSON.stringify({ event: 'feed_schedule', ...entry } satisfies FeedScheduleLog))
+  writeStructuredLog({ event: 'feed_schedule', ...entry } satisfies FeedScheduleLog)
 }
 
 export type DigestScheduleLog = {
@@ -138,7 +174,7 @@ export type DigestScheduleLog = {
 }
 
 export function logDigestSchedule(entry: Omit<DigestScheduleLog, 'event'>): void {
-  console.log(JSON.stringify({ event: 'digest_schedule', ...entry } satisfies DigestScheduleLog))
+  writeStructuredLog({ event: 'digest_schedule', ...entry } satisfies DigestScheduleLog)
 }
 
 export type DailyDigestLog = {
@@ -155,13 +191,11 @@ export type DailyDigestLog = {
 
 export function logDailyDigest(entry: Omit<DailyDigestLog, 'event'>): void {
   const { articleId, ...rest } = entry
-  console.log(
-    JSON.stringify({
-      event: 'daily_digest',
-      ...rest,
-      ...(articleId === null || articleId === undefined ? {} : { articleId }),
-    } satisfies DailyDigestLog),
-  )
+  writeStructuredLog({
+    event: 'daily_digest',
+    ...rest,
+    ...(articleId === null || articleId === undefined ? {} : { articleId }),
+  } satisfies DailyDigestLog)
 }
 
 export type PublishedRepairLog = {
@@ -174,18 +208,16 @@ export type PublishedRepairLog = {
 }
 
 export function logPublishedRepair(entry: Omit<PublishedRepairLog, 'event' | 'errorKind'>): void {
-  console.log(JSON.stringify({ event: 'published_repair', ...entry } satisfies PublishedRepairLog))
+  writeStructuredLog({ event: 'published_repair', ...entry } satisfies PublishedRepairLog)
 }
 
 export function logPublishedRepairFailure(durationMs: number): void {
-  console.log(
-    JSON.stringify({
-      event: 'published_repair',
-      examined: 0,
-      dated: 0,
-      cleared: 0,
-      durationMs,
-      errorKind: 'repair_failed',
-    } satisfies PublishedRepairLog),
-  )
+  writeStructuredLog({
+    event: 'published_repair',
+    examined: 0,
+    dated: 0,
+    cleared: 0,
+    durationMs,
+    errorKind: 'repair_failed',
+  } satisfies PublishedRepairLog)
 }

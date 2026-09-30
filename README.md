@@ -11,6 +11,7 @@
 | [docs/classification.md](docs/classification.md) | clip 後の話題・種類（現行） |
 | [docs/de-recommend.md](docs/de-recommend.md) | 候補のおすすめ度（現行） |
 | [docs/daily-opds.md](docs/daily-opds.md) | まとめ EPUB の識別子と旧号（現行） |
+| [docs/workers-logs.md](docs/workers-logs.md) | Workers Logs のフィールドと日次の保存クエリ（現行） |
 | [docs/github-merge-gates.md](docs/github-merge-gates.md) | `main` のマージ条件（現行） |
 | [docs/pr-risk.md](docs/pr-risk.md) | PR リスク分類の試行（記録のみ） |
 | [docs/plan/](docs/plan/) | 着手時の計画と、翻訳モデル・Workflows の調査記録。当時の API 契約は現行ではない |
@@ -268,7 +269,7 @@ DLQ は使わない。失敗は job レコードに残る。翻訳が成功し�
 
 ### ジョブの進捗・失敗を見る
 
-専用の管理画面や履歴 DB、Workflows は使わない。各工程は job レコード（`stages`）に残し、`clip:status` と `GET /clip/jobs/:jobId` で後から見る。コンソールログはこれまでどおり。
+専用の管理画面や履歴 DB、Workflows は使わない。各工程は job レコード（`stages`）に残し、`clip:status` と `GET /clip/jobs/:jobId` で後から見る。コンソールログは Workers Logs でフィールド検索する（[docs/workers-logs.md](docs/workers-logs.md)）。
 
 ```bash
 # 保存済みの工程と最終状態
@@ -286,7 +287,7 @@ npx wrangler tail --format json | CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run
 - **保存:** 工程は `stage` / `durationMs` / `attempt` / `errorKind` だけ。URL、本文、token は job に残さない。同じ run の再試行は追記する。新しい run は工程を空にして始める。`stages` の無い古い job は空として読む
 - **ライブログ:** `wrangler tail` は接続後の追加分だけ。保存が無い工程は **不明**（未実行や停止ではない）
 - **状態:** job は `queued` / `running` / `ready` / `failed`。再試行待ちは `running` かつ直近の工程に `errorKind` があるとき。工程が無い `running` は **処理中（工程不明）**
-- コンソールログに載せるのは stage / durationMs / errorKind / jobId / runId / attempt / articleId と、候補の選択（candidateId / selectedAt / discoveredAt / publishedAt）および OPDS 取得要求（articleId）。token と記事全文と URL は出さない
+- コンソールログはオブジェクトで出す。載せるのは event / message / stage / durationMs / errorKind / clipOutcome / jobId / runId / attempt / articleId と、候補の選択（candidateId / selectedAt / discoveredAt / publishedAt）および OPDS 取得要求（articleId）。`clipOutcome` は job が `ready` または `failed` になったときだけ。token と記事全文と URL は出さない。日次集計は [docs/workers-logs.md](docs/workers-logs.md)
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
@@ -298,7 +299,7 @@ curl -sS -H "Authorization: Bearer $CLIP_TOKEN" \
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
 ```
 
-ログは stage 別 JSON（`fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。候補の選択は `event: candidate_clip`、OPDS の EPUB 取得要求は `event: opds_download`（読了ではない）。token と記事全文と URL は出さない。英語記事は OpenAI `gpt-5.6-luna` で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。モデル選定のメモは `docs/plan/mar-44-translate-models.md`。
+ログは stage 別のオブジェクト（`event: pipeline` と `fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。候補の選択は `event: candidate_clip`、OPDS の EPUB 取得要求は `event: opds_download`（読了ではない）。token と記事全文と URL は出さない。英語記事は OpenAI `gpt-5.6-luna` で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。モデル選定のメモは `docs/plan/mar-44-translate-models.md`。
 
 | 状態 | 意味 |
 | --- | --- |
@@ -413,4 +414,4 @@ curl -sS https://xteink-read-later.<account>.workers.dev/clip \
   -d '{"url":"https://example.com/article"}'
 ```
 
-ログは stage / durationMs / errorKind / jobId / runId / attempt / articleId。token や記事全文は出さない。手動で送りたいときだけ `npm run deploy` できる。
+ログはオブジェクトの stage / durationMs / errorKind / clipOutcome / jobId / runId / attempt / articleId。token や記事全文は出さない。手動で送りたいときだけ `npm run deploy` できる。

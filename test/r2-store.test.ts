@@ -4,6 +4,7 @@ import { opdsClipCalendarDate } from '../src/opds/catalog'
 import { createR2Store } from '../src/store/r2'
 import { articleEpubKey, articleMetaKey, asArticleId, asClipJobId, asClipRunId, asEpubBytes, clipCheckpointKey, clipJobKey, parseHttpUrl } from '../src/types'
 import { createFakeR2Bucket } from './fake-r2'
+import { loggedText } from './logged-text'
 
 function url(value: string) {
   const parsed = parseHttpUrl(value)
@@ -385,7 +386,7 @@ describe('createR2Store', () => {
   it('includes jobId on store logs when a log context is passed', async () => {
     const logs: string[] = []
     const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
-      logs.push(String(line))
+      logs.push(loggedText(line))
     })
     try {
       const bucket = createFakeR2Bucket()

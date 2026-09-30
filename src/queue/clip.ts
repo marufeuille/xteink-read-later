@@ -304,7 +304,15 @@ async function processMessage(
       stages.push(...stagesForRun(existing, parsed.runId))
     }
     const log = { jobId: parsed.jobId, runId: parsed.runId, attempt: message.attempts, stages }
-    logPipeline({ stage: 'queue', durationMs: 0, errorKind: 'internal_error' }, log)
+    logPipeline(
+      {
+        stage: 'queue',
+        durationMs: 0,
+        errorKind: 'internal_error',
+        ...(shouldRetryClipAttempt(message.attempts) ? {} : { clipOutcome: 'failed' as const }),
+      },
+      log,
+    )
     const fields = jobFields(parsed, existing, message.attempts)
     if (shouldRetryClipAttempt(message.attempts)) {
       await putJobIfCurrentRun(store, {
@@ -402,7 +410,10 @@ async function runClipQueueMessage(
     if (classification.status !== 'skipped') {
       await store.putClassification(id, classification)
     }
-    logPipeline({ articleId: id, stage: 'queue', durationMs: Date.now() - started }, log)
+    logPipeline(
+      { articleId: id, stage: 'queue', durationMs: Date.now() - started, clipOutcome: 'ready' },
+      log,
+    )
     const readyJob = {
       ...fields,
       stages: copyStages(stages),
@@ -420,13 +431,11 @@ async function runClipQueueMessage(
     return
   }
 
-  const logQueueError = () =>
+  if (shouldRetryClipError(result.error, message.attempts)) {
     logPipeline(
       { stage: 'queue', durationMs: Date.now() - started, errorKind: result.error.kind },
       log,
     )
-  if (shouldRetryClipError(result.error, message.attempts)) {
-    logQueueError()
     if (result.error.kind !== 'epub_failed') {
       await deleteCheckpointForRun(store, jobId, runId)
     }
@@ -442,7 +451,15 @@ async function runClipQueueMessage(
     return
   }
 
-  logQueueError()
+  logPipeline(
+    {
+      stage: 'queue',
+      durationMs: Date.now() - started,
+      errorKind: result.error.kind,
+      clipOutcome: 'failed',
+    },
+    log,
+  )
   await deleteCheckpointForRun(store, jobId, runId)
   await putJobIfCurrentRun(store, {
     ...fields,

@@ -12,6 +12,7 @@ import {
   TEST_CLIP_TOKEN,
 } from './bindings'
 import { createFakeQueue } from './fake-queue'
+import { loggedText } from './logged-text'
 
 const ARTICLE_URL = 'https://example.com/articles/pc-clip'
 
@@ -62,7 +63,7 @@ describe('GET /clip/web', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const logs: string[] = []
     const logSpy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
-      logs.push(String(line))
+      logs.push(loggedText(line))
     })
     try {
       const { app, queue, store, env } = appWith()
@@ -259,7 +260,7 @@ describe('POST /clip/web', () => {
   it('returns 503 when the queue send fails and does not log the URL', async () => {
     const logs: string[] = []
     const logSpy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
-      logs.push(String(line))
+      logs.push(loggedText(line))
     })
     try {
       const { app, env } = appWith({

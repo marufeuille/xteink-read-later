@@ -113,6 +113,37 @@ describe('clip-status CLI', () => {
       }),
     )
     expect(nested).toEqual([{ jobId: JOB_ID, stage: 'fetch', durationMs: 8 }])
+    const objectMessage = parseLogLine(
+      JSON.stringify({
+        outcome: 'ok',
+        logs: [
+          {
+            message: [
+              {
+                message: 'pipeline extract',
+                event: 'pipeline',
+                jobId: JOB_ID,
+                stage: 'extract',
+                durationMs: 4,
+                clipOutcome: 'ready',
+              },
+            ],
+          },
+          {
+            message: {
+              event: 'pipeline',
+              jobId: JOB_ID,
+              stage: 'store',
+              durationMs: 2,
+            },
+          },
+        ],
+      }),
+    )
+    expect(objectMessage).toEqual([
+      { jobId: JOB_ID, stage: 'extract', durationMs: 4 },
+      { jobId: JOB_ID, stage: 'store', durationMs: 2 },
+    ])
     expect(parseLogLine('not-json')).toEqual([])
     expect(parseLogLine(JSON.stringify({ event: 'pipeline', stage: 'nope', durationMs: 1 }))).toEqual(
       [],

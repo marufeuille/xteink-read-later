@@ -10,6 +10,7 @@ import {
   TEST_BINDINGS,
   TEST_CLIP_TOKEN,
 } from './bindings'
+import { loggedText } from './logged-text'
 
 const CHAPTER = 'CHAPTER_BODY_SHOULD_NOT_APPEAR'
 
@@ -53,7 +54,7 @@ describe('purchased book web', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const logs: string[] = []
     const logSpy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
-      logs.push(String(line))
+      logs.push(loggedText(line))
     })
     try {
       const { app } = appWith()

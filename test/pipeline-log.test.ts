@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createExtractPipeline } from '../src/extract/pipeline'
 import { pipelineLogFields } from '../src/log'
+import { loggedText } from './logged-text'
 import { createClipPipeline } from '../src/pipeline/clip'
 import {
   asClipJobId,
@@ -50,7 +51,7 @@ describe('pipeline log context', () => {
         html: jaHtml,
       })
     await createExtractPipeline({ fetchPage })(url(), { jobId, runId, attempt: 1 })
-    const events = spy.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+    const events = spy.mock.calls.map((call) => JSON.parse(loggedText(call[0])) as Record<string, unknown>)
     expect(events.map((item) => item.stage)).toEqual(['fetch', 'extract'])
     for (const event of events) {
       expect(event).toMatchObject({ event: 'pipeline', jobId, runId, attempt: 1 })
@@ -74,7 +75,7 @@ describe('pipeline log context', () => {
         err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 401' }),
     })
     await pipeline(url(), { OPENAI_API_KEY: 'sk-secret-must-not-leak' }, { jobId, attempt: 2 })
-    const events = spy.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>)
+    const events = spy.mock.calls.map((call) => JSON.parse(loggedText(call[0])) as Record<string, unknown>)
     const translate = events.find((item) => item.stage === 'translate')
     expect(translate).toMatchObject({
       event: 'pipeline',

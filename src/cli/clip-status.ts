@@ -180,6 +180,17 @@ function parsePipelineEvent(value: unknown): PipelineLogEvent | null {
   }
 }
 
+function eventsFromMessage(message: unknown): PipelineLogEvent[] {
+  if (Array.isArray(message)) {
+    return message.flatMap((item) => eventsFromMessage(item))
+  }
+  if (typeof message === 'string') {
+    const nested = parseJson(message)
+    return nested === undefined ? [] : eventsFromUnknown(nested)
+  }
+  return eventsFromUnknown(message)
+}
+
 function eventsFromUnknown(value: unknown): PipelineLogEvent[] {
   const direct = parsePipelineEvent(value)
   if (direct !== null) {
@@ -192,9 +203,7 @@ function eventsFromUnknown(value: unknown): PipelineLogEvent[] {
     if (!isRecord(item) || !('message' in item)) {
       return []
     }
-    const text = Array.isArray(item.message) ? item.message.map(String).join(' ') : String(item.message)
-    const nested = parseJson(text)
-    return nested === undefined ? [] : eventsFromUnknown(nested)
+    return eventsFromMessage(item.message)
   })
 }
 
