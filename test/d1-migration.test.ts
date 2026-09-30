@@ -77,6 +77,16 @@ describe('D1 candidate migration', () => {
     }
   })
 
+  it('records a DevelopersIO published-date repair without rewriting rows in SQL', () => {
+    const sql = readFileSync(join(root, 'migrations/0007_developersio_published_repair.sql'), 'utf8')
+    expect(sql).toContain('MAR-128')
+    expect(sql).toContain('CREATE TABLE data_repairs')
+    expect(sql).toContain('CREATE TABLE candidate_published_repairs')
+    expect(sql).toContain('FOREIGN KEY (candidate_id) REFERENCES candidate_articles(id)')
+    expect(sql).toContain('Candidate rows are left as they are')
+    expect(sql.replace(/--.*$/gm, '')).not.toMatch(/\b(UPDATE|DELETE)\b/i)
+  })
+
   it('stores digest publication history without article bodies', () => {
     const sql = readFileSync(join(root, 'migrations/0005_daily_digest.sql'), 'utf8')
     expect(sql).toContain('CREATE TABLE digest_published_items')

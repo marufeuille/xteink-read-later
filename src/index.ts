@@ -1,4 +1,5 @@
 import { createApp } from './app'
+import { startDevelopersIoPublishedRepair } from './candidates/repair-developersio-published'
 import { clipPipeline } from './pipeline/clip'
 import { createClipQueueHandler } from './queue/clip'
 import { createDigestQueueHandler, DIGEST_QUEUE_NAME } from './queue/digest'
@@ -11,7 +12,10 @@ import type { ClipQueueMessage, DigestQueueMessage, FeedQueueMessage } from './t
 const app = createApp({ createStore: createR2Store })
 
 export default {
-  fetch: app.fetch,
+  fetch(request, env, ctx) {
+    ctx.waitUntil(startDevelopersIoPublishedRepair(env))
+    return app.fetch(request, env, ctx)
+  },
   async queue(batch, env) {
     if (batch.queue === FEED_QUEUE_NAME) {
       await createFeedQueueHandler()(batch as MessageBatch<FeedQueueMessage>, env)
@@ -27,7 +31,8 @@ export default {
       createCandidateStore: createD1CandidateStore,
     })(batch as MessageBatch<ClipQueueMessage>, env)
   },
-  async scheduled(controller, env) {
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(startDevelopersIoPublishedRepair(env))
     await handleScheduled(controller, env)
   },
 } satisfies ExportedHandler<Cloudflare.Env, ClipQueueMessage | FeedQueueMessage | DigestQueueMessage>

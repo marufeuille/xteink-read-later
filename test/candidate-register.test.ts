@@ -5,6 +5,11 @@ import { describe, expect, it } from 'vitest'
 import { assertFetchableCandidateUrl } from '../src/candidates/fetch-policy'
 import { calendarDateInTimeZone, groupCandidatesByPublishedDate } from '../src/candidates/list'
 import { registerCandidate } from '../src/candidates/register'
+import {
+  DEVELOPERS_IO_ARTICLE_URL,
+  DEVELOPERS_IO_PUBLISHED_AT,
+  developersIoArticleHtml,
+} from './developersio-fixture'
 import { evaluatedRecommendation, unevaluatedRecommendation } from '../src/recommend/taxonomy'
 import { createMemoryCandidateStore } from '../src/store/memory-candidates'
 import {
@@ -112,6 +117,58 @@ describe('registerCandidate', () => {
     expect(discoveries.every((row) => row.sourceKind === 'manual_url')).toBe(true)
     const listed = await store.listListed({ limit: 10, offset: 0 })
     expect(listed.total).toBe(1)
+  })
+
+  it('stores a DevelopersIO article under its published date, not a sidebar event date', async () => {
+    const store = createMemoryCandidateStore()
+    const url = mustUrl(DEVELOPERS_IO_ARTICLE_URL)
+    await store.put({
+      id: asCandidateId('cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      canonicalUrl: url,
+      sourceUrl: url,
+      title: '既存の開催日',
+      outlet: 'DevelopersIO',
+      publishedAt: '2026-10-27T06:00:00.000Z',
+      discoveredAt: '2026-09-28T00:00:00.000Z',
+      fetchStatus: 'fetched',
+      listingState: 'listed',
+      exclusionReason: null,
+      fullTextState: 'unconfirmed',
+      completedArticleId: null,
+      clipJobId: null,
+      clipRunId: null,
+      selectedAt: null,
+      recommendation: unevaluatedRecommendation(),
+      createdAt: '2026-09-28T00:00:00.000Z',
+      updatedAt: '2026-09-28T00:00:00.000Z',
+    })
+    const result = await registerCandidate(url, {
+      store,
+      fetchPage: fetchHtml({
+        [DEVELOPERS_IO_ARTICLE_URL]: { html: developersIoArticleHtml() },
+      }),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.duplicate).toBe(true)
+    expect(result.value.candidate.publishedAt).toBe(DEVELOPERS_IO_PUBLISHED_AT)
+  })
+
+  it('registers a DevelopersIO page with no article date as unknown', async () => {
+    const store = createMemoryCandidateStore()
+    const result = await registerCandidate(mustUrl(DEVELOPERS_IO_ARTICLE_URL), {
+      store,
+      fetchPage: fetchHtml({
+        [DEVELOPERS_IO_ARTICLE_URL]: { html: developersIoArticleHtml({ articleDate: null }) },
+      }),
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) {
+      return
+    }
+    expect(result.value.candidate.publishedAt).toBeNull()
   })
 
   it('keeps unknown publishedAt instead of substituting discoveredAt', async () => {

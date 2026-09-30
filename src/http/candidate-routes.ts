@@ -6,6 +6,7 @@ import { candidatesLocation, parseCandidateListFilters, parseListPage } from '..
 import { candidatesPageHtml, htmlResponse, toRegisterJson } from '../candidates/html'
 import { reevaluateCandidate } from '../candidates/recommend'
 import { registerCandidate } from '../candidates/register'
+import { startDevelopersIoPublishedRepair } from '../candidates/repair-developersio-published'
 import { parseClipUrl } from '../extract/parse-clip-url'
 import { fetchPage as defaultFetchPage } from '../extract/fetch-page'
 import { createD1CandidateStore } from '../store/d1-candidates'
@@ -42,6 +43,7 @@ export type CandidateHttpDeps = {
   readonly queue?: Queue<ClipQueueMessage>
   readonly fetchPage?: FetchPage
   readonly now?: () => Date
+  readonly repairPublishedDates?: () => Promise<void>
   readonly evaluateRecommend?: EvaluateSystemOne
   readonly getAccessIdentity?: GetAccessIdentity
 }
@@ -64,6 +66,19 @@ function noticeFromQuery(raw: string | undefined): CandidateNotice | undefined {
   }
   const kind = raw as CandidateNoticeKind
   return { kind, message: NOTICE_MESSAGES[kind] }
+}
+
+async function repairPublishedDatesBeforeList(env: Cloudflare.Env, deps: CandidateHttpDeps): Promise<void> {
+  if (deps.repairPublishedDates !== undefined) {
+    await deps.repairPublishedDates()
+    return
+  }
+  if (deps.candidateStore !== undefined) {
+    return
+  }
+  await (deps.fetchPage === undefined
+    ? startDevelopersIoPublishedRepair(env)
+    : startDevelopersIoPublishedRepair(env, deps.fetchPage))
 }
 
 function candidateStoreFor(env: Cloudflare.Env, deps: CandidateHttpDeps): CandidateStore {
@@ -189,6 +204,7 @@ export function mountCandidateRoutes(app: Hono<AppEnv>, deps: CandidateHttpDeps 
     if (auth instanceof Response) {
       return auth
     }
+    await repairPublishedDatesBeforeList(c.env, deps)
     const query = c.req.query()
     const pageNumber = parseListPage(query.page)
     const filters = parseCandidateListFilters(query)
