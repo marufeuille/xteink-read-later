@@ -7,8 +7,10 @@ import { isX3BaselineJpeg } from '../src/epub/x3-image'
 import { buildSimulatorEpubs, loadSimulatorPages } from '../simulator/build-epubs'
 import {
   CROSSPOINT_FIRMWARE_SHA,
+  IMAGE_PAGE_DRAW_MS,
   inputScalesFor,
   openBookPlan,
+  pageDrawMs,
   pinnedFirmwareGitSteps,
 } from '../simulator/run-simulator'
 import { checkImageBands } from '../simulator/check-bands'
@@ -134,7 +136,28 @@ describe('simulator short HTML inputs', () => {
     })
     expect(inputScalesFor('image')).toEqual([1, 2])
     expect(inputScalesFor('empty')).toEqual([1])
+    expect(pageDrawMs('image', 1)).toBe(IMAGE_PAGE_DRAW_MS)
+    expect(pageDrawMs('image', 2)).toBe(IMAGE_PAGE_DRAW_MS * 2)
+    expect(pageDrawMs('empty', 1)).toBe(3_000)
+    expect(openBookPlan(1, 1, pageDrawMs('image', 1))).toEqual({
+      script: '2000:ENTER;4000:ENTER;6000:ENTER;9000:DOWN;17000:QUIT',
+      fileBrowserShotMs: 3000,
+      booksShotMs: 5000,
+      openingShotMs: 7500,
+      pageShotMs: 15000,
+      quitMs: 17000,
+    })
+    expect(openBookPlan(1, 2, pageDrawMs('image', 2))).toEqual({
+      script: '4000:ENTER;8000:ENTER;12000:ENTER;18000:DOWN;34000:QUIT',
+      fileBrowserShotMs: 6000,
+      booksShotMs: 10000,
+      openingShotMs: 15000,
+      pageShotMs: 30000,
+      quitMs: 34000,
+    })
     expect(() => openBookPlan(1, 0)).toThrow(/scale/)
+    expect(() => openBookPlan(1, 1, 0)).toThrow(/drawMs/)
+    expect(() => pageDrawMs('image', 0)).toThrow(/scale/)
     const keepHtml = readFileSync(join(simulatorInputsDir(), 'keep-image.html'), 'utf8')
     const dropHtml = readFileSync(join(simulatorInputsDir(), 'drop-image.html'), 'utf8')
     const visible = (html: string): string => html.replace(/<img\b[^>]*>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
