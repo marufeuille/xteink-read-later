@@ -98,6 +98,7 @@ describe('GET /clip/web', () => {
     const html = await response.text()
     expect(html).toContain('https://read.example/clip/web?url=')
     expect(html).toContain('encodeURIComponent(location.href)')
+    expect(html).toContain('href="/clip/recent"')
     expect(html).not.toContain('クリップする')
     expect(html).not.toContain(TEST_CLIP_TOKEN)
     expect(queue.size).toBe(0)
@@ -160,6 +161,7 @@ describe('POST /clip/web', () => {
       const jobId = /jobId: (job_[a-f0-9]{32})/.exec(html)?.[1]
       expect(jobId).toBeTruthy()
       expect(html).toContain('status: queued')
+      expect(html).toContain('href="/clip/recent"')
       expect(html).not.toContain(TEST_CLIP_TOKEN)
       expect(queue.size).toBe(1)
       expect(queue.peek()[0]?.url).toBe(ARTICLE_URL)
@@ -282,6 +284,7 @@ describe('POST /clip/web', () => {
       expect(response.status).toBe(503)
       const html = await response.text()
       expect(html).toContain('Queue への送信に失敗しました')
+      expect(html).toContain('href="/clip/recent"')
       expect(html).not.toContain(ARTICLE_URL)
       expect(html).not.toContain(TEST_CLIP_TOKEN)
       expect(logs.join('\n')).not.toContain(ARTICLE_URL)

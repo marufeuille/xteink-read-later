@@ -27,6 +27,7 @@ export type ArticleStore = {
   readonly listMeta: () => Promise<readonly ArticleMeta[]>
   readonly getJob: (id: ClipJobId) => Promise<ClipJobRecord | null>
   readonly putJob: (job: ClipJobRecord) => Promise<void>
+  readonly listRecentJobs: (limit: number) => Promise<readonly ClipJobRecord[]>
   readonly getClipCheckpoint: (id: ClipJobId) => Promise<ClipCheckpoint | null>
   readonly putClipCheckpoint: (checkpoint: ClipCheckpoint) => Promise<void>
   readonly deleteClipCheckpoint: (id: ClipJobId) => Promise<void>

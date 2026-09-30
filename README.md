@@ -22,7 +22,7 @@
 
 ### 1. 記事をクリップする（Android）
 
-Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xteink Read Later」を選ぶ。Worker は URL を受けて **202** `status: "queued"` を返し、本文の取得・翻訳・EPUB は Queue の consumer が別 invocation で行う。HTTP Shortcuts は **202 を成功**として扱う。完成は OPDS の更新、または `npm run clip:status` / `GET /clip/jobs/:jobId`（同じ Bearer）で確認する。
+Chrome などで記事を開き、共有シートから HTTP Shortcuts の「Xteink Read Later」を選ぶ。Worker は URL を受けて **202** `status: "queued"` を返し、本文の取得・翻訳・EPUB は Queue の consumer が別 invocation で行う。HTTP Shortcuts は **202 を成功**として扱う。完了と失敗は `{worker}/clip/recent` で確認する。工程の所要時間は `npm run clip:status` / `GET /clip/jobs/:jobId`（同じ Bearer）。Shortcuts でその GET を短時間ポーリングしなくてもよい。
 
 送り先は `POST {worker}/clip`。認証は **Bearer `CLIP_TOKEN`**（JSON 本文や URL クエリには載せない）。パス名は変えない。
 
@@ -38,9 +38,15 @@ javascript:(function(){location.href='WORKER/clip/web?url='+encodeURIComponent(l
 
 1. ブックマークの名前は「Xteink にクリップ」。URL は上の文字列。
 2. 記事のタブでそのブックマークを開く。Access の確認のあと、表示された URL を見て「クリップする」。
-3. 受付は **202** `status: "queued"` と `jobId`。同じ URL が queued / running のあいだは二重に載せない。ready / failed のあと、または 15 分以上更新がないときは新しい実行になる。完成は手順 2 の `clip` 棚、または `npm run clip:status`。
+3. 受付は **202** `status: "queued"` と `jobId`。同じ URL が queued / running のあいだは二重に載せない。ready / failed のあと、または 15 分以上更新がないときは新しい実行になる。完了と失敗は `{worker}/clip/recent`。完成した EPUB は手順 2 の `clip` 棚。
 
-`POST /clip` の Bearer 契約と Android の HTTP Shortcuts はそのまま。Access の対象は `/clip/web` だけで、`/clip` と `/clip/jobs` は入れない。
+`POST /clip` の Bearer 契約と Android の HTTP Shortcuts はそのまま。Access の対象は `/clip/web` と `/clip/recent`。`/clip` と `/clip/jobs` は入れない。
+
+### 最近のクリップを確認する
+
+`{worker}/clip/recent` をブラウザで開く。Cloudflare Access（Google）が守る。`CLIP_TOKEN` の入力欄は無い。一覧は更新が新しい順で、最大 40 件。各行は **jobId**、**status**（`queued` / `running` / `ready` / `failed`）、**stage**（最後に記録した工程。無ければ「なし」）、失敗しているときの **error.code** だけ。記事 URL、本文、token、`error.message` は出さない。`failed` は先頭の件数と、赤い行で分かる。
+
+このページを開いて更新すれば完了と失敗を確認できる。Shortcuts の短時間ポーリングは任意の補助であり、この確認には不要。JSON が必要なときだけ `Accept: application/json` と Bearer `CLIP_TOKEN`。フィールドは HTML と同じ。`/clip/recent` を Access の対象にすると、Bearer だけの curl もログイン壁に当たる。ブラウザで開くのが本線。
 
 ### 2. Xteink で読む
 
@@ -167,12 +173,12 @@ npm run dev
 | `POST /clip`、`GET /clip/jobs/:jobId`、`DELETE /articles/:id` | Bearer `CLIP_TOKEN` のみ |
 | `POST /books`（Bearer） | Bearer `CLIP_TOKEN`。`title` 必須。空タイトルを OPF では埋めない |
 | `GET /books` と Access の購入本フォーム | Cloudflare Access（Google）。タイトルが空なら OPF の `dc:title`、著者が空なら `dc:creator` |
-| `/candidates`、`/sources`、`/clip/web`、`POST /digest` と配下 | JSON は Bearer `CLIP_TOKEN`。ブラウザの HTML は Cloudflare Access（Google）。Worker は `ctx.access` の email を見る |
+| `/candidates`、`/sources`、`/clip/web`、`GET /clip/recent`、`POST /digest` と配下 | JSON は Bearer `CLIP_TOKEN`。ブラウザの HTML は Cloudflare Access（Google）。Worker は `ctx.access` の email を見る。`/clip/recent` は jobId / status / stage / error.code だけ |
 | `GET /opds`（`clip` / `ebook` と日付）、`GET /articles/:id`、`GET /articles/:id/book.epub`、`GET /opds/download/:id.epub` | HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`） |
 
 トークンログインとセッション Cookie は使わない。HTML のフォーム POST は CSRF 必須。Bearer の JSON は CSRF を見ない。`/clip/web` の GET は URL の確認だけで、クリップの受付は CSRF 付き POST。JSON で送るときは既存の `POST /clip` と同じ **202** `jobId`。`GET /books` は購入 EPUB の投稿画面。
 
-`POST /clip`、`GET /opds`（棚と日付）、`POST /books`、`GET /books`、`/clip/web`、候補、情報源、`POST /digest` は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補の D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補、発見元、情報源、clip へのポインタ、おすすめ判定（本文は持たない）、まとめに載せた canonical URL の履歴を持つ。完成した EPUB と購入 EPUB は R2。
+`POST /clip`、`GET /opds`（棚と日付）、`POST /books`、`GET /books`、`/clip/web`、`/clip/recent`、候補、情報源、`POST /digest` は末尾スラッシュありなしを同じルートとして扱う。OPDS は **EPUB がある記事だけ**出す。候補の D1 は R2 の完成記事と別物で、既存記事は移行しない。ジョブ状態の正本は R2 の `jobs/{jobId}.json`。D1 は候補、発見元、情報源、clip へのポインタ、おすすめ判定（本文は持たない）、まとめに載せた canonical URL の履歴を持つ。完成した EPUB と購入 EPUB は R2。
 
 ### 読書候補（翻訳しない URL 投入）
 
@@ -262,14 +268,15 @@ npx wrangler d1 migrations apply xteink-read-later-candidates --local
 - Queue 送信に失敗したときは HTTP **503** `queue_failed`。Shortcuts では失敗として出る。同じ URL を再送する
 - `queued` / `running` のまま 15 分以上 `updatedAt` が動かない（実行中断や Queue 再試行の打ち切り）ときは、同じ URL の再 POST で新しい実行になる
 - 15 分以内の `queued` / `running` は 202 のまま再投入しない
-- `GET /clip/jobs/:jobId` で `status` と `error.code` を見る
+- 完了と失敗は `{worker}/clip/recent`。Shortcuts の短時間ポーリングは不要
+- 1件の工程時間は `GET /clip/jobs/:jobId` の `status` と `error.code`
 - 工程ごとの所要時間は job に残る。下記の `clip:status` で、tail を繋いでいなくても見られる
 
 DLQ は使わない。失敗は job レコードに残る。翻訳が成功したあとの EPUB 失敗は、同じ run の再試行で OpenAI を呼ばない。翻訳結果は `jobs/{jobId}.checkpoint.json` に一時的に置き、完成するか再試行を打ち切ったら消す。本文は job API にもログにも出さない。別の run の翻訳は使わない。
 
 ### ジョブの進捗・失敗を見る
 
-専用の管理画面や履歴 DB、Workflows は使わない。各工程は job レコード（`stages`）に残し、`clip:status` と `GET /clip/jobs/:jobId` で後から見る。コンソールログは Workers Logs でフィールド検索する（[docs/workers-logs.md](docs/workers-logs.md)）。
+履歴 DB と Workflows は使わない。各工程は job レコード（`stages`）に残る。完了と失敗は Access の `/clip/recent` で見る。工程の所要時間は `clip:status` と `GET /clip/jobs/:jobId`。コンソールログは Workers Logs でフィールド検索する（[docs/workers-logs.md](docs/workers-logs.md)）。
 
 ```bash
 # 保存済みの工程と最終状態
@@ -369,7 +376,7 @@ npx wrangler secret put OPDS_PASSWORD
 
 ### 初回だけ — 管理画面の Google 認証（Cloudflare Access）
 
-候補一覧、情報源、PC クリップ確認、購入本投稿のブラウザ画面を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles` は Bearer / Basic のまま。`/clip/web` と `/books` を画面として足す。`/books` を足すと同じパスの curl も Access に当たる。Bearer の multipart 契約は Worker に届いたリクエストでは残す。まとめ QR の `/digest/send` は Access に入れない。
+候補一覧、情報源、PC クリップ確認、最近のクリップ、購入本投稿のブラウザ画面を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles` は Bearer / Basic のまま。`/clip/web`、`/clip/recent`、`/books` を画面として足す。`/books` と `/clip/recent` を足すと同じパスの curl も Access に当たる。Bearer の multipart 契約は Worker に届いたリクエストでは残す。まとめ QR の `/digest/send` は Access に入れない。
 
 1. [Zero Trust](https://one.dash.cloudflare.com/) で組織を有効にする。
 2. [Google を identity provider にする](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/)。Google Cloud の OAuth クライアントが必要。Authorized redirect URI は `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/callback`。
@@ -383,11 +390,13 @@ npx wrangler secret put OPDS_PASSWORD
    - `xteink-read-later.<account>.workers.dev/clip/web`
    - `xteink-read-later.<account>.workers.dev/clip/web/`
    - `xteink-read-later.<account>.workers.dev/clip/web/*`
+   - `xteink-read-later.<account>.workers.dev/clip/recent`
+   - `xteink-read-later.<account>.workers.dev/clip/recent/`
    - `xteink-read-later.<account>.workers.dev/books`
    - `xteink-read-later.<account>.workers.dev/books/`
    - `xteink-read-later.<account>.workers.dev/books/*`
 4. Allow ポリシー: Login method = Google、自分の Google メール。Reusable policy をアプリに付ける。`/clip` 自体は入れない（Android の `POST /clip` を Access のログインに通さない）。
-5. `/candidates`、`/clip/web`、`/books` を開いて Google で入れること、`/opds` と `POST /clip` が Access ログインに飛ばないことを確認する。
+5. `/candidates`、`/clip/web`、`/clip/recent`、`/books` を開いて Google で入れること、`/opds` と `POST /clip` が Access ログインに飛ばないことを確認する。
 
 Access を掛ける前に管理画面だけ本番へ出ると、その HTML は 401 になる（JSON API の Bearer は残る）。復旧は上の Access アプリを足すか、管理画面を出す変更を戻す。
 

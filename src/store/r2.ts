@@ -1,3 +1,4 @@
+import { compareRecentJobs, recentClipLimit } from '../clip/recent'
 import {
   articleEpubKey,
   articleMetaKey,
@@ -6,10 +7,12 @@ import {
   clipCheckpointKey,
   clipJobKey,
   isArticleId,
+  isClipJobId,
   parseHttpUrl,
   type ArticleId,
   type ArticleMeta,
   type ArticleStore,
+  type ClipJobRecord,
   type CreateArticleStore,
 } from '../types'
 import {
@@ -34,6 +37,55 @@ function clipInstant(value: unknown, createdAt: string): string {
 }
 
 const JSON_HTTP_METADATA = { httpMetadata: { contentType: 'application/json; charset=utf-8' } }
+
+const CLIP_JOB_OBJECT_KEY = /^jobs\/(job_[a-f0-9]{32})\.json$/
+
+function isClipJobObjectKey(key: string): boolean {
+  const match = CLIP_JOB_OBJECT_KEY.exec(key)
+  return match?.[1] !== undefined && isClipJobId(match[1])
+}
+
+function recentObjectStamp(object: R2Object): string {
+  const updatedAt = object.customMetadata?.updatedAt
+  if (updatedAt !== undefined && updatedAt.length > 0) {
+    return updatedAt
+  }
+  return object.uploaded.toISOString()
+}
+
+function compareRecentObjects(a: R2Object, b: R2Object): number {
+  const stampA = recentObjectStamp(a)
+  const stampB = recentObjectStamp(b)
+  if (stampA !== stampB) {
+    return stampA < stampB ? 1 : -1
+  }
+  if (a.key === b.key) {
+    return 0
+  }
+  return a.key < b.key ? -1 : 1
+}
+
+async function listClipJobObjects(bucket: R2Bucket): Promise<R2Object[]> {
+  const objects: R2Object[] = []
+  let cursor: string | undefined
+  for (;;) {
+    const page = await bucket.list({
+      prefix: 'jobs/',
+      include: ['customMetadata'],
+      ...(cursor !== undefined ? { cursor } : {}),
+    })
+    for (const object of page.objects) {
+      if (isClipJobObjectKey(object.key)) {
+        objects.push(object)
+      }
+    }
+    if (!page.truncated) {
+      break
+    }
+    cursor = page.cursor
+  }
+  return objects
+}
 
 async function writeArticleMeta(bucket: R2Bucket, meta: ArticleMeta): Promise<void> {
   await bucket.put(articleMetaKey(meta.id), JSON.stringify(meta), JSON_HTTP_METADATA)
@@ -212,7 +264,36 @@ export const createR2Store: CreateArticleStore = (deps) => {
       }
     },
     async putJob(job) {
-      await bucket.put(clipJobKey(job.jobId), JSON.stringify(job), JSON_HTTP_METADATA)
+      await bucket.put(clipJobKey(job.jobId), JSON.stringify(job), {
+        ...JSON_HTTP_METADATA,
+        customMetadata: { updatedAt: job.updatedAt },
+      })
+    },
+    async listRecentJobs(limit) {
+      const capped = recentClipLimit(limit)
+      if (capped === 0) {
+        return []
+      }
+      const selected = (await listClipJobObjects(bucket)).sort(compareRecentObjects)
+      const jobs: ClipJobRecord[] = []
+      for (const object of selected) {
+        if (jobs.length >= capped) {
+          break
+        }
+        const body = await bucket.get(object.key)
+        if (body === null) {
+          continue
+        }
+        try {
+          const parsed = parseClipJobRecord(await body.json())
+          if (parsed !== null) {
+            jobs.push(parsed)
+          }
+        } catch {
+          continue
+        }
+      }
+      return jobs.sort(compareRecentJobs)
     },
     async getClipCheckpoint(id) {
       const object = await bucket.get(clipCheckpointKey(id))

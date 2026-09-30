@@ -26,7 +26,8 @@ export function clipWebMissingHtml(bookmarklet: string): string {
   return `<h1>記事をクリップ</h1>
 <p>今開いているタブから送るには、次の文字列をブックマークの URL に登録します。トークンは入っていません。</p>
 <textarea readonly rows="4" style="width:100%;box-sizing:border-box">${escapeHtml(bookmarklet)}</textarea>
-<p class="note">記事のタブでそのブックマークを開くと、URL を確認してからクリップできます。このページを開いただけでは受け付けません。</p>`
+<p class="note">記事のタブでそのブックマークを開くと、URL を確認してからクリップできます。このページを開いただけでは受け付けません。</p>
+<p><a href="/clip/recent">最近のクリップ</a></p>`
 }
 
 export function clipWebInvalidHtml(preview: string): string {
@@ -59,7 +60,8 @@ export function clipWebResultHtml(input: {
 }): string {
   if (input.kind === 'failed') {
     return `<h1>送れませんでした</h1>
-<p>Queue への送信に失敗しました。同じ URL でもう一度クリップできます。</p>`
+<p>Queue への送信に失敗しました。同じ URL でもう一度クリップできます。</p>
+<p><a href="/clip/recent">最近のクリップ</a>で失敗を確認できます。</p>`
   }
   const lead =
     input.kind === 'active'
@@ -69,5 +71,5 @@ export function clipWebResultHtml(input: {
 <p class="notice" role="status">${escapeHtml(lead)}</p>
 <p>status: queued</p>
 <p>jobId: ${escapeHtml(input.jobId ?? '')}</p>
-<p class="note">本文の取得と EPUB 化は Queue が続けます。完成は OPDS の clip 棚で確認します。</p>`
+<p class="note">本文の取得と EPUB 化は Queue が続けます。完了と失敗は <a href="/clip/recent">最近のクリップ</a> で確認します。完成した EPUB は OPDS の clip 棚にも出ます。</p>`
 }

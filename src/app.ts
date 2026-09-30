@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono'
 import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
 import { mountBookRoutes } from './http/book-routes'
 import { mountCandidateRoutes, type CandidateHttpDeps } from './http/candidate-routes'
+import { mountClipRecentRoutes } from './http/clip-recent-routes'
 import { mountClipWebRoutes } from './http/clip-web-routes'
 import { mountDigestConfirmRoutes } from './http/digest-confirm-routes'
 import { mountDigestRoutes, type DigestHttpDeps } from './http/digest-routes'
@@ -110,6 +111,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
 
   app.on('POST', ['/clip', '/clip/'], clip)
   mountClipWebRoutes(app, deps)
+  mountClipRecentRoutes(app, deps)
 
   const getClipJob = async (c: Context<AppEnv>) => {
     if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
