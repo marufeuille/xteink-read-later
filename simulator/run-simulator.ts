@@ -23,23 +23,30 @@ export type OpenBookPlan = {
 const NAV_STEP_MS = 2_000
 const TURN_STEP_MS = 3_000
 const QUIT_AFTER_SHOT_MS = 2_000
-
 /**
- * First screenshot attempt. Scale 1 fires while a slow runner is still drawing,
- * so keep-image stays white and merge-gate skips the deploy.
+ * Gap from the last input to the image screenshot.
+ * Three seconds leaves keep-image white on the CI runner. Six seconds is the
+ * gap that already drew it, so the first pass does not have to reopen.
  */
-export const SIMULATOR_INPUT_SCALE = 2
-/** Second attempt after an image page is still white. */
-export const SIMULATOR_INPUT_RETRY_SCALE = 3
+export const IMAGE_PAGE_DRAW_MS = 6_000
+
+/** First attempt. Navigation stays at the original gap. */
+export const SIMULATOR_INPUT_SCALE = 1
+/** One slower reopen, only after an image page is still white. */
+export const SIMULATOR_INPUT_RETRY_SCALE = 2
 
 /**
  * Home, file browser, books/, then `turns` side-button page turns.
  * Input and screenshots use milliseconds from process start, so `scale`
- * stretches every gap when the runner is slow to draw.
+ * stretches every gap when the runner is slow to draw. `drawMs` is only the
+ * wait from the last input to the page screenshot.
  */
-export function openBookPlan(turns: number, scale = 1): OpenBookPlan {
+export function openBookPlan(turns: number, scale = 1, drawMs = TURN_STEP_MS * scale): OpenBookPlan {
   if (!Number.isInteger(scale) || scale < 1 || scale > 4) {
     throw new Error('openBookPlan scale must be an integer from 1 to 4')
+  }
+  if (!Number.isInteger(drawMs) || drawMs < 1) {
+    throw new Error('openBookPlan drawMs must be a positive integer')
   }
   const nav = NAV_STEP_MS * scale
   const turnGap = TURN_STEP_MS * scale
@@ -49,7 +56,7 @@ export function openBookPlan(turns: number, scale = 1): OpenBookPlan {
     ms += turnGap
     events.push(`${ms}:DOWN`)
   }
-  const pageShotMs = ms + turnGap
+  const pageShotMs = ms + drawMs
   const quitMs = pageShotMs + QUIT_AFTER_SHOT_MS * scale
   events.push(`${quitMs}:QUIT`)
   return {
@@ -62,12 +69,20 @@ export function openBookPlan(turns: number, scale = 1): OpenBookPlan {
   }
 }
 
-/** Image pages get one slower retry. Empty pages stay on the first schedule. */
+/** Image pages retry once, more slowly, only when the first shot is still white. */
 export function inputScalesFor(expect: SimulatorExpect): readonly number[] {
   if (expect === 'image') {
     return [SIMULATOR_INPUT_SCALE, SIMULATOR_INPUT_RETRY_SCALE]
   }
   return [SIMULATOR_INPUT_SCALE]
+}
+
+/** Image pages wait long enough to paint. Empty pages keep the original gap. */
+export function pageDrawMs(expect: SimulatorExpect, scale: number): number {
+  if (!Number.isInteger(scale) || scale < 1 || scale > 4) {
+    throw new Error('pageDrawMs scale must be an integer from 1 to 4')
+  }
+  return (expect === 'image' ? IMAGE_PAGE_DRAW_MS : TURN_STEP_MS) * scale
 }
 
 function runCommand(
@@ -185,12 +200,13 @@ async function openEpub(
   id: string,
   turns: number,
   scale: number,
+  drawMs: number,
 ): Promise<string> {
   rmSync(join(firmwareDir, 'fs_'), { recursive: true, force: true })
   mkdirSync(join(firmwareDir, 'fs_', 'books'), { recursive: true })
   writeFileSync(join(firmwareDir, 'fs_', 'books', 'article.epub'), epub)
   mkdirSync(outDir, { recursive: true })
-  const plan = openBookPlan(turns, scale)
+  const plan = openBookPlan(turns, scale, drawMs)
   const page = join(outDir, `${id}.bmp`)
   const shots = [
     `${plan.fileBrowserShotMs}:${join(outDir, `${id}-file-browser.bmp`)}`,
@@ -245,8 +261,9 @@ async function capturePage(
   let path = ''
   for (let index = 0; index < scales.length; index += 1) {
     const scale = scales[index] ?? SIMULATOR_INPUT_SCALE
-    path = await openEpub(firmwareDir, program, epub, outDir, id, turns, scale)
+    path = await openEpub(firmwareDir, program, epub, outDir, id, turns, scale, pageDrawMs(expect, scale))
     if (expect !== 'image' || !pageStillWhite(path)) {
+      console.log(`${id}: captured at scale ${scale}`)
       return path
     }
     const retry = scales[index + 1]
