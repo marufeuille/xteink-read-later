@@ -1,0 +1,7 @@
+# terraform.tfvars にコピーする。terraform.tfvars は gitignore する。
+# これは API トークンではない。トークンは環境変数 CLOUDFLARE_API_TOKEN。
+# Account ID は 2026-09-30 のダッシュボード読み取り。
+account_id = "ee3ee1637004c64111483d968da0f5b1"
+
+# plan が precedence の差分だけを出すときだけ外す。差分の apply はしない。
+# policy_precedence = 1
