@@ -13,6 +13,7 @@
 | [docs/daily-opds.md](docs/daily-opds.md) | まとめ EPUB の識別子と旧号（現行） |
 | [docs/workers-logs.md](docs/workers-logs.md) | Workers Logs のフィールドと日次の保存クエリ（現行） |
 | [docs/github-merge-gates.md](docs/github-merge-gates.md) | `main` のマージ条件（現行） |
+| [docs/access-as-code.md](docs/access-as-code.md) | Cloudflare Access の Terraform（手元で import / plan。CI では適用しない） |
 | [docs/pr-risk.md](docs/pr-risk.md) | PR リスク分類の試行（記録のみ） |
 | [docs/plan/](docs/plan/) | 着手時の計画と、翻訳モデル・Workflows の調査記録。当時の API 契約は現行ではない |
 
