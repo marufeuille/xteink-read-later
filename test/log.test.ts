@@ -162,10 +162,13 @@ describe('daily workers logs query', () => {
       'utf8',
     )
     expect(doc).toContain(
-      '$metadata.service = "xteink-read-later" AND ((event = "pipeline" AND (clipOutcome = "ready" OR clipOutcome = "failed")) OR event = "daily_digest" OR event = "opds_download")',
+      '$metadata.service = "xteink-read-later" AND ((event = "pipeline" AND (clipOutcome = "ready" OR clipOutcome = "failed")) OR event = "daily_digest" OR event = "opds_download" OR event = "feed")',
     )
     expect(doc).toContain('$metadata.service = "xteink-read-later" AND $workers.outcome = "exceededCpu"')
     expect(doc).toContain('errorKind')
     expect(doc).toContain('opds_download')
+    expect(doc).toContain('payload_too_large')
+    expect(doc).toContain('internal_error')
+    expect(doc).toContain('feed_schedule')
   })
 })
