@@ -11,12 +11,14 @@ import {
   type FetchFeed,
   type FetchPage,
 } from '../types'
+import { runFeedStage } from './failure-point'
 import { parseFeed } from './parse'
 
 export type CollectFeedDeps = {
   readonly candidateStore: CandidateStore
   readonly fetchFeed: FetchFeed
   readonly fetchPage: FetchPage
+  readonly parseFeed?: typeof parseFeed
   readonly now?: () => Date
   readonly maxItems?: number
   readonly timeBudgetMs?: number
@@ -42,7 +44,8 @@ export async function collectFeed(
   }
 
   const now = deps.now ?? (() => new Date())
-  const fetched = await deps.fetchFeed(source.feedUrl)
+  const parse = deps.parseFeed ?? parseFeed
+  const fetched = await runFeedStage('fetch', () => deps.fetchFeed(source.feedUrl))
   if (!fetched.ok) {
     return {
       sourceId: source.id,
@@ -56,7 +59,7 @@ export async function collectFeed(
     }
   }
 
-  const parsed = parseFeed(fetched.value.xml, fetched.value.finalUrl)
+  const parsed = await runFeedStage('parse', () => parse(fetched.value.xml, fetched.value.finalUrl))
   if (!parsed.ok) {
     return {
       sourceId: source.id,
@@ -84,13 +87,15 @@ export async function collectFeed(
       break
     }
     processed += 1
-    const registered = await registerCandidate(item.url, {
-      store: deps.candidateStore,
-      fetchPage: deps.fetchPage,
-      now,
-      sourceKind,
-      maxJevCalls: RECOMMEND_MAX_CALLS_PER_FEED_ITEM,
-    })
+    const registered = await runFeedStage('store', () =>
+      registerCandidate(item.url, {
+        store: deps.candidateStore,
+        fetchPage: deps.fetchPage,
+        now,
+        sourceKind,
+        maxJevCalls: RECOMMEND_MAX_CALLS_PER_FEED_ITEM,
+      }),
+    )
     if (!registered.ok) {
       itemsSkipped += 1
       continue

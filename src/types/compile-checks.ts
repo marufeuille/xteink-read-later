@@ -51,6 +51,7 @@ import type {
   DailyDigestLog,
   DigestConfirmLog,
   DigestScheduleLog,
+  FeedLog,
   FeedScheduleLog,
   OpdsDownloadLog,
 } from '../log'
@@ -248,6 +249,14 @@ type _candidateClipLogHasNoBody = Assert<'contentHtml' extends keyof CandidateCl
 type _opdsDownloadLogHasNoUrl = Assert<'url' extends keyof OpdsDownloadLog ? false : true>
 
 type _opdsDownloadLogHasNoBody = Assert<'contentHtml' extends keyof OpdsDownloadLog ? false : true>
+
+type _feedLogFailurePointAllowlisted = Assert<
+  Equals<NonNullable<FeedLog['failurePoint']>, 'fetch' | 'parse' | 'store' | 'unknown'>
+>
+
+type _feedLogHasNoUrl = Assert<'url' extends keyof FeedLog ? false : true>
+
+type _feedLogHasNoReason = Assert<'reason' extends keyof FeedLog ? false : true>
 
 type _pipelineLogHasNoJobId = Assert<'jobId' extends keyof PipelineLog ? false : true>
 

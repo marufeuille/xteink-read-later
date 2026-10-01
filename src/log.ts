@@ -1,3 +1,4 @@
+import { normalizeFeedFailurePoint, type FeedFailurePoint } from './feeds/failure-point'
 import type { ArticleId, CandidateId, ClipJobId, ClipRunId, PipelineLog, PipelineLogContext } from './types'
 
 export function pipelineLogFields(
@@ -24,7 +25,16 @@ function definedEntries(entry: object): Record<string, unknown> {
   return fields
 }
 
-const SUMMARY_KEYS = ['stage', 'clipOutcome', 'status', 'result', 'action', 'outcome', 'errorKind'] as const
+const SUMMARY_KEYS = [
+  'stage',
+  'clipOutcome',
+  'status',
+  'result',
+  'action',
+  'outcome',
+  'errorKind',
+  'failurePoint',
+] as const
 
 function summaryToken(value: unknown): string | null {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_]+$/.test(value)) {
@@ -139,17 +149,26 @@ export function logCandidateRecommend(entry: Omit<CandidateRecommendLog, 'event'
   writeStructuredLog({ event: 'candidate_recommend', ...entry } satisfies CandidateRecommendLog)
 }
 
+export type { FeedFailurePoint }
+
 export type FeedLog = {
   readonly stage: 'collect'
   readonly durationMs: number
   readonly errorKind?: string
+  readonly failurePoint?: FeedFailurePoint
   readonly sourceId?: string
   readonly runId?: string
   readonly attempt?: number
 }
 
 export function logFeed(entry: FeedLog): void {
-  writeStructuredLog({ event: 'feed', ...entry })
+  const { failurePoint: rawPoint, ...rest } = entry
+  const failurePoint = rest.errorKind === 'internal_error' ? normalizeFeedFailurePoint(rawPoint) : undefined
+  writeStructuredLog({
+    event: 'feed',
+    ...rest,
+    ...(failurePoint === undefined ? {} : { failurePoint }),
+  })
 }
 
 export type FeedScheduleLog = {
