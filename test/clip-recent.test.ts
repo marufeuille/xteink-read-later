@@ -131,6 +131,13 @@ describe('toRecentClip', () => {
   })
 })
 
+const STATUS_LABELS = [
+  ['queued', '待機中'],
+  ['running', '処理中'],
+  ['ready', '完了'],
+  ['failed', '失敗'],
+] as const satisfies ReadonlyArray<readonly [ClipJobStatus, string]>
+
 const STAGE_LABELS = [
   ['queue', 'キュー'],
   ['fetch', '本文取得'],
@@ -153,6 +160,24 @@ const ERROR_CODE_LABELS = [
 ] as const satisfies ReadonlyArray<readonly [ErrorKind, string]>
 
 describe('recentClipsHtml labels', () => {
+  it('shows a Japanese label with the original status code', () => {
+    const html = recentClipsHtml(
+      STATUS_LABELS.map(([status], index) => ({
+        jobId: jobId(index + 1),
+        status,
+        stage: null,
+      })),
+    )
+    for (const [status, label] of STATUS_LABELS) {
+      expect(html).toContain(`data-status="${status}"`)
+      expect(html).toContain(`status: ${label}（${status}）`)
+    }
+    expect(html).not.toContain('data-status="待機中')
+    expect(html).not.toContain('data-status="処理中')
+    expect(html).not.toContain('data-status="完了')
+    expect(html).not.toContain('data-status="失敗')
+  })
+
   it('shows a Japanese label with the original stage and error code', () => {
     const html = recentClipsHtml(
       STAGE_LABELS.map(([stage], index) => ({
@@ -198,7 +223,19 @@ describe('recentClipsHtml labels', () => {
         stage: 'weird<stage>' as PipelineStage,
         error: { code: 'csrf_failed' },
       },
+      {
+        jobId: jobId(4),
+        status: 'not_a_status' as ClipJobStatus,
+        stage: null,
+      },
+      {
+        jobId: jobId(5),
+        status: 'weird<status>' as ClipJobStatus,
+        stage: null,
+      },
     ])
+    expect(html).toContain('status: 待機中（queued）')
+    expect(html).toContain('status: 失敗（failed）')
     expect(html).toContain('stage: なし')
     expect(html).not.toContain('（なし）')
     expect(html).toContain('stage: not_a_stage')
@@ -209,6 +246,10 @@ describe('recentClipsHtml labels', () => {
     expect(html).not.toContain('stage: weird<stage>')
     expect(html).toContain('error.code: csrf_failed')
     expect(html).not.toContain('（csrf_failed）')
+    expect(html).toContain('status: not_a_status')
+    expect(html).not.toContain('（not_a_status）')
+    expect(html).toContain('status: weird&lt;status&gt;')
+    expect(html).not.toContain('status: weird<status>')
     expect(html).toContain('再クリップは Shortcuts で同じ記事を送り直す。')
     expect(html).not.toContain('error.message')
   })
@@ -300,15 +341,18 @@ describe('GET /clip/recent', () => {
       expect(failedBlock).toContain('class="clip-failed"')
       expect(failedBlock).toContain('role="alert"')
       expect(failedBlock).toContain('失敗')
-      expect(failedBlock).toContain('status: failed')
+      expect(failedBlock).toContain('status: 失敗（failed）')
+      expect(failedBlock).toContain('data-status="failed"')
       expect(failedBlock).toContain('stage: 本文取得（fetch）')
       expect(failedBlock).toContain('error.code: 本文取得（fetch_failed）')
       expect(failedBlock).toContain('再クリップは Shortcuts で同じ記事を送り直す。')
       expect(failedBlock).not.toContain('host')
       expect(failedBlock).not.toContain('上に表示')
-      expect(html).toContain('status: running')
+      expect(html).toContain('status: 処理中（running）')
+      expect(html).toContain('data-status="running"')
       expect(html).toContain('stage: 翻訳（translate）')
-      expect(html).toContain('status: ready')
+      expect(html).toContain('status: 完了（ready）')
+      expect(html).toContain('data-status="ready"')
       expect(html).not.toContain('secret.example')
       expect(html).not.toContain(SECRET_MESSAGE)
       expect(html).not.toContain(TEST_CLIP_TOKEN)
@@ -365,6 +409,10 @@ describe('GET /clip/recent', () => {
     expect(text).not.toContain('sourceUrl')
     expect(text).not.toContain('本文取得')
     expect(text).not.toContain('（fetch_failed）')
+    expect(text).not.toContain('待機中')
+    expect(text).not.toContain('処理中')
+    expect(text).not.toContain('（queued）')
+    expect(text).not.toContain('（failed）')
     if (typeof body !== 'object' || body === null || !('jobs' in body) || !Array.isArray(body.jobs)) {
       throw new Error('jobs')
     }
