@@ -134,7 +134,7 @@ describe('access terraform comment and redaction', () => {
   it('truncates a huge plan and still explains the import gap', () => {
     const dir = tempDir()
     const plan = join(dir, 'plan.txt')
-    writeFileSync(plan, `line\n`.repeat(20_000))
+    writeFileSync(plan, 'x'.repeat(60_000))
     const result = run(['comment', plan])
     expect(result.status, result.stderr).toBe(0)
     expect(result.stdout.length).toBeLessThan(60_000)
