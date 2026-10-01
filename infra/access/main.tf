@@ -2,7 +2,9 @@
 # MAR-142 は Masahiro 承認のうえで本番へ適用済み。
 # /books を Allow に足した。/digest/* は外した（send をワイルドカードで覆わない）。
 # /digest は配下を継承するので、/digest/send は別アプリの Bypass が要る。
-# Team は marufeuille。import してから plan する。CI では apply しない。
+# Team は marufeuille。state は R2。PR で plan し、main へのマージで apply する。
+# この 4 リソースの create / destroy / replace は import 漏れか作り直し。マージしない。
+# Bypass アプリの state アドレスは、moved.tf を apply するまで digest_send_bypass。
 #
 # import 用 ID（リソースの id 属性には書かない。state が import で持つ）:
 #   account              ee3ee1637004c64111483d968da0f5b1

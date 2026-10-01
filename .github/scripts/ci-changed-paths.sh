@@ -9,10 +9,12 @@
 # simulator images also skips:
 #   test/**, vitest.config.ts, vitest.e2e.config.ts, wrangler.*,
 #   migrations/**, infra/**, .github/scripts/**, .github/merge-gates/**,
-#   .github/workflows/pr-risk.yml, .dev.vars.example, .gitignore
+#   .github/workflows/pr-risk.yml, .github/workflows/access-terraform.yml,
+#   .dev.vars.example, .gitignore
 #   src/**, simulator/**, package.json, package-lock.json,
 #   vitest.simulator.config.ts, tsconfig.json, and .github/workflows/ci.yml run it.
 # deploy worker also skips docs, tests, simulator, ci.yml, pr-risk.yml,
+#   access-terraform.yml, .github/scripts/access-terraform.sh,
 #   infra/**, merge-gate/ruleset scripts, and the files above that do not
 #   affect the Worker. src/**, package manifests, wrangler.*, tsconfig.json,
 #   migrations/**, and .github/scripts/ensure-*.sh run it.
@@ -60,7 +62,7 @@ simulator_skip_safe() {
   case "$path" in
     test/* | migrations/* | infra/* | .github/scripts/* | .github/merge-gates/*) return 0 ;;
     vitest.config.ts | vitest.e2e.config.ts) return 0 ;;
-    .github/workflows/pr-risk.yml) return 0 ;;
+    .github/workflows/pr-risk.yml | .github/workflows/access-terraform.yml) return 0 ;;
     wrangler.json | wrangler.jsonc | wrangler.toml) return 0 ;;
     .dev.vars.example | .gitignore | .editorconfig | .nvmrc | .node-version) return 0 ;;
   esac
@@ -75,8 +77,9 @@ deploy_skip_safe() {
   case "$path" in
     test/* | simulator/* | infra/* | .github/merge-gates/*) return 0 ;;
     vitest.config.ts | vitest.e2e.config.ts | vitest.simulator.config.ts) return 0 ;;
-    .github/workflows/pr-risk.yml | .github/workflows/ci.yml) return 0 ;;
+    .github/workflows/pr-risk.yml | .github/workflows/ci.yml | .github/workflows/access-terraform.yml) return 0 ;;
     .github/scripts/ci-changed-paths.sh | .github/scripts/ci-merge-gate.sh) return 0 ;;
+    .github/scripts/access-terraform.sh) return 0 ;;
     .github/scripts/apply-merge-gates.sh | .github/scripts/verify-merge-gates.sh) return 0 ;;
     .dev.vars.example | .gitignore | .editorconfig | .nvmrc | .node-version) return 0 ;;
   esac
