@@ -21,6 +21,9 @@ describe('GitHub merge gates', () => {
     expect(workflow).toContain('\n  pull_request:\n')
     expect(workflow).toContain('\n  merge_group:\n')
     expect(workflow).toContain('permissions:\n  contents: read')
+    const header = workflow.split('\njobs:')[0] ?? ''
+    expect(header).not.toMatch(/\n\s+paths:/)
+    expect(header).not.toMatch(/\n\s+paths-ignore:/)
     expect(workflow).not.toMatch(/continue-on-error:\s*true/)
     expect(workflow).toContain('name: typecheck, unit, e2e')
     expect(workflow).toContain('npm run typecheck')
@@ -28,9 +31,19 @@ describe('GitHub merge gates', () => {
     expect(workflow).toContain('npm run test:e2e')
   })
 
-  it('fails merge-gate unless typecheck, unit, e2e, and simulator images succeeded', () => {
+  it('runs check and simulator from the path filter and accepts a path skip at merge-gate', () => {
+    const changes = workflow.split('\n  changes:')[1]?.split('\n  check:')[0] ?? ''
+    expect(changes).toContain('name: classify changes')
+    expect(changes).toContain('fetch-depth: 0')
+    expect(changes).toContain('bash .github/scripts/ci-changed-paths.sh github')
+    expect(changes).toContain('check: ${{ steps.filter.outputs.check }}')
+    expect(changes).toContain('simulator: ${{ steps.filter.outputs.simulator }}')
+    expect(changes).toContain('deploy: ${{ steps.filter.outputs.deploy }}')
+
     const check = workflow.split('\n  check:')[1]?.split('\n  simulator-images:')[0] ?? ''
     expect(check).toContain('name: typecheck, unit, e2e')
+    expect(check).toContain('needs: changes')
+    expect(check).toContain("if: ${{ needs.changes.outputs.check == 'true' }}")
     expect(check).toContain('timeout-minutes: 10')
     expect(check).toContain('npm run typecheck')
     expect(check).toContain('npm run test:unit')
@@ -39,6 +52,8 @@ describe('GitHub merge gates', () => {
 
     const simulator = workflow.split('\n  simulator-images:')[1]?.split('\n  merge-gate:')[0] ?? ''
     expect(simulator).toContain('name: simulator images')
+    expect(simulator).toContain('needs: changes')
+    expect(simulator).toContain("if: ${{ needs.changes.outputs.simulator == 'true' }}")
     expect(simulator).toContain('timeout-minutes: 45')
     expect(simulator).toContain('libsdl2-dev')
     expect(simulator).toContain('libssl-dev')
@@ -47,20 +62,34 @@ describe('GitHub merge gates', () => {
     expect(simulator).toContain('npm run simulator:images')
     expect(simulator).toContain('name: Upload simulator screenshots')
     expect(simulator).toContain('path: simulator/out')
-    const withoutFailedUpload = simulator.replace('\n        if: failure()\n', '\n')
+    const withoutFilter = simulator.replace(
+      "if: ${{ needs.changes.outputs.simulator == 'true' }}\n",
+      '',
+    )
+    const withoutFailedUpload = withoutFilter.replace('\n        if: failure()\n', '\n')
     expect(withoutFailedUpload).not.toMatch(/\n\s*if:/)
 
     const mergeGate = workflow.split('\n  merge-gate:')[1]?.split('\n  deploy:')[0] ?? ''
     expect(mergeGate).toContain('name: merge-gate')
     expect(mergeGate).toContain('if: always()')
-    expect(mergeGate).toContain('needs: [check, simulator-images]')
-    expect(mergeGate).toContain('needs.check.result')
-    expect(mergeGate).toContain('needs.simulator-images.result')
-    expect(mergeGate).toContain('test "$check" = success')
-    expect(mergeGate).toContain('test "$simulator" = success')
-    expect(workflow).toContain(
-      "if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}",
-    )
+    expect(mergeGate).toContain('needs: [changes, check, simulator-images]')
+    expect(mergeGate).toContain('CHANGES_RESULT: ${{ needs.changes.result }}')
+    expect(mergeGate).toContain('CHECK_RESULT: ${{ needs.check.result }}')
+    expect(mergeGate).toContain('SIMULATOR_RESULT: ${{ needs.simulator-images.result }}')
+    expect(mergeGate).toContain('bash .github/scripts/ci-merge-gate.sh')
+    expect(mergeGate).not.toContain('test "$check" = success')
+    expect(mergeGate).not.toContain('test "$simulator" = success')
+
+    const deploy = workflow.split('\n  deploy:')[1] ?? ''
+    expect(deploy).toContain('needs: [changes, check, simulator-images]')
+    expect(deploy).toContain("github.event_name == 'push'")
+    expect(deploy).toContain("github.ref == 'refs/heads/main'")
+    expect(deploy).toContain("needs.changes.result == 'success'")
+    expect(deploy).toContain("needs.changes.outputs.deploy == 'true'")
+    expect(deploy).toContain("needs.check.result == 'success'")
+    expect(deploy).toContain("needs.simulator-images.result == 'success'")
+    expect(deploy).toContain("needs.simulator-images.result == 'skipped'")
+    expect(deploy).not.toContain('success()')
   })
 
   it('pins the required check to GitHub Actions with an empty bypass list', () => {
@@ -89,7 +118,12 @@ describe('GitHub merge gates', () => {
   })
 
   it('parses apply and verify scripts', () => {
-    for (const script of ['apply-merge-gates.sh', 'verify-merge-gates.sh']) {
+    for (const script of [
+      'apply-merge-gates.sh',
+      'verify-merge-gates.sh',
+      'ci-changed-paths.sh',
+      'ci-merge-gate.sh',
+    ]) {
       execFileSync('bash', ['-n', join(root, '.github/scripts', script)])
     }
   })

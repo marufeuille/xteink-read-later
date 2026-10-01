@@ -17,10 +17,26 @@ AGENTS.md の自律マージを、GitHub 側でも強制する。運用の正本
 - 変更は pull request 経由。人間の Approve は必須にしない（自律マージ用）
 - 未解決のレビュースレッドがあるとマージできない
 - 必須チェックは `merge-gate` だけ。発行元は GitHub Actions（App ID `15368`）
-- `merge-gate` は `typecheck, unit, e2e`（ジョブ `check`）と `simulator images`（ジョブ `simulator-images`）がどちらも `success` のときだけ成功する。失敗・キャンセル・スキップは失敗にする
-- `simulator images` は PR、`merge_group`、`main` で `npm run simulator:images` を実行する。upstream CrossPoint のピン止め SHA を `simulator_x3` でビルドし、デコードはネイティブ JPEGDEC（`CROSSPOINT_SIM_USE_NATIVE_DECODERS`）。SDL2 と OpenSSL を使い、`DISPLAY` が無いときは `xvfb` で起動する。帯の判定はその BMP を見る。ジョブは `check`（10 分）とは別で、上限は 45 分
-- workflow 全体が未実行（`[skip ci]` など）だと必須チェックが pending のまま残り、マージできない
+- `merge-gate` は分類ジョブ `classify changes` が `success` で、`typecheck, unit, e2e`（ジョブ `check`）と `simulator images`（ジョブ `simulator-images`）がそれぞれ `success` またはパス分類による `skipped` のとき成功する。失敗とキャンセルは失敗にする。必須チェック名は `merge-gate` のままなので、このスキップ方針に ruleset の再適用は要らない
+- `simulator images` は画像レンダリングに関係する差分があるとき `npm run simulator:images` を実行する。対象パスは下の「変更パスによるスキップ」。実行時は upstream CrossPoint のピン止め SHA を `simulator_x3` でビルドし、デコードはネイティブ JPEGDEC（`CROSSPOINT_SIM_USE_NATIVE_DECODERS`）。SDL2 と OpenSSL を使い、`DISPLAY` が無いときは `xvfb` で起動する。帯の判定はその BMP を見る。ジョブは `check`（10 分）とは別で、上限は 45 分
+- workflow 全体が未実行（`[skip ci]`、`on.paths`、`on.paths-ignore`）だと必須チェックが pending のまま残り、マージできない。スキップはジョブの `if` に置く
 - GitHub Actions の GITHUB_TOKEN は `contents: read`。PR レビューの自己承認は不可
+
+## 変更パスによるスキップ
+
+重いジョブは、変更パスがすべてそのジョブのスキップ対象のときだけ `if` で skipped にする。正本は `.github/scripts/ci-changed-paths.sh`。判定は `pull_request` では base との three-dot、`merge_group` と通常の `push` ではその push / 合成コミットの two-dot。初回 push で `before` が全ゼロのときは追跡中の全ファイルを対象にする。
+
+| ジョブ | skipped になる差分 | 実行する差分 |
+| --- | --- | --- |
+| `check`（typecheck, unit, e2e） | `docs/**` と、`src/`・`test/`・`simulator/` 以外の `*.md` だけ | それ以外。文書アサーションの `test/**` を含む |
+| `simulator images` | 上に加え、`test/**`、`vitest.config.ts`、`vitest.e2e.config.ts`、`wrangler.*`、`migrations/**`、`infra/**`、`.github/scripts/**`、`.github/merge-gates/**`、`.github/workflows/pr-risk.yml`、`.dev.vars.example`、`.gitignore`、`.editorconfig`、`.nvmrc`、`.node-version` | `src/**`、`simulator/**`、`package.json`、`package-lock.json`、`vitest.simulator.config.ts`、`tsconfig.json`、`.github/workflows/ci.yml`、表に無いパス |
+| `deploy worker` | docs、`test/**`、`simulator/**`、`ci.yml`、`pr-risk.yml`、分類・merge-gate・ruleset 適用スクリプト、`infra/**`、`.github/merge-gates/**`、`.dev.vars.example`、`.gitignore`、`.editorconfig`、`.nvmrc`、`.node-version` | `src/**`、package manifests、`wrangler.*`、`tsconfig.json`、`migrations/**`、`.github/scripts/ensure-*.sh`、表に無いパス |
+
+`src/**` は画像帯に効くファイルを切り分けず、simulator と deploy の両方の対象にする。表に無いパスは省略しない。
+
+`deploy worker` は `main` への push だけで、`check` が `success` のとき走る。simulator がパス分類で skipped でも、Worker か deploy 設定に効く差分なら deploy する。`check` が失敗または skipped のときは deploy しない。docs だけの `main` マージでは deploy は skipped になる。
+
+`merge-gate` は `if: always()` なので、依存ジョブが skipped でも失敗でも実行される。`classify changes` が失敗したときはゲートも失敗する。GitHub はジョブの `if` による skipped を必須チェックの成功として扱う。必須なのは常に実行する `merge-gate` だけで、その結論が `success` のときだけマージできる。
 
 ## 最新 main との組合せ
 
@@ -65,7 +81,7 @@ gh pr merge --auto --merge
 1. workflow にジョブを足す。`name` を安定させる（例: `high-risk-review`）。`continue-on-error` は付けない。
 2. そのジョブを GitHub Actions で走らせ、一度 success を出す。
 3. `.github/merge-gates/main-ruleset.json` の `required_status_checks` に `{ "context": "high-risk-review", "integration_id": 15368 }` を足す。これが必須化の本体。
-4. skip を success にしたくない場合は、`merge-gate` の `needs` に足すだけでなく、そのジョブの `result` も `success` 必須にする。`merge-gate` は今 `needs.check.result` と `needs.simulator-images.result` を見ている。`needs` に足すだけでは、失敗したジョブを成功扱いのままにできる。
+4. 新しい必須ジョブで skip を成功にしたくない場合は、`merge-gate` の `needs` に足すだけでなく、`.github/scripts/ci-merge-gate.sh` でその `result` を `success` 必須にする。`check` と `simulator-images` は `success` とパス分類の `skipped` を受け、`classify changes` は `success` だけを受ける。`needs` に足すだけでは、失敗したジョブを成功扱いのままにできる。
 5. `bash .github/scripts/apply-merge-gates.sh` を再実行する。
 
 チェック名を変えたら ruleset も同時に更新する。bypass actor は足さない。Actions の `can_approve_pull_request_reviews` は on にしない。書き込み権限のある主体が PR の workflow で同名ジョブを空成功に差し替える余地は、個人リポジトリでは残る。org の required workflows が使えるようになったらそれを足す。
