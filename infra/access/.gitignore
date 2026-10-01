@@ -2,6 +2,7 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
+*.auto.tfvars
 !*.tfvars.example
 crash.log
 crash.*.log
@@ -9,3 +10,8 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+tfplan
+tfplan.*
+plan.txt
+plan.public.txt
+state-addresses.txt

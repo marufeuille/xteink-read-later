@@ -1,0 +1,205 @@
+# Access Terraform (MAR-150).
+#
+# Not a required check. Path filters are intentional: unrelated PRs must not
+# run this workflow. Do not add it to the merge ruleset while on.paths is set,
+# or a skipped workflow leaves the check pending. See docs/github-merge-gates.md.
+#
+# pull_request (not pull_request_target): fork PRs do not receive secrets.
+# Plan runs the PR's Terraform, so a fork must not see the Access token.
+# Same-repo PRs do receive secrets. Review workflow edits; do not enable TF_LOG
+# or shell trace, and do not print the environment.
+#
+# Apply is push to main only. No environment protection and no workflow_dispatch.
+# CI never passes -migrate-state. An empty remote state must not create apps.
+
+name: Access Terraform
+
+on:
+  pull_request:
+    paths:
+      - 'infra/access/**'
+      - '.github/workflows/access-terraform.yml'
+      - '.github/scripts/access-terraform.sh'
+  push:
+    branches:
+      - main
+    paths:
+      - 'infra/access/**'
+      - '.github/workflows/access-terraform.yml'
+      - '.github/scripts/access-terraform.sh'
+
+# One state. Do not cancel an apply that has started.
+concurrency:
+  group: access-terraform
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  TF_IN_AUTOMATION: 'true'
+  TF_INPUT: 'false'
+  TF_VAR_account_id: ee3ee1637004c64111483d968da0f5b1
+  AWS_EC2_METADATA_DISABLED: 'true'
+  AWS_REQUEST_CHECKSUM_CALCULATION: WHEN_REQUIRED
+  AWS_RESPONSE_CHECKSUM_VALIDATION: WHEN_REQUIRED
+
+jobs:
+  validate:
+    name: terraform validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: '1.14.9'
+          terraform_wrapper: false
+      - name: Terraform fmt
+        working-directory: infra/access
+        run: terraform fmt -check -diff
+      - name: Terraform init without backend
+        working-directory: infra/access
+        run: terraform init -backend=false -input=false -no-color
+      - name: Terraform validate
+        working-directory: infra/access
+        run: terraform validate -no-color
+
+  plan:
+    name: terraform plan
+    needs: validate
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.ACCESS_CLOUDFLARE_API_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.ACCESS_TF_STATE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.ACCESS_TF_STATE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: '1.14.9'
+          terraform_wrapper: false
+      - name: Require Access credentials
+        run: bash .github/scripts/access-terraform.sh require-env CLOUDFLARE_API_TOKEN AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+      - name: Terraform init
+        working-directory: infra/access
+        run: terraform init -input=false -no-color
+      - name: List state addresses
+        working-directory: infra/access
+        run: terraform state list > state-addresses.txt
+      - name: Terraform plan
+        id: plan
+        working-directory: infra/access
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color -out=tfplan | tee plan.txt
+        continue-on-error: true
+      - name: Redact plan text
+        if: always()
+        working-directory: infra/access
+        run: |
+          if [[ -f plan.txt ]]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/access-terraform.sh" redact plan.txt > plan.public.txt
+          else
+            printf '%s\n' '(plan output was not captured)' > plan.public.txt
+          fi
+      - name: Comment plan on the pull request
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          body_file="$(mktemp)"
+          ids_file="$(mktemp)"
+          payload="$(mktemp)"
+          bash .github/scripts/access-terraform.sh comment infra/access/plan.public.txt >"$body_file"
+          marker='<!-- access-terraform-plan -->'
+          number="${{ github.event.pull_request.number }}"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/issues/${number}/comments" \
+            --jq ".[] | select(.body | contains(\"${marker}\")) | .id" >"$ids_file"
+          existing="$(head -n 1 "$ids_file")"
+          jq -n --rawfile body "$body_file" '{body:$body}' >"$payload"
+          if [[ -n "$existing" ]]; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${existing}" --input "$payload" >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${number}/comments" --input "$payload" >/dev/null
+          fi
+      - name: Upload plan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: access-terraform-plan
+          path: infra/access/plan.public.txt
+          if-no-files-found: ignore
+      - name: Write job summary
+        if: always()
+        run: |
+          {
+            echo '### Access Terraform plan'
+            echo
+            echo '全文は artifact access-terraform-plan。PR コメントは同じテキスト（長いときは切る）。'
+            echo
+            echo 'アプリまたはポリシーの create / destroy / replace が出ていたらマージしない。'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Fail when plan command failed
+        if: steps.plan.outcome != 'success'
+        run: exit 1
+      - name: Refuse unmigrated state
+        run: bash .github/scripts/access-terraform.sh state-guard infra/access/state-addresses.txt
+      - name: Refuse import-gap plan
+        run: bash .github/scripts/access-terraform.sh plan-guard infra/access/plan.public.txt
+
+  apply:
+    name: terraform apply
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.ACCESS_CLOUDFLARE_API_TOKEN }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.ACCESS_TF_STATE_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.ACCESS_TF_STATE_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: '1.14.9'
+          terraform_wrapper: false
+      - name: Require Access credentials
+        run: bash .github/scripts/access-terraform.sh require-env CLOUDFLARE_API_TOKEN AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+      - name: Terraform init
+        working-directory: infra/access
+        run: terraform init -input=false -no-color
+      - name: List state addresses
+        working-directory: infra/access
+        run: terraform state list > state-addresses.txt
+      - name: Refuse unmigrated state
+        run: bash .github/scripts/access-terraform.sh state-guard infra/access/state-addresses.txt
+      - name: Terraform plan
+        working-directory: infra/access
+        run: |
+          set -o pipefail
+          terraform plan -input=false -no-color -out=tfplan | tee plan.txt
+      - name: Refuse import-gap plan
+        run: bash .github/scripts/access-terraform.sh plan-guard infra/access/plan.txt
+      - name: Terraform apply
+        working-directory: infra/access
+        run: terraform apply -input=false -auto-approve tfplan
+      - name: Redact plan text
+        if: always()
+        working-directory: infra/access
+        run: |
+          if [[ -f plan.txt ]]; then
+            bash "$GITHUB_WORKSPACE/.github/scripts/access-terraform.sh" redact plan.txt > plan.public.txt
+          else
+            printf '%s\n' '(plan output was not captured)' > plan.public.txt
+          fi
+      - name: Upload plan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: access-terraform-plan
+          path: infra/access/plan.public.txt
+          if-no-files-found: ignore

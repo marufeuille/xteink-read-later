@@ -38,6 +38,8 @@ const cases: Array<[string, string[], Flags]> = [
   ['lockfile', ['package-lock.json'], allJobs],
   ['ci workflow', ['.github/workflows/ci.yml'], checkAndSimulator],
   ['pr-risk workflow', ['.github/workflows/pr-risk.yml'], checkOnly],
+  ['access terraform workflow', ['.github/workflows/access-terraform.yml'], checkOnly],
+  ['access terraform script', ['.github/scripts/access-terraform.sh'], checkOnly],
   ['ensure script', ['.github/scripts/ensure-r2-bucket.sh'], checkAndDeploy],
   ['classifier script', ['.github/scripts/ci-changed-paths.sh'], checkOnly],
   ['merge gate script', ['.github/scripts/ci-merge-gate.sh'], checkOnly],

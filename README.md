@@ -14,7 +14,7 @@
 | [docs/workers-logs.md](docs/workers-logs.md) | Workers Logs のフィールドと日次の保存クエリ（現行） |
 | [docs/health-checks.md](docs/health-checks.md) | 本番スモークのステータス合否（朝晩と、Access 外形監視（Cronitor）と、Access 経路を変えたとき） |
 | [docs/github-merge-gates.md](docs/github-merge-gates.md) | `main` のマージ条件（現行） |
-| [docs/access-as-code.md](docs/access-as-code.md) | Cloudflare Access の Terraform（apply は Ops の手元。CI では適用しない） |
+| [docs/access-as-code.md](docs/access-as-code.md) | Cloudflare Access の Terraform（R2 の remote state。PR で plan、main で apply） |
 | [docs/pr-risk.md](docs/pr-risk.md) | PR リスク分類の試行（記録のみ） |
 | [docs/plan/](docs/plan/) | 着手時の計画と、翻訳モデル・Workflows の調査記録。当時の API 契約は現行ではない |
 
@@ -381,7 +381,7 @@ npx wrangler secret put OPDS_PASSWORD
 
 候補一覧、情報源、PC クリップ確認、最近のクリップ、購入本投稿、まとめの手動実行（`/digest` と `/digest/`）を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles` は Bearer / Basic のまま。`/books` と `/clip/recent` を足すと同じパスの curl も Access に当たる。Bearer の multipart 契約は Worker に届いたリクエストでは残す。まとめ QR の `/digest/send` は Allow に入れない。別アプリの Bypass にする。
 
-正本と ID は [docs/access-as-code.md](docs/access-as-code.md)。2026-10-01 に [MAR-142](https://linear.app/marufeuille/issue/MAR-142) を本番へ適用済み（Masahiro 承認）。`/books` は Allow に入っている。`/digest/*` は外してある。
+正本と ID は [docs/access-as-code.md](docs/access-as-code.md)。2026-10-01 に [MAR-142](https://linear.app/marufeuille/issue/MAR-142) を本番へ適用済み（Masahiro 承認）。`/books` は Allow に入っている。`/digest/*` は外してある。以後の変更は `infra/access` の PR で plan を見て、`main` へのマージで apply する。Workers 用の `CLOUDFLARE_API_TOKEN` は Access に使わない。
 
 1. [Zero Trust](https://one.dash.cloudflare.com/) で組織を有効にする。
 2. [Google を identity provider にする](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/)。Google Cloud の OAuth クライアントが必要。Authorized redirect URI は `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/callback`。
@@ -420,9 +420,17 @@ Access を掛ける前に管理画面だけ本番へ出ると、その HTML は 
 | `CLOUDFLARE_ACCOUNT_ID` | ダッシュボードの [Account ID](https://developers.cloudflare.com/fundamentals/account/find-account-and-zone-ids/) |
 | `OPENROUTER_API_KEY` | PR リスク分類の試行専用。未設定でも `pr-risk-trial` は記録し、推奨ルートは追加レビュー。設定済みなら Jev の choice / noul / 信頼度もコメントに残る。アプリの記事分類は Cloudflare 側の同じ名前の secret を使う |
 
+Access の Terraform は上の Workers 用トークンを使わない。リポジトリ secret は次の 3 つ。値は書かない。バケット名とキーは [docs/access-as-code.md](docs/access-as-code.md)。
+
+| Name | 中身 |
+| --- | --- |
+| `ACCESS_CLOUDFLARE_API_TOKEN` | Account の **Access: Apps and Policies** の **Read** と **Edit**。ジョブの中では `CLOUDFLARE_API_TOKEN` になる。`CLOUDFLARE_API_TOKEN` secret とは別 |
+| `ACCESS_TF_STATE_ACCESS_KEY_ID` | state 用 R2 バケット `xteink-read-later-tfstate` の S3 アクセスキー ID。ジョブの中では `AWS_ACCESS_KEY_ID` |
+| `ACCESS_TF_STATE_SECRET_ACCESS_KEY` | 上のシークレット。ジョブの中では `AWS_SECRET_ACCESS_KEY` |
+
 アプリ用の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` は GitHub Secrets に入れない（Cloudflare の `wrangler secret put` 側）。`OPENROUTER_API_KEY` は Worker 用と Actions 試行用で別々に置く。
 
-Secrets 未設定のまま `main` にマージすると、チェックは通ってもデプロイジョブが落ちる。
+Secrets 未設定のまま `main` にマージすると、チェックは通ってもデプロイジョブが落ちる。Access 用の 3 つが未設定、または R2 に state が無いときも、Workers のデプロイとは別に Access の plan / apply が落ちる。空の state ではアプリを作らない。
 
 デプロイ後:
 
