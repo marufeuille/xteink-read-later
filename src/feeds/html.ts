@@ -1,4 +1,4 @@
-import { FEED_SOURCE_TYPES, type FeedSource, type FeedSourcePublic, type FeedSourceType } from '../types'
+import { FEED_COLLECT_TIMEZONE, FEED_SOURCE_TYPES, type FeedSourcePublic, type FeedSourceType } from '../types'
 
 function escapeHtml(value: string): string {
   return value
@@ -76,9 +76,53 @@ function enabledOptions(enabled: boolean): string {
 <option value="0"${enabled ? '' : ' selected'}>停止</option>`
 }
 
+const NOT_YET_COLLECTED = 'まだ収集していません'
+
+function dateTimePart(parts: readonly Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTypes): string | null {
+  const value = parts.find((part) => part.type === type)?.value
+  return value === undefined || value.length === 0 ? null : value
+}
+
+/** Asia/Tokyo wall time as `YYYY-MM-DD HH:mm`, or null when the instant cannot be parsed. */
+export function formatCollectedAtJst(iso: string): string | null {
+  const time = Date.parse(iso)
+  if (!Number.isFinite(time)) {
+    return null
+  }
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: FEED_COLLECT_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(time))
+  const year = dateTimePart(parts, 'year')
+  const month = dateTimePart(parts, 'month')
+  const day = dateTimePart(parts, 'day')
+  const hour = dateTimePart(parts, 'hour')
+  const minute = dateTimePart(parts, 'minute')
+  if (year === null || month === null || day === null || hour === null || minute === null) {
+    return null
+  }
+  return `${year}-${month}-${day} ${hour}:${minute}`
+}
+
+export function lastCollectedLabel(source: Pick<FeedSourcePublic, 'collectionStatus' | 'lastCollectedAt'>): string {
+  const formatted = source.lastCollectedAt === null ? null : formatCollectedAtJst(source.lastCollectedAt)
+  if (formatted === null) {
+    return NOT_YET_COLLECTED
+  }
+  if (source.collectionStatus === 'queued' || source.collectionStatus === 'running') {
+    return `前回の収集: ${formatted} JST`
+  }
+  return `最終収集: ${formatted} JST`
+}
+
 function collectionMeta(source: FeedSourcePublic): string {
   if (source.collectionStatus === null) {
-    return 'まだ収集していません'
+    return NOT_YET_COLLECTED
   }
   if (source.collectionStatus === 'queued' || source.collectionStatus === 'running') {
     return source.collectionStatus === 'queued' ? '収集待ち' : '収集中'
@@ -90,6 +134,14 @@ function collectionMeta(source: FeedSourcePublic): string {
   return `前回 新規${source.itemsRegistered} / 重複${source.itemsDuplicate} / スキップ${source.itemsSkipped}`
 }
 
+function collectedAtParagraph(source: FeedSourcePublic): string {
+  const label = lastCollectedLabel(source)
+  if (label === collectionMeta(source)) {
+    return ''
+  }
+  return `  <p class="meta">${escapeHtml(label)}</p>\n`
+}
+
 function sourceCard(source: FeedSourcePublic, csrfToken: string): string {
   const tags = source.topicTags.join(', ')
   const collectLabel = source.collectionStatus === 'failed' ? '再実行' : '今すぐ収集'
@@ -97,7 +149,7 @@ function sourceCard(source: FeedSourcePublic, csrfToken: string): string {
   <h2>${escapeHtml(source.name)}</h2>
   <p class="meta">${escapeHtml(sourceTypeLabel(source.sourceType))} · ${source.enabled ? '有効' : '停止'}</p>
   <p class="meta">${escapeHtml(collectionMeta(source))}</p>
-  <p class="meta">話題タグ: ${tags.length > 0 ? escapeHtml(tags) : 'なし'}</p>
+${collectedAtParagraph(source)}  <p class="meta">話題タグ: ${tags.length > 0 ? escapeHtml(tags) : 'なし'}</p>
   <p><a href="${escapeHtml(source.siteUrl)}">サイト</a> · <a href="${escapeHtml(source.feedUrl)}">フィード</a></p>
   <form method="post" action="/sources/${escapeHtml(source.id)}">
     <input type="hidden" name="csrf" value="${escapeHtml(csrfToken)}" />
