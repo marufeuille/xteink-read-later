@@ -3,5 +3,10 @@ OPENROUTER_API_KEY=
 CLIP_TOKEN=
 OPDS_USERNAME=
 OPDS_PASSWORD=
+# Optional Cronitor Job telemetry. Empty skips pings. Not the Access HTTP checks.
+# Names: docs/health-checks.md. Do not put real values in git.
+CRONITOR_API_KEY=
+CRONITOR_FEED_COLLECT_MONITOR_KEY=
+CRONITOR_CLIP_MONITOR_KEY=
 # Optional. Used only by `npm run translate:bakeoff`. Not a Worker secret.
 # PLAMO_API_KEY=
