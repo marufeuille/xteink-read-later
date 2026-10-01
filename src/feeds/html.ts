@@ -1,4 +1,10 @@
-import { FEED_COLLECT_TIMEZONE, FEED_SOURCE_TYPES, type FeedSourcePublic, type FeedSourceType } from '../types'
+import {
+  FEED_COLLECT_TIMEZONE,
+  FEED_SOURCE_TYPES,
+  type FeedCollectionResult,
+  type FeedSourcePublic,
+  type FeedSourceType,
+} from '../types'
 
 function escapeHtml(value: string): string {
   return value
@@ -120,6 +126,29 @@ export function lastCollectedLabel(source: Pick<FeedSourcePublic, 'collectionSta
   return `最終収集: ${formatted} JST`
 }
 
+/** Codes written by feed enqueue and the collection queue. Other stored values stay raw. */
+type CollectionErrorCode = NonNullable<FeedCollectionResult['error']>['kind'] | 'internal_error' | 'queue_failed'
+
+const COLLECTION_ERROR_LABELS = {
+  fetch_failed: '取得失敗',
+  invalid_feed: 'フィード不正',
+  payload_too_large: 'サイズ超過',
+  queue_failed: 'キュー失敗',
+  internal_error: '内部エラー',
+} as const satisfies Record<CollectionErrorCode, string>
+
+/** HTML label as 日本語（code）. Unknown or blank labels stay the raw code. */
+function collectionErrorDetail(code: string): string {
+  if (!Object.hasOwn(COLLECTION_ERROR_LABELS, code)) {
+    return code
+  }
+  const label = COLLECTION_ERROR_LABELS[code as keyof typeof COLLECTION_ERROR_LABELS]
+  if (label.length === 0) {
+    return code
+  }
+  return `${label}（${code}）`
+}
+
 function collectionMeta(source: FeedSourcePublic): string {
   if (source.collectionStatus === null) {
     return NOT_YET_COLLECTED
@@ -128,7 +157,8 @@ function collectionMeta(source: FeedSourcePublic): string {
     return source.collectionStatus === 'queued' ? '収集待ち' : '収集中'
   }
   if (source.collectionStatus === 'failed') {
-    const detail = source.collectionErrorMessage ?? source.collectionErrorCode ?? '失敗'
+    const code = source.collectionErrorCode
+    const detail = code === null || code.length === 0 ? '失敗' : collectionErrorDetail(code)
     return `失敗: ${detail}`
   }
   return `前回 新規${source.itemsRegistered} / 重複${source.itemsDuplicate} / スキップ${source.itemsSkipped}`

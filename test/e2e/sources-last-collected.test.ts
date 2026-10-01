@@ -84,7 +84,7 @@ describe('sources list last collected time', () => {
         collectionStatus: 'failed',
         collectionRunId: asFeedRunId('frun_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
         collectionErrorCode: 'invalid_feed',
-        collectionErrorMessage: 'フィードを読めませんでした',
+        collectionErrorMessage: 'Failed to fetch https://hidden.example/secret: HTTP 500',
         lastCollectedAt: COLLECTED_AT,
         createdAt: '2026-09-21T00:00:03.000Z',
       }),
@@ -145,7 +145,9 @@ describe('sources list last collected time', () => {
     expect(ready).toContain('href="https://ready.example.com/feed.xml"')
 
     const failed = card(page, 'Failed feed')
-    expect(failed).toContain('失敗: フィードを読めませんでした')
+    expect(failed).toContain('失敗: フィード不正（invalid_feed）')
+    expect(failed).not.toContain('Failed to fetch')
+    expect(failed).not.toContain('hidden.example')
     expect(failed).toContain('最終収集: 2026-10-01 16:27 JST')
     expect(failed).toContain('href="https://failed.example.com/feed.xml"')
 
@@ -173,6 +175,7 @@ describe('sources list last collected time', () => {
         name: string
         lastCollectedAt: string | null
         collectionStatus: string | null
+        collectionErrorCode: string | null
         collectionErrorMessage: string | null
         itemsRegistered: number
         itemsDuplicate: number
@@ -200,7 +203,8 @@ describe('sources list last collected time', () => {
     expect(body.sources.find((row) => row.name === 'Failed feed')).toMatchObject({
       lastCollectedAt: COLLECTED_AT,
       collectionStatus: 'failed',
-      collectionErrorMessage: 'フィードを読めませんでした',
+      collectionErrorCode: 'invalid_feed',
+      collectionErrorMessage: 'Failed to fetch https://hidden.example/secret: HTTP 500',
     })
     expect(body.sources.find((row) => row.name === 'Never collected')?.lastCollectedAt).toBeNull()
     expect(body.sources.find((row) => row.name === 'Queued again')?.lastCollectedAt).toBe(PREVIOUS_AT)

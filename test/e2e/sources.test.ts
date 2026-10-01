@@ -165,11 +165,29 @@ describe('source fixture e2e', () => {
 
     const sources = await ctx.hono.request('/sources.json', { headers: { authorization: bearerAuthorization() } }, ctx.env)
     const sourceBody = (await sources.json()) as {
-      sources: { id: string; collectionStatus: string; collectionErrorCode: string | null }[]
+      sources: {
+        id: string
+        collectionStatus: string
+        collectionErrorCode: string | null
+        collectionErrorMessage: string | null
+      }[]
     }
     const brokenState = sourceBody.sources.find((row) => row.id !== zennId && row.id !== mercariId)
     expect(brokenState?.collectionStatus).toBe('failed')
     expect(brokenState?.collectionErrorCode).toBe('invalid_feed')
+    expect(brokenState?.collectionErrorMessage).toBe('RSS/Atom ではありません。フィード URL を指定してください')
+
+    const sourcesPage = await ctx.hono.request(
+      '/sources',
+      { headers: { authorization: bearerAuthorization() } },
+      ctx.env,
+    )
+    expect(sourcesPage.status).toBe(200)
+    const sourcesHtml = await sourcesPage.text()
+    expect(sourcesHtml).toContain('失敗: フィード不正（invalid_feed）')
+    expect(sourcesHtml).not.toContain('RSS/Atom ではありません')
+    expect(sourcesHtml).not.toContain('Failed to fetch')
+    expect(sourcesHtml).toContain('href="https://broken.example.com/feed.xml"')
     expect(sourceBody.sources.find((row) => row.id === zennId)?.collectionStatus).toBe('ready')
     expect(sourceBody.sources.find((row) => row.id === mercariId)?.collectionStatus).toBe('ready')
     expect(ctx.queue.size).toBe(0)
