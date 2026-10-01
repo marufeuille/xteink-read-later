@@ -2,7 +2,7 @@
 
 `src/log.ts` は `console.log` にオブジェクトを渡す。Workers Logs はそのフィールドを索引する。`JSON.stringify` した文字列は message 1本になり、`event` や `errorKind` では絞れない。
 
-URL、本文、API token はログに足さない。`message` に載せるのは `event` と、`stage` / `clipOutcome` / `status` / `result` / `action` / `outcome` / `errorKind` のうち英数字と `_` だけの値。
+URL、本文、API token はログに足さない。`message` に載せるのは `event` と、`stage` / `clipOutcome` / `status` / `result` / `action` / `outcome` / `errorKind` / `failurePoint` のうち英数字と `_` だけの値。
 
 ## フィールド
 
@@ -11,7 +11,7 @@ URL、本文、API token はログに足さない。`message` に載せるのは
 | `pipeline` | `stage`, `durationMs`, `errorKind`。job が `ready` / `failed` になったログだけ `clipOutcome` |
 | `daily_digest` | `status` = `published` / `empty` / `failed` |
 | `opds_download` | 件数。`durationMs` と `articleId` |
-| `feed` | `stage` = `collect`。失敗だけ `errorKind`。成功に `errorKind` は無い |
+| `feed` | `stage` = `collect`。失敗だけ `errorKind`。`internal_error` だけ `failurePoint`（`fetch` / `parse` / `store` / `unknown`）。成功に `errorKind` は無い |
 | （invocation） | `$workers.outcome` = `exceededCpu` |
 
 `pipeline` で `clipOutcome` の無い `errorKind` は工程の失敗や再試行である。clip の失敗件数には数えない。`feed` の `errorKind` は収集の失敗で、下の日次クエリに含める。`site_recovery` の `url` は従来どおり残す。`message` には入れない。
@@ -52,6 +52,7 @@ Cloudflare は入れ子の OR（grouped OR）を AND に正規化する。これ
 | `event=opds_download` | OPDS の EPUB 取得要求件数 |
 | `event=feed` を `errorKind` ごと | フィード収集の失敗。`payload_too_large` / `internal_error` / `fetch_failed` / `invalid_feed` / `invalid_url` |
 | `event=feed` で `errorKind` が無い | 収集成功（`stage=collect`）。失敗件数には数えない |
+| `event=feed` `errorKind=internal_error` の `failurePoint` | 例外が出た段階。`fetch` / `parse` / `store` / `unknown`。URL・本文・例外メッセージは無い |
 
 `feed` 行の `clipOutcome` と `status` は空である。内訳は Group by の `errorKind` に出る。`fetch_failed` と `internal_error` は再試行のたびに 1 行出る。`payload_too_large` と `invalid_feed` は再試行しない。`invalid_url` は不正なキューメッセージで、1 回だけ出して ack する。
 
@@ -64,6 +65,8 @@ $metadata.service = "xteink-read-later" AND event = "feed"
 ```
 
 Save で `xteink-read-later feed` として保存する。
+
+`internal_error` の段階は、この検索に `errorKind = "internal_error"` を足し、Group by に `failurePoint` を入れると分かれる。日次の保存クエリの Group by はそのままである。`failurePoint` が無い `internal_error` は、この分類より前のログである。値は呼び出し位置の段階名だけで、例外の `message` は入れない。`fetch_failed` や `invalid_feed` は従来の `errorKind` のままなので `failurePoint` は付かない。
 
 ### 保存クエリ `xteink-read-later exceededCpu`
 

@@ -1,4 +1,5 @@
-import { collectFeed } from '../feeds/collect'
+import { collectFeed, type CollectFeedDeps } from '../feeds/collect'
+import { feedFailurePoint, runFeedStage } from '../feeds/failure-point'
 import { errorMessage } from '../http/error-response'
 import { logFeed } from '../log'
 import { createD1CandidateStore } from '../store/d1-candidates'
@@ -27,6 +28,7 @@ export type FeedQueueHandlerDeps = {
   readonly createCandidateStore?: (env: Cloudflare.Env) => CandidateStore
   readonly fetchFeed?: FetchFeed
   readonly fetchPage?: FetchPage
+  readonly parseFeed?: CollectFeedDeps['parseFeed']
   readonly now?: () => Date
 }
 
@@ -143,9 +145,10 @@ async function processMessage(
       candidateStore: candidates,
       fetchFeed: deps.fetchFeed ?? defaultFetchFeed,
       fetchPage: deps.fetchPage ?? defaultFetchPage,
+      ...(deps.parseFeed === undefined ? {} : { parseFeed: deps.parseFeed }),
       now,
     })
-    const latest = (await sources.getById(source.id)) ?? source
+    const latest = await runFeedStage('store', async () => (await sources.getById(source.id)) ?? source)
     if (latest.collectionRunId !== parsed.runId) {
       message.ack()
       return
@@ -164,7 +167,7 @@ async function processMessage(
       message.retry()
       return
     }
-    await applyResult(sources, latest, result, message.attempts, now)
+    await runFeedStage('store', () => applyResult(sources, latest, result, message.attempts, now))
     logFeed({
       stage: 'collect',
       durationMs: Date.now() - started,
@@ -174,11 +177,13 @@ async function processMessage(
       ...(result.error === null ? {} : { errorKind: result.error.kind }),
     })
     message.ack()
-  } catch {
+  } catch (error) {
+    // failurePoint is the call-site stage. Do not log the caught message, URL, or body.
     logFeed({
       stage: 'collect',
       durationMs: Date.now() - started,
       errorKind: 'internal_error',
+      failurePoint: feedFailurePoint(error),
       sourceId: source.id,
       runId: parsed.runId,
       attempt: message.attempts,
