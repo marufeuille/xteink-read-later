@@ -162,8 +162,10 @@ describe('daily workers logs query', () => {
       'utf8',
     )
     expect(doc).toContain(
-      '$metadata.service = "xteink-read-later" AND ((event = "pipeline" AND (clipOutcome = "ready" OR clipOutcome = "failed")) OR event = "daily_digest" OR event = "opds_download" OR event = "feed")',
+      '$metadata.service = "xteink-read-later" AND regex(event, "^(pipeline|daily_digest|opds_download|feed)$")',
     )
+    expect(doc).toContain('$metadata.service = "xteink-read-later" AND event = "feed"')
+    expect(doc).toContain('Cloudflare は入れ子の OR（grouped OR）を AND に正規化する。これらの保存クエリに grouped OR は使わない。')
     expect(doc).toContain('$metadata.service = "xteink-read-later" AND $workers.outcome = "exceededCpu"')
     expect(doc).toContain('errorKind')
     expect(doc).toContain('opds_download')
