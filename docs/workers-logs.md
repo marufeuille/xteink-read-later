@@ -2,7 +2,7 @@
 
 `src/log.ts` は `console.log` にオブジェクトを渡す。Workers Logs はそのフィールドを索引する。`JSON.stringify` した文字列は message 1本になり、`event` や `errorKind` では絞れない。
 
-URL、本文、API token はログに足さない。`message` に載せるのは `event` と、`stage` / `clipOutcome` / `status` / `result` / `action` / `outcome` / `errorKind` / `failurePoint` のうち英数字と `_` だけの値。
+URL、本文、API token はログに足さない。`message` に載せるのは `event` と、`stage` / `clipOutcome` / `status` / `result` / `action` / `outcome` / `pingState` / `errorKind` / `failurePoint` のうち英数字と `_` だけの値。
 
 ## フィールド
 
@@ -83,6 +83,16 @@ $metadata.service = "xteink-read-later" AND $workers.outcome = "exceededCpu"
 ```
 
 Save で `xteink-read-later exceededCpu` として保存する。
+
+## Cronitor Job telemetry
+
+日次の保存クエリには入れない。クリップか収集のあと、ping が Worker から出たかはこの検索で見る。
+
+```text
+$metadata.service = "xteink-read-later" AND event = "cronitor"
+```
+
+`outcome` は `sent` / `http_error` / `timeout` / `network` / `redirect_blocked` / `invalid_ping` / `metrics_failed`、または secret が使えないときの `missing_api_key` / `blank_api_key` / `api_key_not_string` / `missing_monitor_key` / `blank_monitor_key` / `monitor_key_not_string`。`pingState` は `run` / `complete` / `fail`。`httpStatus` は数値だけ。API key、モニターキー、URL、記事 URL、レスポンス本文、例外メッセージは出さない。`sent` は HTTP 2xx を読み切った印である。Cronitor は資格情報が違っても 200 を返すことがあるので、ダッシュボードとこのログの両方を見る。
 
 ## 工程
 
