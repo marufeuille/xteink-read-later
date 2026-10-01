@@ -229,7 +229,7 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 - Zenn トピックフィード（投稿サイト）例: `https://zenn.dev/topics/cloudflare/feed`
 - Mercari Engineering Blog（企業ブログ）: `https://engineering.mercari.com/blog/feed.xml`
 
-データ・アナリティクス・LLM と日本語の開発者ブログは `migrations/0006_seed_engineering_feeds.sql` が初回適用時に入れる。同じフィード URL が既にあればその行は残す。うるさい媒体は情報源画面で止める。
+データ・アナリティクス・LLM と日本語の開発者ブログは `migrations/0006_seed_engineering_feeds.sql` が初回適用時に入れる。同じフィード URL が既にあればその行は残す。うるさい媒体は情報源画面で止める。PostHog（`src_8663f0e76ff0ccbf610becf192f0245f`）と Deep Learning Focus（`src_5d791aaaf3243c522554564dff7c15a0`）は公式フィードが 3MB を超えるため、`migrations/0008_pause_oversized_feeds.sql` が情報源の停止（`enabled = 0`）にする。行は消さない。上限は 3,000,000 バイトのまま。
 
 1 回の収集は情報源ごとに独立する。件数 20、フィードサイズ 3MB（3,000,000 バイト）、時間 20 秒、Queue 再試行 3 回が上限。失敗は情報源一覧に出る。同じ「今すぐ収集」か翌日の Cron で再実行する。収集 Cron は enqueue だけで本文翻訳しない。まとめの中身は上の枠と要約の規則。
 

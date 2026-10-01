@@ -3,8 +3,10 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  feedCollectionErrorLog,
   logCandidateClip,
   logDailyDigest,
+  logFeed,
   logOpdsDownload,
   logPipeline,
   logPublishedRepairFailure,
@@ -155,6 +157,92 @@ describe('structured log fields', () => {
   })
 })
 
+describe('feed payload_too_large size log', () => {
+  it('logs only a numeric byte count and drops url, body, and exception text', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const secretUrl = 'https://oversized.example/feed.xml?token=super-secret-token'
+    const exceptionText = 'Payload exceeded the size limit (3385152 bytes) token=super-secret-token'
+    const entry = {
+      stage: 'collect' as const,
+      durationMs: 9,
+      errorKind: 'payload_too_large',
+      bytes: 3_385_152,
+      sourceId: 'src_8663f0e76ff0ccbf610becf192f0245f',
+      url: secretUrl,
+      reason: exceptionText,
+      body: '<rss>raw body token=super-secret-token</rss>',
+      message: exceptionText,
+    }
+    logFeed(entry)
+    const parsed = loggedObject()
+    expect(parsed).toEqual({
+      message: 'feed collect payload_too_large',
+      event: 'feed',
+      stage: 'collect',
+      durationMs: 9,
+      errorKind: 'payload_too_large',
+      sourceId: 'src_8663f0e76ff0ccbf610becf192f0245f',
+      bytes: 3_385_152,
+    })
+    expect(typeof parsed.bytes).toBe('number')
+    expect(parsed).not.toHaveProperty('url')
+    expect(parsed).not.toHaveProperty('reason')
+    expect(parsed).not.toHaveProperty('body')
+    const text = JSON.stringify(parsed)
+    expect(text).not.toContain('https://')
+    expect(text).not.toContain('super-secret-token')
+    expect(text).not.toContain('raw body')
+    expect(text).not.toContain('Payload exceeded')
+    expect(String(parsed.message)).not.toContain('3385152')
+  })
+
+  it('omits bytes unless the failure is payload_too_large and the size is finite', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    expect(feedCollectionErrorLog({ kind: 'payload_too_large', bytes: 5_558_192 })).toEqual({
+      errorKind: 'payload_too_large',
+      bytes: 5_558_192,
+    })
+    expect(feedCollectionErrorLog({ kind: 'payload_too_large', bytes: '5558192' })).toEqual({
+      errorKind: 'payload_too_large',
+    })
+    expect(feedCollectionErrorLog({ kind: 'payload_too_large', bytes: Number.NaN })).toEqual({
+      errorKind: 'payload_too_large',
+    })
+    expect(feedCollectionErrorLog({ kind: 'fetch_failed', bytes: 12 })).toEqual({
+      errorKind: 'fetch_failed',
+    })
+    logFeed({
+      stage: 'collect',
+      durationMs: 1,
+      errorKind: 'fetch_failed',
+      bytes: 12,
+    })
+    logFeed({
+      stage: 'collect',
+      durationMs: 2,
+      errorKind: 'payload_too_large',
+      bytes: Number.POSITIVE_INFINITY,
+    })
+    const calls = vi.mocked(console.log).mock.calls.map((call) => call[0] as Record<string, unknown>)
+    expect(calls[0]).toEqual({
+      message: 'feed collect fetch_failed',
+      event: 'feed',
+      stage: 'collect',
+      durationMs: 1,
+      errorKind: 'fetch_failed',
+    })
+    expect(calls[1]).toEqual({
+      message: 'feed collect payload_too_large',
+      event: 'feed',
+      stage: 'collect',
+      durationMs: 2,
+      errorKind: 'payload_too_large',
+    })
+    expect(calls[0]).not.toHaveProperty('bytes')
+    expect(calls[1]).not.toHaveProperty('bytes')
+  })
+})
+
 describe('daily workers logs query', () => {
   it('documents the saved queries for the post-cron summary', () => {
     const doc = readFileSync(
@@ -170,6 +258,9 @@ describe('daily workers logs query', () => {
     expect(doc).toContain('errorKind')
     expect(doc).toContain('opds_download')
     expect(doc).toContain('payload_too_large')
+    expect(doc).toContain('`payload_too_large` だけ `bytes`（数値）')
+    expect(doc).toContain('URL、本文、Secret、例外メッセージは付けない')
+    expect(doc).toContain('errorKind = "payload_too_large"')
     expect(doc).toContain('internal_error')
     expect(doc).toContain('failurePoint')
     expect(doc).toContain('feed_schedule')

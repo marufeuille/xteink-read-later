@@ -334,6 +334,57 @@ describe('feed internal_error failurePoint', () => {
     })
   })
 
+  it('logs payload_too_large with a numeric size and without the feed url or exception text', async () => {
+    const sourceStore = createMemoryFeedSourceStore()
+    await sourceStore.put(baseSource())
+    const secret = 'token=super-secret-token'
+    const result = await deliver(
+      {
+        sourceStore,
+        candidateStore: createMemoryCandidateStore(),
+        fetchFeed: async (url) => {
+          expect(url).toContain('example.com')
+          return err({ kind: 'payload_too_large', bytes: 3_385_152 })
+        },
+        fetchPage,
+        now: () => new Date('2026-09-21T19:00:00.000Z'),
+      },
+      1,
+    )
+    expect(result.retried).toBe(false)
+    expect(result.acked).toBe(true)
+    expect(feedLogs(result.logs)).toEqual([
+      {
+        message: 'feed collect payload_too_large',
+        event: 'feed',
+        stage: 'collect',
+        durationMs: expect.any(Number),
+        errorKind: 'payload_too_large',
+        bytes: 3_385_152,
+        sourceId: SOURCE_ID,
+        runId: RUN_ID,
+        attempt: 1,
+      },
+    ])
+    const logged = feedLogs(result.logs)[0]
+    expect(typeof logged?.bytes).toBe('number')
+    expect(logged).not.toHaveProperty('url')
+    expect(logged).not.toHaveProperty('reason')
+    expect(logged).not.toHaveProperty('body')
+    const text = JSON.stringify(result.logs)
+    expect(text).not.toContain('https://')
+    expect(text).not.toContain(secret)
+    expect(text).not.toContain('Payload exceeded')
+    expect(text).not.toContain('example.com/feed.xml')
+    const stored = await sourceStore.getById(SOURCE_ID)
+    expect(stored).toMatchObject({
+      collectionStatus: 'failed',
+      collectionErrorCode: 'payload_too_large',
+    })
+    expect(stored?.collectionErrorMessage).toContain('3385152')
+    expect(text).not.toContain(stored?.collectionErrorMessage ?? 'Payload exceeded')
+  })
+
   it('omits failurePoint when collection succeeds', async () => {
     const sourceStore = createMemoryFeedSourceStore()
     await sourceStore.put(baseSource())

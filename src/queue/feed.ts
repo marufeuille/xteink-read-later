@@ -1,7 +1,7 @@
 import { collectFeed, type CollectFeedDeps } from '../feeds/collect'
 import { feedFailurePoint, runFeedStage } from '../feeds/failure-point'
 import { errorMessage } from '../http/error-response'
-import { logFeed } from '../log'
+import { feedCollectionErrorLog, logFeed } from '../log'
 import { createD1CandidateStore } from '../store/d1-candidates'
 import { createD1FeedSourceStore } from '../store/d1-sources'
 import { fetchPage as defaultFetchPage } from '../extract/fetch-page'
@@ -154,16 +154,14 @@ async function processMessage(
       return
     }
     if (result.status === 'failed' && result.error !== null && shouldRetryFeedError(result.error.kind, message.attempts)) {
-      logFeed(
-        {
-          stage: 'collect',
-          durationMs: Date.now() - started,
-          errorKind: result.error.kind,
-          sourceId: source.id,
-          runId: parsed.runId,
-          attempt: message.attempts,
-        },
-      )
+      logFeed({
+        stage: 'collect',
+        durationMs: Date.now() - started,
+        sourceId: source.id,
+        runId: parsed.runId,
+        attempt: message.attempts,
+        ...feedCollectionErrorLog(result.error),
+      })
       message.retry()
       return
     }
@@ -174,7 +172,7 @@ async function processMessage(
       sourceId: source.id,
       runId: parsed.runId,
       attempt: message.attempts,
-      ...(result.error === null ? {} : { errorKind: result.error.kind }),
+      ...(result.error === null ? {} : feedCollectionErrorLog(result.error)),
     })
     message.ack()
   } catch (error) {

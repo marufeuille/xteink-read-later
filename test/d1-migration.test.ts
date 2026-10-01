@@ -87,6 +87,31 @@ describe('D1 candidate migration', () => {
     expect(sql.replace(/--.*$/gm, '')).not.toMatch(/\b(UPDATE|DELETE)\b/i)
   })
 
+  it('pauses the two feeds that stay over the 3MB cap without deleting rows or raising the cap', () => {
+    const seed = readFileSync(join(root, 'migrations/0006_seed_engineering_feeds.sql'), 'utf8')
+    const sql = readFileSync(join(root, 'migrations/0008_pause_oversized_feeds.sql'), 'utf8')
+    expect(seed).toContain(
+      "('src_8663f0e76ff0ccbf610becf192f0245f', 'PostHog', 'https://posthog.com/blog', 'https://posthog.com/rss.xml'",
+    )
+    expect(seed).toContain(
+      "('src_5d791aaaf3243c522554564dff7c15a0', 'Deep Learning Focus', 'https://cameronrwolfe.substack.com/', 'https://cameronrwolfe.substack.com/feed'",
+    )
+    expect(sql).toContain('MAR-159')
+    expect(sql).toContain("id = 'src_8663f0e76ff0ccbf610becf192f0245f'")
+    expect(sql).toContain("feed_url = 'https://posthog.com/rss.xml'")
+    expect(sql).toContain("id = 'src_5d791aaaf3243c522554564dff7c15a0'")
+    expect(sql).toContain("feed_url = 'https://cameronrwolfe.substack.com/feed'")
+    expect(sql).toContain('enabled = 0')
+    expect(sql).toContain('Do not raise the feed payload cap')
+    expect(sql).not.toMatch(/\b(DELETE|INSERT|ALTER)\b/i)
+    const sets = sql.match(/SET[\s\S]*?WHERE/gi) ?? []
+    expect(sets).toHaveLength(2)
+    for (const clause of sets) {
+      expect(clause).toContain('enabled = 0')
+      expect(clause).not.toContain('feed_url')
+    }
+  })
+
   it('stores digest publication history without article bodies', () => {
     const sql = readFileSync(join(root, 'migrations/0005_daily_digest.sql'), 'utf8')
     expect(sql).toContain('CREATE TABLE digest_published_items')
