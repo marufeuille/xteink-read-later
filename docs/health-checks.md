@@ -4,14 +4,14 @@
 
 本番 origin は `https://xteink-read-later.marufeuille.workers.dev`。末尾スラッシュは付けない。リダイレクトは追わない。最初のステータスを見る。
 
-パスの正本は [access-as-code.md](access-as-code.md)。ログの日次は [workers-logs.md](workers-logs.md)。OPDS の識別子は [daily-opds.md](daily-opds.md)。外形監視のコード正本は [infra/checkly/](../infra/checkly/)。
+パスの正本は [access-as-code.md](access-as-code.md)。ログの日次は [workers-logs.md](workers-logs.md)。OPDS の識別子は [daily-opds.md](daily-opds.md)。
 
 ## いつやるか
 
 | 枠 | 何を見るか | 誰が・いつ |
 | --- | --- | --- |
 | 朝晩 | `/opds` 401 と `/candidates.json` Bearer 200 | Ops ルーチン folder `xteink`（8:39 / 20:39 JST）。Access パスは見ない |
-| Access 外形監視（別監視） | `/books` 壁あり・`/digest/send` 壁なし | **Checkly**（Hobby $0、**as-code**）が外から定期プローブ。落ちたらメール等で Ops が Linear を切る。朝晩とは別 |
+| Access 外形監視（別監視） | `/books` 壁あり・`/digest/send` 壁なし | **Cronitor Hacker（$0 / 約 5 monitors）** が外から定期プローブ。落ちたらメール等で Ops が Linear を切る。朝晩とは別 |
 | Access の経路を変えたとき | 上に加え、Basic `/opds` 200 と `/clip/recent` 壁 | 人手。Access の対象パスや Zero Trust の覆いを変えたデプロイのあとだけ |
 
 Access 外形監視は MAR-150（Access Terraform CI）とも、朝晩ヘルスとも独立。既存の `/opds` Basic 401 とはパスが違うので衝突しない。
@@ -31,7 +31,7 @@ Access 外形監視は MAR-150（Access Terraform CI）とも、朝晩ヘルス�
 
 **目的:** Access 方針がずれたら、Ops / box が止まっていても外から検知できること。
 
-**採用スタック:** [Checkly](https://www.checklyhq.com/) **Hobby（$0）** + **CLI constructs（as-code）**。定義の正本は [`infra/checkly/`](../infra/checkly/)。ダッシュボードでモニターを手作りしない（アカウントと API key の作成だけ UI）。`npx checkly deploy` で反映する。Cloudflare Health Checks は Free では不可（Pro+）。UptimeRobot Free はカスタム 404=UP が有料で `/digest/send` に向かない。Cronitor も無料で断言できるが、チームは Checkly as-code を選んだ。
+**採用スタック:** [Cronitor](https://cronitor.io/) **Hacker（$0 / 約 5 monitors）**。モニターは Cronitor の UI で置く（as-code ではない）。外から HTTP を叩き、期待と違うときメールで知らせる。朝晩ヘルス（Ops ルーチン folder `xteink`）とは別。Checkly は無料でも status / header 断言はあるが、**Service API key が Enterprise 専用**で Hobby / Trial から CI / as-code deploy できないため見送り。Cloudflare Health Checks は Free では不可（Pro+）。UptimeRobot Free はカスタム 404=UP が有料で `/digest/send` に向かない。
 
 ### 期待（正本）
 
@@ -42,38 +42,42 @@ Access 外形監視は MAR-150（Access Terraform CI）とも、朝晩ヘルス�
 
 いまのチームのログインホストは `marufeuille.cloudflareaccess.com`。`GET /digest/send` のパス単体に Worker ルートは無く、届いたときのステータスは **404**。署名付きの `/digest/send/:candidateId/:expires/:token` は監視しない。
 
-### Checkly as-code（Masahiro がアカウント作成後）
+### Cronitor モニター設定（Masahiro が UI で作成）
 
-1. Hobby アカウントと API key / Account ID を用意（手順は Ops の setup メモ。値はリポジトリに書かない）。
-2. `cd infra/checkly && npm install`
-3. 環境に `CHECKLY_API_KEY` と `CHECKLY_ACCOUNT_ID` を置いて `npx checkly test` → 緑を確認 → `npx checkly deploy`
-4. Alert Email を Masahiro へ。webhook / 追加メールで Ops → Linear は後から可。
-5. GitHub Actions からの自動 deploy と Secrets（`CHECKLY_API_KEY` 等）は後続。この文書では workflow を要求しない。
+アカウント: [Cronitor Hacker](https://cronitor.io/pricing)（$0。クレカ不要の表記）。モニターは 2 本。定義はリポジトリに置かない。
 
-論理 ID（コード上）:
+共通: Method GET、Follow redirects **OFF**、間隔 every 5 minutes。認証ヘッダは付けない。
 
-- `xteink-books-access-wall` — status 302 + header `Location` contains `cloudflareaccess.com`、`followRedirects: false`
-- `xteink-digest-send-no-access` — status equals 404、`followRedirects: false`（「request should fail」は使わない）
+1. **`xteink-books-access-wall`**
+   - Type: Website / HTTP check
+   - URL: `https://xteink-read-later.marufeuille.workers.dev/books`
+   - Assertions:
+     - `response.code = 302`
+     - `response.header Location contains cloudflareaccess.com`
+2. **`xteink-digest-send-no-access`**
+   - URL: `https://xteink-read-later.marufeuille.workers.dev/digest/send`
+   - Assertions:
+     - `response.code = 404`
 
-詳細は [infra/checkly/README.md](../infra/checkly/README.md)。
+Alerts: Email を Masahiro へ。任意で第二の宛先（Ops inbox）にも送り、メール起動で Linear を切る。秘密値は Cronitor に置かない。
 
 ### 異常のとき（Ops）
 
-既存 Ops 通知に揃える。Marufeuille / Xteink Read Later に Linear を切る（どの check か・観測ステータス・`Location` ホスト・次の手）。token / パスワードは書かない。
+既存 Ops 通知に揃える。Marufeuille / Xteink Read Later に Linear を切る（どのモニターか・観測ステータス・`Location` ホスト・次の手）。token / パスワードは書かない。
 
 直し方の目安:
 
 1. [access-as-code.md](access-as-code.md) の Allow / Bypass と本番 Zero Trust が一致しているか見る。
 2. `/books` が壁なし → Allow の destinations に `/books`（と `/books/` / `/books/*`）があるか。消えていれば Access 側を戻す。
 3. `/digest/send` が壁あり → Bypass アプリ（ホスト + `/digest/send`）が生きているか。親の `/digest` Allow が配下を飲み込んでいないか。
-4. 直したあと Checkly が緑に戻ることと、朝晩の `/opds` 401 が壊れていないことを確認する。
+4. 直したあと Cronitor が緑に戻ることと、朝晩の `/opds` 401 が壊れていないことを確認する。
 
-### なぜ Checkly（as-code）か（短い比較）
+### なぜ Cronitor か（短い比較）
 
 | 候補 | 判定 |
 | --- | --- |
-| **Checkly Hobby + CLI（採用）** | 無料で status / header 断言可。302+Location と 404 をそのまま「正常」にできる。定義を git でレビューできる。メール/Slack/webhook。チーム選定 |
-| Cronitor Hacker | 同様に無料で断言可だが、今回は採用しない（UI 主導になりやすい） |
+| **Cronitor Hacker（採用）** | $0 / 約 5 monitors。`response.code` / header 断言可。302+Location と 404 をそのまま「正常」にできる。UI で置き、朝晩（folder `xteink`）とは別。メール |
+| Checkly Hobby | 無料で status / header 断言はある。**Service API key は Enterprise 専用**なので、Hobby / Trial では as-code / CI deploy に使える永続キーが無く、見送り |
 | UptimeRobot Free | 既定は 2xx/3xx=UP なので `/books` 302 は可だが、**404 を UP にするカスタムステータスは有料** → `/digest/send` 不向き |
 | Cloudflare Health Checks | **Free では不可**（Pro+） |
 | Ops curl のみ | 実装は簡単だが、Ops/box 障害時に見逃す。補助にはできるが主検知にはしない |
