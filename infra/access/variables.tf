@@ -10,6 +10,6 @@ variable "account_id" {
 
 variable "policy_precedence" {
   type        = number
-  description = "アプリに付くポリシーの順序。2026-09-30 の読み取りでは未記録。Access の先頭は通常 1。plan が precedence だけを出すとき、terraform.tfvars で実体の値に合わせ、その差分は apply しない。"
+  description = "Allow と Bypass の両方に付くポリシーの順序。2026-09-30 の読み取りでは未記録。Access の先頭は通常 1。plan が precedence だけを出すとき、terraform.tfvars で実体の値に合わせ、その差分は apply しない。"
   default     = 1
 }

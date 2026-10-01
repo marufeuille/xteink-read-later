@@ -29,7 +29,13 @@ Access の対象パスや Zero Trust の覆いを変えていないときは、�
 | --- | --- | --- | --- |
 | `GET /opds` | HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`） | **200**。`*.cloudflareaccess.com` へ飛ばない | Access の経路を変えたときだけ |
 | `GET /clip/recent` | Access のセッションなし | **302**。`Location` のホストが `*.cloudflareaccess.com` | 同上 |
+| `GET /books` | Access のセッションなし | **302**。`Location` のホストが `*.cloudflareaccess.com` | 同上 |
+| `GET /digest/send` | なし | Access に飛ばない。Worker の **404** | 同上 |
 
 Basic で守った `/opds` は Access のログインに入らない。正しい Basic を付けたとき Worker は **200** を返す。カタログ本文は見ない。認証が無い、または Basic が一致しないときは Worker 自身の **401** で、それは朝晩の行である。`*.cloudflareaccess.com` へ飛ぶ（多くは **302**）のは不合格。Access が経路を飲んでいる。ユーザー名とパスワードの値はここに書かない。
 
 `GET /clip/recent` の **302** は、その HTML が Access 越しに守られている印。いまのチームのログインホストは `marufeuille.cloudflareaccess.com`。セッション無しで Worker の **401** が返るときは、Access の対象から外れている。
+
+`GET /books` の **302** は、購入本の HTML が Access の対象である印。セッション無しで Worker の **401** が返るときは、対象から外れている。
+
+`GET /digest/send` はまとめ QR の入口で、Access のログインには入れない。`*.cloudflareaccess.com` へ飛ぶのは不合格。パス単体に Worker のルートは無く、届いたときのステータスは **404**。署名付きの `/digest/send/:candidateId/:expires/:token` はここでは叩かない。

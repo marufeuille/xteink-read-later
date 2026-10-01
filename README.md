@@ -14,7 +14,7 @@
 | [docs/workers-logs.md](docs/workers-logs.md) | Workers Logs のフィールドと日次の保存クエリ（現行） |
 | [docs/health-checks.md](docs/health-checks.md) | 本番スモークのステータス合否（朝晩と、Access 経路を変えたとき） |
 | [docs/github-merge-gates.md](docs/github-merge-gates.md) | `main` のマージ条件（現行） |
-| [docs/access-as-code.md](docs/access-as-code.md) | Cloudflare Access の Terraform（手元で import / plan。CI では適用しない） |
+| [docs/access-as-code.md](docs/access-as-code.md) | Cloudflare Access の Terraform（apply は Ops の手元。CI では適用しない） |
 | [docs/pr-risk.md](docs/pr-risk.md) | PR リスク分類の試行（記録のみ） |
 | [docs/plan/](docs/plan/) | 着手時の計画と、翻訳モデル・Workflows の調査記録。当時の API 契約は現行ではない |
 
@@ -175,7 +175,8 @@ npm run dev
 | `POST /clip`、`GET /clip/jobs/:jobId`、`DELETE /articles/:id` | Bearer `CLIP_TOKEN` のみ |
 | `POST /books`（Bearer） | Bearer `CLIP_TOKEN`。`title` 必須。空タイトルを OPF では埋めない |
 | `GET /books` と Access の購入本フォーム | Cloudflare Access（Google）。タイトルが空なら OPF の `dc:title`、著者が空なら `dc:creator` |
-| `/candidates`、`/sources`、`/clip/web`、`GET /clip/recent`、`POST /digest` と配下 | JSON は Bearer `CLIP_TOKEN`。ブラウザの HTML は Cloudflare Access（Google）。Worker は `ctx.access` の email を見る。`/clip/recent` は jobId / status / stage / error.code だけ |
+| `/candidates`、`/sources`、`/clip/web`、`GET /clip/recent`、`POST /digest`（`/digest` と `/digest/`） | JSON は Bearer `CLIP_TOKEN`。ブラウザの HTML は Cloudflare Access（Google）。Worker は `ctx.access` の email を見る。`/clip/recent` は jobId / status / stage / error.code だけ |
+| `/digest/send/…`（まとめ QR の GET / POST） | Access の Bypass。Google ログインは要らない。署名は候補 ID と、号の日付から 14 日の期限 |
 | `GET /opds`（`clip` / `ebook` と日付）、`GET /articles/:id`、`GET /articles/:id/book.epub`、`GET /opds/download/:id.epub` | HTTP Basic（`OPDS_USERNAME` / `OPDS_PASSWORD`） |
 
 トークンログインとセッション Cookie は使わない。HTML のフォーム POST は CSRF 必須。Bearer の JSON は CSRF を見ない。`/clip/web` の GET は URL の確認だけで、クリップの受付は CSRF 付き POST。JSON で送るときは既存の `POST /clip` と同じ **202** `jobId`。`GET /books` は購入 EPUB の投稿画面。
@@ -232,7 +233,7 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 
 1 回の収集は情報源ごとに独立する。件数 20、フィードサイズ 3MB（3,000,000 バイト）、時間 20 秒、Queue 再試行 3 回が上限。失敗は情報源一覧に出る。同じ「今すぐ収集」か翌日の Cron で再実行する。収集 Cron は enqueue だけで本文翻訳しない。まとめの中身は上の枠と要約の規則。
 
-まとめ EPUB の各記事の下に、確認ページへの白地 PNG の QR を入れる。スマホで開くと「全文を送る」が出る。GET は送信しない。ボタンの POST だけが候補一覧と同じ全文 Queue に入る。Google ログインは要らない。署名は候補 ID と、号の日付から 14 日の期限に紐づく。`CLIP_TOKEN` は URL に入らない。同じ日にまとめを作り直しても QR は同じ。完成済みの全文は再利用し、新しい run は作らない。有料・取得できない記事は理由を出して送らない。通常の記事 EPUB には画像を入れない。`/digest/send` は Access のパスに入れない。
+まとめ EPUB の各記事の下に、確認ページへの白地 PNG の QR を入れる。スマホで開くと「全文を送る」が出る。GET は送信しない。ボタンの POST だけが候補一覧と同じ全文 Queue に入る。Google ログインは要らない。署名は候補 ID と、号の日付から 14 日の期限に紐づく。`CLIP_TOKEN` は URL に入らない。同じ日にまとめを作り直しても QR は同じ。完成済みの全文は再利用し、新しい run は作らない。有料・取得できない記事は理由を出して送らない。通常の記事 EPUB には画像を入れない。`/digest/send` は Allow のパスに入れず、別アプリの Bypass にしてある。
 
 `PUBLIC_ORIGIN` は秘密ではない。`wrangler.jsonc` の `vars` に本番 origin（末尾スラッシュなし）を置く。未設定、またはパスやクエリ付きのときはまとめ自体は出るが QR は付かない。
 
@@ -378,11 +379,13 @@ npx wrangler secret put OPDS_PASSWORD
 
 ### 初回だけ — 管理画面の Google 認証（Cloudflare Access）
 
-候補一覧、情報源、PC クリップ確認、最近のクリップ、購入本投稿のブラウザ画面を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles` は Bearer / Basic のまま。`/clip/web`、`/clip/recent`、`/books` を画面として足す。`/books` と `/clip/recent` を足すと同じパスの curl も Access に当たる。Bearer の multipart 契約は Worker に届いたリクエストでは残す。まとめ QR の `/digest/send` は Access に入れない。
+候補一覧、情報源、PC クリップ確認、最近のクリップ、購入本投稿、まとめの手動実行（`/digest` と `/digest/`）を Zero Trust で守る。**Worker 全体を Access にしない。** `/clip`（`POST /clip` と `/clip/jobs`）・`/opds`・`/articles` は Bearer / Basic のまま。`/books` と `/clip/recent` を足すと同じパスの curl も Access に当たる。Bearer の multipart 契約は Worker に届いたリクエストでは残す。まとめ QR の `/digest/send` は Allow に入れない。別アプリの Bypass にする。
+
+正本と ID は [docs/access-as-code.md](docs/access-as-code.md)。2026-10-01 に [MAR-142](https://linear.app/marufeuille/issue/MAR-142) を本番へ適用済み（Masahiro 承認）。`/books` は Allow に入っている。`/digest/*` は外してある。
 
 1. [Zero Trust](https://one.dash.cloudflare.com/) で組織を有効にする。
 2. [Google を identity provider にする](https://developers.cloudflare.com/cloudflare-one/integrations/identity-providers/google/)。Google Cloud の OAuth クライアントが必要。Authorized redirect URI は `https://<team-name>.cloudflareaccess.com/cdn-cgi/access/callback`。
-3. **Zero Trust → Access → Applications** で self-hosted アプリを作る。ドメインは本番の `workers.dev` ホストに次のパスだけ（JSON の `/candidates.json` と `/sources.json` は含めない）:
+3. **Zero Trust → Access → Applications** で self-hosted アプリを作る。ドメインは本番の `workers.dev` ホストに次のパスだけ（JSON の `/candidates.json` と `/sources.json` は含めない。`/digest/*` は含めない）:
    - `xteink-read-later.<account>.workers.dev/candidates`
    - `xteink-read-later.<account>.workers.dev/candidates/`
    - `xteink-read-later.<account>.workers.dev/candidates/*`
@@ -392,13 +395,18 @@ npx wrangler secret put OPDS_PASSWORD
    - `xteink-read-later.<account>.workers.dev/clip/web`
    - `xteink-read-later.<account>.workers.dev/clip/web/`
    - `xteink-read-later.<account>.workers.dev/clip/web/*`
+   - `xteink-read-later.<account>.workers.dev/digest`
+   - `xteink-read-later.<account>.workers.dev/digest/`
    - `xteink-read-later.<account>.workers.dev/clip/recent`
    - `xteink-read-later.<account>.workers.dev/clip/recent/`
    - `xteink-read-later.<account>.workers.dev/books`
    - `xteink-read-later.<account>.workers.dev/books/`
    - `xteink-read-later.<account>.workers.dev/books/*`
 4. Allow ポリシー: Login method = Google、自分の Google メール。Reusable policy をアプリに付ける。`/clip` 自体は入れない（Android の `POST /clip` を Access のログインに通さない）。
-5. `/candidates`、`/clip/web`、`/clip/recent`、`/books` を開いて Google で入れること、`/opds` と `POST /clip` が Access ログインに飛ばないことを確認する。
+5. 別の self-hosted アプリを作る。名前はホスト + `/digest/send`。宛先は次の 2 つだけ。ポリシーは Bypass、Include は Everyone。親の `/digest` は配下を継承する。このアプリが無いと QR が Google ログインになる。
+   - `xteink-read-later.<account>.workers.dev/digest/send`
+   - `xteink-read-later.<account>.workers.dev/digest/send/`
+6. `/candidates`、`/clip/web`、`/clip/recent`、`/books` を開いて Google で入れること。セッション無しの `GET /books` は `*.cloudflareaccess.com` へ 302 すること。`GET /digest/send` は Access に飛ばず Worker の 404 であること。`/opds` は Basic の 401、`POST /clip` は Access ログインに飛ばないこと。
 
 Access を掛ける前に管理画面だけ本番へ出ると、その HTML は 401 になる（JSON API の Bearer は残る）。復旧は上の Access アプリを足すか、管理画面を出す変更を戻す。
 
