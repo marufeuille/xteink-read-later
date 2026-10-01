@@ -98,7 +98,7 @@ describe('sourcesPageHtml last collected line', () => {
     feedUrl: mustUrl('https://failed.example.com/feed.xml?x=1&y=2'),
     collectionStatus: 'failed',
     collectionErrorCode: 'invalid_feed',
-    collectionErrorMessage: 'フィードを読めませんでした <detail>',
+    collectionErrorMessage: 'Failed to fetch https://hidden.example/secret: HTTP 500',
     lastCollectedAt: COLLECTED_AT,
   })
   const fresh = source({
@@ -138,9 +138,11 @@ describe('sourcesPageHtml last collected line', () => {
     expect(article).toContain('href="https://ready.example.com/feed.xml"')
   })
 
-  it('keeps the failure text and URLs, and shows the saved time', () => {
+  it('shows a Japanese error label and the saved time, without the stored message', () => {
     const article = card(page, 'Failed feed')
-    expect(article).toContain('失敗: フィードを読めませんでした &lt;detail&gt;')
+    expect(article).toContain('失敗: フィード不正（invalid_feed）')
+    expect(article).not.toContain('Failed to fetch')
+    expect(article).not.toContain('hidden.example')
     expect(article).toContain(COLLECTED_LABEL)
     expect(article).toContain('href="https://failed.example.com/"')
     expect(article).toContain('href="https://failed.example.com/feed.xml?x=1&amp;y=2"')
@@ -191,5 +193,103 @@ describe('sourcesPageHtml last collected line', () => {
     expect(article).toContain('まだ収集していません')
     expect(article).not.toContain('最終収集')
     expect(article).not.toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)
+  })
+})
+
+const COLLECTION_ERROR_LABELS = [
+  ['fetch_failed', '取得失敗'],
+  ['invalid_feed', 'フィード不正'],
+  ['payload_too_large', 'サイズ超過'],
+  ['queue_failed', 'キュー失敗'],
+  ['internal_error', '内部エラー'],
+] as const
+
+describe('sourcesPageHtml collection errors', () => {
+  const secret = 'Failed to fetch https://hidden.example/rss: boom'
+  const known = COLLECTION_ERROR_LABELS.map(([code], index) =>
+    source({
+      id: asFeedSourceId(`src_${String(index + 1).padStart(32, 'a')}`),
+      name: code,
+      collectionStatus: 'failed',
+      collectionErrorCode: code,
+      collectionErrorMessage: secret,
+      itemsRegistered: 2,
+      itemsDuplicate: 1,
+      itemsSkipped: 0,
+      lastCollectedAt: COLLECTED_AT,
+    }),
+  )
+  const unknown = source({
+    id: asFeedSourceId('src_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+    name: 'unknown code',
+    collectionStatus: 'failed',
+    collectionErrorCode: 'not_a_code',
+    collectionErrorMessage: 'Payload exceeded the size limit (9 bytes) at https://hidden.example/big',
+  })
+  const messy = source({
+    id: asFeedSourceId('src_cccccccccccccccccccccccccccccccc'),
+    name: 'messy code',
+    collectionStatus: 'failed',
+    collectionErrorCode: 'weird<code>',
+    collectionErrorMessage: 'Feed collection failed after an unexpected error',
+  })
+  const missing = source({
+    id: asFeedSourceId('src_dddddddddddddddddddddddddddddddd'),
+    name: 'missing code',
+    collectionStatus: 'failed',
+    collectionErrorCode: null,
+    collectionErrorMessage: secret,
+    lastCollectedAt: COLLECTED_AT,
+  })
+  const blank = source({
+    id: asFeedSourceId('src_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
+    name: 'blank code',
+    collectionStatus: 'failed',
+    collectionErrorCode: '',
+    collectionErrorMessage: secret,
+  })
+  const page = sourcesPageHtml({
+    sources: [...known, unknown, messy, missing, blank],
+    csrfToken: 'csrf-token',
+  })
+
+  it('maps every known collection error code to 日本語（code）', () => {
+    for (const [code, label] of COLLECTION_ERROR_LABELS) {
+      const article = card(page, code)
+      expect(article).toContain(`失敗: ${label}（${code}）`)
+      expect(article).not.toContain('Failed to fetch')
+      expect(article).not.toContain('hidden.example')
+      expect(article).toContain(COLLECTED_LABEL)
+      expect(article).not.toContain('前回 新規2')
+    }
+    expect(page).not.toContain(secret)
+  })
+
+  it('falls back to the raw code when the code is unknown', () => {
+    const article = card(page, 'unknown code')
+    expect(article).toContain('失敗: not_a_code')
+    expect(article).not.toContain('（not_a_code）')
+    expect(article).not.toContain('Payload exceeded')
+    expect(article).not.toContain('hidden.example')
+  })
+
+  it('escapes an unknown code and does not invent a label', () => {
+    const article = card(page, 'messy code')
+    expect(article).toContain('失敗: weird&lt;code&gt;')
+    expect(article).not.toContain('失敗: weird<code>')
+    expect(article).not.toContain('（weird')
+    expect(article).not.toContain('Feed collection failed')
+  })
+
+  it('does not show the stored message when the code is missing', () => {
+    const absent = card(page, 'missing code')
+    expect(absent).toContain('失敗: 失敗')
+    expect(absent).toContain(COLLECTED_LABEL)
+    expect(absent).not.toContain('Failed to fetch')
+    expect(absent).not.toContain('hidden.example')
+
+    const empty = card(page, 'blank code')
+    expect(empty).toContain('失敗: 失敗')
+    expect(empty).not.toContain('Failed to fetch')
   })
 })
