@@ -4,6 +4,11 @@ import { errorMessage } from '../http/error-response'
 import { shouldProcessClipRun } from '../job/clip'
 import { logPipeline } from '../log'
 import { clipPipeline as defaultClipPipeline } from '../pipeline/clip'
+import {
+  CRONITOR_CLIP_FAIL_MESSAGE,
+  CRONITOR_CLIP_MONITOR_KEY_BINDING,
+  traceCronitorJob,
+} from '../telemetry/cronitor'
 import { createD1CandidateStore } from '../store/d1-candidates'
 import { createR2Store } from '../store/r2'
 import type {
@@ -38,7 +43,10 @@ export type ClipQueueHandlerDeps = {
   readonly createStore?: CreateArticleStore
   readonly candidateStore?: CandidateStore
   readonly createCandidateStore?: (env: Cloudflare.Env) => CandidateStore
+  readonly cronitorFetch?: typeof fetch
 }
+
+type ClipQueueMessageOutcome = 'ready' | 'failed' | 'retry' | 'skipped' | 'invalid'
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -286,17 +294,17 @@ async function processMessage(
   message: Message<ClipQueueMessage>,
   env: Cloudflare.Env,
   deps: ClipQueueHandlerDeps,
-): Promise<void> {
+): Promise<ClipQueueMessageOutcome> {
   const parsed = parseClipQueueMessage(message.body)
   if (parsed === null) {
     logPipeline({ stage: 'queue', durationMs: 0, errorKind: 'invalid_url' })
     message.ack()
-    return
+    return 'invalid'
   }
 
   const stages: ClipStageRecord[] = []
   try {
-    await runClipQueueMessage(message, parsed, env, deps, stages)
+    return await runClipQueueMessage(message, parsed, env, deps, stages)
   } catch {
     const store = storeFor(env, deps)
     const existing = await store.getJob(parsed.jobId)
@@ -324,7 +332,7 @@ async function processMessage(
         updatedAt: nowIso(),
       })
       message.retry()
-      return
+      return 'retry'
     }
     await deleteCheckpointForRun(store, parsed.jobId, parsed.runId)
     await putJobIfCurrentRun(store, {
@@ -339,6 +347,7 @@ async function processMessage(
       updatedAt: nowIso(),
     })
     message.ack()
+    return 'failed'
   }
 }
 
@@ -348,7 +357,7 @@ async function runClipQueueMessage(
   env: Cloudflare.Env,
   deps: ClipQueueHandlerDeps,
   stages: ClipStageRecord[],
-): Promise<void> {
+): Promise<ClipQueueMessageOutcome> {
   const { jobId, runId, url } = parsed
   const store = storeFor(env, deps)
   const pipeline = deps.clipPipeline ?? defaultClipPipeline
@@ -357,7 +366,7 @@ async function runClipQueueMessage(
   if (!shouldProcessClipRun(existing, runId)) {
     await deleteCheckpointForRun(store, jobId, runId)
     message.ack()
-    return
+    return 'skipped'
   }
 
   const fields = jobFields(parsed, existing, message.attempts)
@@ -374,7 +383,7 @@ async function runClipQueueMessage(
       updatedAt: nowIso(),
     }))
   ) {
-    return
+    return 'skipped'
   }
 
   const checkpoint = await checkpointForRun(store, jobId, runId)
@@ -397,15 +406,15 @@ async function runClipQueueMessage(
   if (result.ok) {
     const { id, article, epub } = result.value
     if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
-      return
+      return 'skipped'
     }
     await store.put(clipArticleWrite(id, article, epub), log)
     if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
-      return
+      return 'skipped'
     }
     const classification = await classifyQueuedArticle(article, env, classify, id, log)
     if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
-      return
+      return 'skipped'
     }
     if (classification.status !== 'skipped') {
       await store.putClassification(id, classification)
@@ -423,12 +432,12 @@ async function runClipQueueMessage(
       updatedAt: nowIso(),
     }
     if (!(await putCurrentRunOrAck(store, message, readyJob))) {
-      return
+      return 'skipped'
     }
     await deleteCheckpointForRun(store, jobId, runId)
     await attachCompletedCandidate(env, deps, readyJob)
     message.ack()
-    return
+    return 'ready'
   }
 
   if (shouldRetryClipError(result.error, message.attempts)) {
@@ -448,7 +457,7 @@ async function runClipQueueMessage(
       updatedAt: nowIso(),
     })
     message.retry()
-    return
+    return 'retry'
   }
 
   logPipeline(
@@ -473,15 +482,36 @@ async function runClipQueueMessage(
     updatedAt: nowIso(),
   })
   message.ack()
+  return 'failed'
 }
 
 export function createClipQueueHandler(
   deps: ClipQueueHandlerDeps = {},
 ): (batch: MessageBatch<ClipQueueMessage>, env: Cloudflare.Env) => Promise<void> {
   return async (batch, env) => {
-    for (const message of batch.messages) {
-      await processMessage(message, env, deps)
-    }
+    await traceCronitorJob({
+      env,
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      ...(deps.cronitorFetch === undefined ? {} : { fetch: deps.cronitorFetch }),
+      job: async () => {
+        let count = 0
+        let errorCount = 0
+        for (const message of batch.messages) {
+          const outcome = await processMessage(message, env, deps)
+          count += 1
+          if (outcome === 'failed' || outcome === 'invalid') {
+            errorCount += 1
+          }
+        }
+        return { count, errorCount }
+      },
+      metrics: (summary) => ({
+        count: summary.count,
+        error_count: summary.errorCount,
+      }),
+      failed: (summary) => summary.errorCount > 0,
+    })
   }
 }
 
