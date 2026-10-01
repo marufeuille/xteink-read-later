@@ -1,0 +1,18 @@
+{
+  "name": "xteink-read-later-checkly",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Access path external monitoring (Checkly as-code) for xteink-read-later",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
+  "scripts": {
+    "test": "npx checkly test",
+    "deploy": "npx checkly deploy",
+    "destroy": "npx checkly destroy"
+  },
+  "devDependencies": {
+    "checkly": "^8.23.0",
+    "typescript": "^5.6.0"
+  }
+}
