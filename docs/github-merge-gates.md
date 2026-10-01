@@ -29,12 +29,14 @@ AGENTS.md の自律マージを、GitHub 側でも強制する。運用の正本
 | ジョブ | skipped になる差分 | 実行する差分 |
 | --- | --- | --- |
 | `check`（typecheck, unit, e2e） | `docs/**` と、`src/`・`test/`・`simulator/` 以外の `*.md` だけ | それ以外。文書アサーションの `test/**` を含む |
-| `simulator images` | 上に加え、`test/**`、`vitest.config.ts`、`vitest.e2e.config.ts`、`wrangler.*`、`migrations/**`、`infra/**`、`.github/scripts/**`、`.github/merge-gates/**`、`.github/workflows/pr-risk.yml`、`.dev.vars.example`、`.gitignore`、`.editorconfig`、`.nvmrc`、`.node-version` | `src/**`、`simulator/**`、`package.json`、`package-lock.json`、`vitest.simulator.config.ts`、`tsconfig.json`、`.github/workflows/ci.yml`、表に無いパス |
-| `deploy worker` | docs、`test/**`、`simulator/**`、`ci.yml`、`pr-risk.yml`、分類・merge-gate・ruleset 適用スクリプト、`infra/**`、`.github/merge-gates/**`、`.dev.vars.example`、`.gitignore`、`.editorconfig`、`.nvmrc`、`.node-version` | `src/**`、package manifests、`wrangler.*`、`tsconfig.json`、`migrations/**`、`.github/scripts/ensure-*.sh`、表に無いパス |
+| `simulator images` | 上に加え、`test/**`、`vitest.config.ts`、`vitest.e2e.config.ts`、`wrangler.*`、`migrations/**`、`infra/**`、`.github/scripts/**`、`.github/merge-gates/**`、`.github/workflows/pr-risk.yml`、`.github/workflows/access-terraform.yml`、`.dev.vars.example`、`.gitignore`、`.editorconfig`、`.nvmrc`、`.node-version` | `src/**`、`simulator/**`、`package.json`、`package-lock.json`、`vitest.simulator.config.ts`、`tsconfig.json`、`.github/workflows/ci.yml`、表に無いパス |
+| `deploy worker` | docs、`test/**`、`simulator/**`、`ci.yml`、`pr-risk.yml`、`access-terraform.yml`、`.github/scripts/access-terraform.sh`、分類・merge-gate・ruleset 適用スクリプト、`infra/**`、`.github/merge-gates/**`、`.dev.vars.example`、`.gitignore`、`.editorconfig`、`.nvmrc`、`.node-version` | `src/**`、package manifests、`wrangler.*`、`tsconfig.json`、`migrations/**`、`.github/scripts/ensure-*.sh`、表に無いパス |
 
 `src/**` は画像帯に効くファイルを切り分けず、simulator と deploy の両方の対象にする。表に無いパスは省略しない。
 
 `deploy worker` は `main` への push だけで、`check` が `success` のとき走る。simulator がパス分類で skipped でも、Worker か deploy 設定に効く差分なら deploy する。`check` が失敗または skipped のときは deploy しない。docs だけの `main` マージでは deploy は skipped になる。
+
+Access Terraform（`.github/workflows/access-terraform.yml`）は必須チェックではない。`on.paths` で `infra/access/**` と、その workflow、`.github/scripts/access-terraform.sh` だけを対象にする。無関係な PR では workflow 自体が走らない。必須チェックに足すときは `on.paths` を外し、スキップはジョブの `if` に移す。workflow が未実行だと、そのチェックは pending のまま残り、マージできない。この差分は simulator と `deploy worker` を走らせない。Workers の deploy は `CLOUDFLARE_API_TOKEN` のまま。Access Terraform は `TF_CLOUDFLARE_API_TOKEN`。手順は [access-as-code.md](access-as-code.md)。
 
 `merge-gate` は `if: always()` なので、依存ジョブが skipped でも失敗でも実行される。`classify changes` が失敗したときはゲートも失敗する。GitHub はジョブの `if` による skipped を必須チェックの成功として扱う。必須なのは常に実行する `merge-gate` だけで、その結論が `success` のときだけマージできる。
 
