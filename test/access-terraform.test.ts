@@ -24,9 +24,22 @@ function tempDir(): string {
 }
 
 function run(args: string[], env: Record<string, string> = {}) {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, LANG: 'C.UTF-8' }
+  for (const name of [
+    'CLOUDFLARE_API_TOKEN',
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'AWS_SESSION_TOKEN',
+    'GITHUB_SHA',
+    'GITHUB_SERVER_URL',
+    'GITHUB_REPOSITORY',
+    'GITHUB_RUN_ID',
+  ]) {
+    delete childEnv[name]
+  }
   return spawnSync('bash', [script, ...args], {
     encoding: 'utf8',
-    env: { PATH: process.env.PATH ?? '', LANG: 'C.UTF-8', ...env },
+    env: { ...childEnv, ...env },
   })
 }
 
