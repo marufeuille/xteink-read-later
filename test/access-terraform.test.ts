@@ -84,6 +84,18 @@ describe('access terraform guard', () => {
     expect(run(['state-guard', list]).status).toBe(0)
   })
 
+  it('accepts the Bypass application at its pre-move address', () => {
+    const dir = tempDir()
+    const list = join(dir, 'state.txt')
+    const legacy = addresses.map((addr) =>
+      addr === 'cloudflare_zero_trust_access_application.digest_send'
+        ? 'cloudflare_zero_trust_access_application.digest_send_bypass'
+        : addr,
+    )
+    writeFileSync(list, `${legacy.join('\n')}\n`)
+    expect(run(['state-guard', list]).status).toBe(0)
+  })
+
   it('rejects a state list that is missing an imported address', () => {
     const dir = tempDir()
     const list = join(dir, 'state.txt')
@@ -91,6 +103,44 @@ describe('access terraform guard', () => {
     const result = run(['state-guard', list])
     expect(result.status).not.toBe(0)
     expect(result.stderr).toContain('cloudflare_zero_trust_access_application.digest_send')
+  })
+
+  it('rejects a state list that has both Bypass application addresses', () => {
+    const dir = tempDir()
+    const list = join(dir, 'state.txt')
+    writeFileSync(
+      list,
+      `${addresses.join('\n')}\ncloudflare_zero_trust_access_application.digest_send_bypass\n`,
+    )
+    const result = run(['state-guard', list])
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('cloudflare_zero_trust_access_application.digest_send')
+    expect(result.stderr).toContain('cloudflare_zero_trust_access_application.digest_send_bypass')
+  })
+
+  it('accepts a state-only move of the Bypass application', () => {
+    const dir = tempDir()
+    const plan = join(dir, 'plan.txt')
+    writeFileSync(
+      plan,
+      [
+        '  # cloudflare_zero_trust_access_application.digest_send_bypass has moved to cloudflare_zero_trust_access_application.digest_send',
+        'Plan: 0 to add, 0 to change, 0 to destroy.',
+      ].join('\n'),
+    )
+    expect(run(['plan-guard', plan]).status).toBe(0)
+  })
+
+  it('rejects destroying the pre-move Bypass application', () => {
+    const dir = tempDir()
+    const plan = join(dir, 'plan.txt')
+    writeFileSync(
+      plan,
+      '  # cloudflare_zero_trust_access_application.digest_send_bypass will be destroyed\n',
+    )
+    const result = run(['plan-guard', plan])
+    expect(result.status).not.toBe(0)
+    expect(result.stderr).toContain('cloudflare_zero_trust_access_application.digest_send_bypass')
   })
 
   it('fails closed when the plan file is missing', () => {
@@ -224,6 +274,7 @@ describe('access terraform docs', () => {
     'docs/access-as-code.md',
     'infra/access/README.md',
     'infra/access/main.tf',
+    'infra/access/moved.tf',
     'infra/access/versions.tf',
   ].map((path) => readFileSync(join(root, path), 'utf8'))
   const docs = files.join('\n')
@@ -248,6 +299,8 @@ describe('access terraform docs', () => {
     expect(docs).toContain('TF_STATE_ACCESS_KEY_ID')
     expect(docs).toContain('TF_STATE_SECRET_ACCESS_KEY')
     expect(docs).toContain('Workers の deploy は secret `CLOUDFLARE_API_TOKEN`')
+    expect(docs).toContain('from = cloudflare_zero_trust_access_application.digest_send_bypass')
+    expect(docs).toContain('to   = cloudflare_zero_trust_access_application.digest_send')
     expect(docs).toContain('terraform init -migrate-state')
     expect(docs).toContain('skip_credentials_validation')
     expect(docs).toContain('use_lockfile')

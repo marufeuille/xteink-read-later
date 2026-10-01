@@ -10,11 +10,19 @@
 #   access-terraform.sh state-guard FILE
 set -euo pipefail
 
-addresses=(
+# Policy digest_send_bypass is unchanged. The Bypass application was stored as
+# digest_send_bypass; moved.tf renames it to digest_send on apply, not on plan.
+stable_addresses=(
   'cloudflare_zero_trust_access_policy.family'
   'cloudflare_zero_trust_access_application.xteink_read_later'
   'cloudflare_zero_trust_access_policy.digest_send_bypass'
-  'cloudflare_zero_trust_access_application.digest_send'
+)
+application_address='cloudflare_zero_trust_access_application.digest_send'
+legacy_application_address='cloudflare_zero_trust_access_application.digest_send_bypass'
+plan_addresses=(
+  "${stable_addresses[@]}"
+  "$application_address"
+  "$legacy_application_address"
 )
 
 marker='<!-- access-terraform-plan -->'
@@ -87,7 +95,7 @@ plan_guard() {
   require_file "$file"
   while IFS= read -r line || [[ -n "$line" ]]; do
     trimmed="$(trim_line "$line")"
-    for addr in "${addresses[@]}"; do
+    for addr in "${plan_addresses[@]}"; do
       # Quoted prefix so dots in the address stay literal.
       prefix="# ${addr} "
       if [[ "$trimmed" == "$prefix"* ]]; then
@@ -111,7 +119,7 @@ state_guard() {
   local addr line found
   local -a missing=()
   require_file "$file"
-  for addr in "${addresses[@]}"; do
+  for addr in "${stable_addresses[@]}"; do
     found=false
     while IFS= read -r line || [[ -n "$line" ]]; do
       if [[ "$line" == "$addr" ]]; then
@@ -123,6 +131,21 @@ state_guard() {
       missing+=("$addr")
     fi
   done
+  local has_application=false has_legacy_application=false
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if [[ "$line" == "$application_address" ]]; then
+      has_application=true
+    elif [[ "$line" == "$legacy_application_address" ]]; then
+      has_legacy_application=true
+    fi
+  done <"$file"
+  if [[ "$has_application" == true && "$has_legacy_application" == true ]]; then
+    echo "::error::Access remote state has both ${application_address} and ${legacy_application_address}. Refusing apply." >&2
+    exit 1
+  fi
+  if [[ "$has_application" == false && "$has_legacy_application" == false ]]; then
+    missing+=("$application_address")
+  fi
   if [[ "${#missing[@]}" -gt 0 ]]; then
     echo "::error::Access remote state is missing imported resources. Refusing apply until they are migrated or imported." >&2
     printf '%s\n' "${missing[@]}" >&2
@@ -162,7 +185,7 @@ comment() {
     printf '%s\n' ''
   fi
   cat <<'EOF'
-アプリまたはポリシーの create / destroy / replace が出ていたら import 漏れか、意図しない作り直し。その plan はマージしない。main の apply は、取り込み済みの 4 リソースが state に無いときは実行しない。
+アプリまたはポリシーの create / destroy / replace が出ていたら import 漏れか、意図しない作り直し。その plan はマージしない。has moved to は state のアドレス変更で、アプリの作り直しではない。main の apply は、取り込み済みのリソースが state に無いときは実行しない。Bypass アプリは apply 前は digest_send_bypass、apply 後は digest_send。ポリシーのアドレスは変えない。
 
 EOF
   printf '%s\n' '```'

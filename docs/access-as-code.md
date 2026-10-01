@@ -158,12 +158,14 @@ Google の login method が Allow ポリシーの Require にいる場合、UUID
 4. いま手元にある `infra/access/terraform.tfstate` を、リポジトリの外に控える。控えはコミットしない。
 5. 上の環境変数をシェルに置く。`infra/access` で `cp terraform.tfvars.example terraform.tfvars`。
 6. Terraform 1.14.9 で、手元の state があり R2 のオブジェクトがまだ無いときだけ `terraform init -migrate-state -input=false`。R2 にすでに state があるとき、空の手元 state で migrate しない。CI は `-migrate-state` を付けない。
-7. `terraform state list` に次の 4 行があること。
+7. `terraform state list` に次の 3 行があること。
    - `cloudflare_zero_trust_access_policy.family`
    - `cloudflare_zero_trust_access_application.xteink_read_later`
    - `cloudflare_zero_trust_access_policy.digest_send_bypass`
+   Bypass アプリは次のどちらか一方。両方ある、またはどちらも無いときは apply しない。
    - `cloudflare_zero_trust_access_application.digest_send`
-8. `terraform plan` を見る。`No changes` であること。create / destroy / replace、precedence、include、名前の差分が残っているときは、Actions の apply を再実行しない。コードか `policy_precedence` を実体に合わせ、その差分の PR plan を見てからマージする。
+   - `cloudflare_zero_trust_access_application.digest_send_bypass`（`moved.tf` を apply する前。ポリシーと同名だが、リソース種別は application）
+8. `terraform plan` を見る。`No changes` か、Bypass アプリの `has moved to` だけで `0 to add, 0 to change, 0 to destroy` であること。create / destroy / replace、precedence、include、名前の差分が残っているときは、Actions の apply を再実行しない。コードか `policy_precedence` を実体に合わせ、その差分の PR plan を見てからマージする。
 9. GitHub Actions に `TF_CLOUDFLARE_API_TOKEN`、`TF_STATE_ACCESS_KEY_ID`、`TF_STATE_SECRET_ACCESS_KEY` を入れる。`CLOUDFLARE_API_TOKEN` は Workers deploy のままにする。
 10. secret を入れたあと、開いている PR の Access Terraform を再実行し、コメントの plan が手元と同じであることを見てからマージする。
 
@@ -201,8 +203,8 @@ workflow は `.github/workflows/access-terraform.yml`。
 
 - pull request: `terraform validate`（backend なし）のあと、同一リポジトリの head だけ `terraform plan`。失敗ならそのジョブは失敗する。plan 本文は marker `<!-- access-terraform-plan -->` のコメントを更新し、artifact `access-terraform-plan` にも出す。長いコメントは切る
 - `main` への push: 同じパスの変更だけ `terraform apply -input=false -auto-approve`。その前に `terraform plan -out=tfplan` し、保存した plan を apply する
-- 取り込み済み 4 アドレスが `terraform state list` に無いとき、apply しない
-- plan がこの 4 つの create / destroy / replace を含むとき、plan ジョブは失敗し、apply もしない
+- 取り込み済みのアドレスが `terraform state list` に無いとき、apply しない。Bypass アプリは `digest_send` と、apply 前の `digest_send_bypass` のどちらか一方があれば足りる。両方あるときは apply しない
+- plan がこのアプリまたはポリシーの create / destroy / replace を含むとき、plan ジョブは失敗し、apply もしない。`moved.tf` の `has moved to` は state のアドレス変更であり、ここには含めない
 - それ以外の更新（パスの増減など）は、PR で見た plan がマージされると main で apply される
 
 手元:
@@ -224,6 +226,7 @@ import 済みで、コードが上の実体と同じなら差分は無い。
 | session や cookie など | `ignore_changes` にある。ここに無い項目が null に戻る差分なら、実体の値を書くか `ignore_changes` に足す。戻す差分はマージしない |
 | アプリやポリシーの作成 | import していない。マージしない。workflow も失敗させる |
 | destroy / replace | 作り直し。マージしない。workflow も失敗させる |
+| Bypass アプリの `has moved to` | `moved.tf` が `digest_send_bypass` を `digest_send` に移す。`0 to add, 0 to change, 0 to destroy` ならアプリは作り直さない。main の apply がアドレスだけを書く |
 
 ## 戻す、再 apply
 
@@ -265,6 +268,7 @@ Access に飛ばないこと。
 | ファイル | 役割 |
 | --- | --- |
 | `infra/access/main.tf` | Allow と Bypass。パスの並びは実体どおり |
+| `infra/access/moved.tf` | Bypass アプリの state アドレスを `digest_send` に移す。ポリシーは移さない |
 | `infra/access/variables.tf` | `account_id`、`policy_precedence` |
 | `infra/access/versions.tf` | provider `~> 5.24` と R2 の backend |
 | `infra/access/terraform.tfvars.example` | account id の例。トークンは無い |
