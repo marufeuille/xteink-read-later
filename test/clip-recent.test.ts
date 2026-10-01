@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createApp } from '../src/app'
-import { RECENT_CLIP_LIMIT, toRecentClip } from '../src/clip/recent'
+import { RECENT_CLIP_LIMIT, recentClipsHtml, toRecentClip } from '../src/clip/recent'
 import { createMemoryStore } from '../src/store/memory'
 import { createR2Store } from '../src/store/r2'
 import {
@@ -11,6 +11,7 @@ import {
   parseHttpUrl,
   type ClipJobRecord,
   type ClipJobStatus,
+  type ErrorKind,
   type PipelineStage,
 } from '../src/types'
 import { accessIdentity, bearerAuthorization, TEST_BINDINGS, TEST_CLIP_TOKEN } from './bindings'
@@ -130,6 +131,89 @@ describe('toRecentClip', () => {
   })
 })
 
+const STAGE_LABELS = [
+  ['queue', 'キュー'],
+  ['fetch', '本文取得'],
+  ['extract', '本文抽出'],
+  ['translate', '翻訳'],
+  ['epub', 'EPUB生成'],
+  ['store', '保存'],
+  ['classify', '分類'],
+] as const satisfies ReadonlyArray<readonly [PipelineStage, string]>
+
+const ERROR_CODE_LABELS = [
+  ['invalid_url', '不正なURL'],
+  ['payload_too_large', 'サイズ超過'],
+  ['fetch_failed', '本文取得'],
+  ['extract_failed', '本文抽出'],
+  ['translate_failed', '翻訳'],
+  ['epub_failed', 'EPUB生成'],
+  ['queue_failed', 'キュー'],
+  ['internal_error', '内部エラー'],
+] as const satisfies ReadonlyArray<readonly [ErrorKind, string]>
+
+describe('recentClipsHtml labels', () => {
+  it('shows a Japanese label with the original stage and error code', () => {
+    const html = recentClipsHtml(
+      STAGE_LABELS.map(([stage], index) => ({
+        jobId: jobId(index + 1),
+        status: 'running' as const,
+        stage,
+      })),
+    )
+    for (const [stage, label] of STAGE_LABELS) {
+      expect(html).toContain(`stage: ${label}（${stage}）`)
+    }
+    const failed = recentClipsHtml(
+      ERROR_CODE_LABELS.map(([code], index) => ({
+        jobId: jobId(index + 1),
+        status: 'failed' as const,
+        stage: 'extract' as const,
+        error: { code },
+      })),
+    )
+    for (const [code, label] of ERROR_CODE_LABELS) {
+      expect(failed).toContain(`error.code: ${label}（${code}）`)
+    }
+    expect(failed).toContain('再クリップは Shortcuts で同じ記事を送り直す。')
+    expect(html).not.toContain('再クリップは Shortcuts')
+  })
+
+  it('keeps a missing stage as なし and falls back to the raw code when unmapped', () => {
+    const html = recentClipsHtml([
+      {
+        jobId: jobId(1),
+        status: 'queued',
+        stage: null,
+      },
+      {
+        jobId: jobId(2),
+        status: 'failed',
+        stage: 'not_a_stage' as PipelineStage,
+        error: { code: 'not_a_code' as ErrorKind },
+      },
+      {
+        jobId: jobId(3),
+        status: 'failed',
+        stage: 'weird<stage>' as PipelineStage,
+        error: { code: 'csrf_failed' },
+      },
+    ])
+    expect(html).toContain('stage: なし')
+    expect(html).not.toContain('（なし）')
+    expect(html).toContain('stage: not_a_stage')
+    expect(html).not.toContain('（not_a_stage）')
+    expect(html).toContain('error.code: not_a_code')
+    expect(html).not.toContain('（not_a_code）')
+    expect(html).toContain('stage: weird&lt;stage&gt;')
+    expect(html).not.toContain('stage: weird<stage>')
+    expect(html).toContain('error.code: csrf_failed')
+    expect(html).not.toContain('（csrf_failed）')
+    expect(html).toContain('再クリップは Shortcuts で同じ記事を送り直す。')
+    expect(html).not.toContain('error.message')
+  })
+})
+
 describe('GET /clip/recent', () => {
   it('requires Access for HTML and does not echo the token', async () => {
     const { app, env } = appWith(createMemoryStore(), false)
@@ -217,13 +301,13 @@ describe('GET /clip/recent', () => {
       expect(failedBlock).toContain('role="alert"')
       expect(failedBlock).toContain('失敗')
       expect(failedBlock).toContain('status: failed')
-      expect(failedBlock).toContain('stage: fetch')
-      expect(failedBlock).toContain('error.code: fetch_failed')
+      expect(failedBlock).toContain('stage: 本文取得（fetch）')
+      expect(failedBlock).toContain('error.code: 本文取得（fetch_failed）')
       expect(failedBlock).toContain('再クリップは Shortcuts で同じ記事を送り直す。')
       expect(failedBlock).not.toContain('host')
       expect(failedBlock).not.toContain('上に表示')
       expect(html).toContain('status: running')
-      expect(html).toContain('stage: translate')
+      expect(html).toContain('stage: 翻訳（translate）')
       expect(html).toContain('status: ready')
       expect(html).not.toContain('secret.example')
       expect(html).not.toContain(SECRET_MESSAGE)
@@ -279,6 +363,8 @@ describe('GET /clip/recent', () => {
     expect(text).not.toContain(SECRET_MESSAGE)
     expect(text).not.toContain(TEST_CLIP_TOKEN)
     expect(text).not.toContain('sourceUrl')
+    expect(text).not.toContain('本文取得')
+    expect(text).not.toContain('（fetch_failed）')
     if (typeof body !== 'object' || body === null || !('jobs' in body) || !Array.isArray(body.jobs)) {
       throw new Error('jobs')
     }
@@ -351,7 +437,7 @@ describe('GET /clip/recent', () => {
     const response = await app.request('/clip/recent', {}, env)
     const html = await response.text()
     expect(html).toContain(hidden.jobId)
-    expect(html).toContain('error.code: fetch_failed')
+    expect(html).toContain('error.code: 本文取得（fetch_failed）')
     expect(html).toContain('class="clip-failed"')
     expect(html).not.toContain(SECRET_TITLE)
     expect(html).not.toContain(SECRET_BODY)

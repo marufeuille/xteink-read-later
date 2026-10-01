@@ -57,8 +57,45 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;')
 }
 
-function stageLabel(stage: PipelineStage | null): string {
-  return stage ?? 'なし'
+/** Shown on the recent-clips HTML page as ラベル（code）. */
+const STAGE_LABELS = {
+  queue: 'キュー',
+  fetch: '本文取得',
+  extract: '本文抽出',
+  translate: '翻訳',
+  epub: 'EPUB生成',
+  store: '保存',
+  classify: '分類',
+} as const satisfies Record<PipelineStage, string>
+
+/** Clip-job error codes only. Other ErrorKind values stay as the raw code. */
+const ERROR_CODE_LABELS = {
+  invalid_url: '不正なURL',
+  payload_too_large: 'サイズ超過',
+  fetch_failed: '本文取得',
+  extract_failed: '本文抽出',
+  translate_failed: '翻訳',
+  epub_failed: 'EPUB生成',
+  queue_failed: 'キュー',
+  internal_error: '内部エラー',
+} as const satisfies Partial<Record<ErrorKind, string>>
+
+function labeledCode(code: string, labels: object): string {
+  if (!Object.hasOwn(labels, code)) {
+    return code
+  }
+  const label = (labels as Record<string, unknown>)[code]
+  if (typeof label !== 'string' || label.length === 0) {
+    return code
+  }
+  return `${label}（${code}）`
+}
+
+function stageLabel(stage: string | null): string {
+  if (stage === null) {
+    return 'なし'
+  }
+  return labeledCode(stage, STAGE_LABELS)
 }
 
 const RECENT_STYLES = `<style>
@@ -101,7 +138,9 @@ const RECENT_STYLES = `<style>
 function recentClipRow(job: RecentClip): string {
   const failed = job.status === 'failed'
   const error =
-    job.error === undefined ? '' : `<p>error.code: ${escapeHtml(job.error.code)}</p>`
+    job.error === undefined
+      ? ''
+      : `<p>error.code: ${escapeHtml(labeledCode(job.error.code, ERROR_CODE_LABELS))}</p>`
   const badge = failed ? '<p><span class="fail-badge">失敗</span></p>' : ''
   const hint = failed
     ? '<p class="reclip-hint">再クリップは Shortcuts で同じ記事を送り直す。</p>'
