@@ -438,8 +438,17 @@ function nextMeaningfulSibling(node: Node): Node | null {
   return null
 }
 
-function isThinImageWrapper(parent: HTMLElement, only: Node): boolean {
-  const tag = parent.rawTagName.toLowerCase()
+function isThinImageWrapper(parent: HTMLElement | null, only: Node): boolean {
+  // node-html-parser's document root is an HTMLElement whose rawTagName is null.
+  // A trailing image walks up through thin wrappers and used to call toLowerCase() on it.
+  if (parent === null) {
+    return false
+  }
+  const rawTagName = parent.rawTagName
+  if (typeof rawTagName !== 'string') {
+    return false
+  }
+  const tag = rawTagName.toLowerCase()
   if (!IMAGE_WRAPPER_TAGS.has(tag)) {
     return false
   }

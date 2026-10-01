@@ -254,6 +254,19 @@ describe('XML-illegal chars and img drop', () => {
     expect(roundTrip).not.toContain('X3IMG:')
   })
 
+  it('shapes a trailing image whose ancestors end at the parse root', () => {
+    const src = 'https://www.publickey1.jp/2026/strands-harness-la10.png'
+    const html =
+      '<p>計測した後に、問題ないとする判断結果を出力します。</p>' +
+      `<p><img alt="fig" src="${src}"></p>`
+    const markdown = htmlToMarkdown(html, BASE)
+    expect(markdown).toContain('問題ないとする判断結果を出力します。')
+    expect(markdown).toContain('fig')
+    expect(markdown.split('\n').find((line) => line.startsWith('X3IMG:'))).toBe(
+      `X3IMG:1:${encodeURIComponent(src)}|`,
+    )
+  })
+
   it('keeps a caption that differs from the alt', () => {
     const html =
       '<p><img alt="Alt text" src="https://example.com/photo.png"></p><span>Different caption</span>'
