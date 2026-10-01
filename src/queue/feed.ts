@@ -1,7 +1,7 @@
 import { collectFeed, type CollectFeedDeps } from '../feeds/collect'
 import { feedFailurePoint, runFeedStage } from '../feeds/failure-point'
 import { errorMessage } from '../http/error-response'
-import { feedCollectionErrorLog, logFeed } from '../log'
+import { feedCollectionErrorLog, feedLogHostname, logFeed } from '../log'
 import { createD1CandidateStore } from '../store/d1-candidates'
 import { createD1FeedSourceStore } from '../store/d1-sources'
 import { fetchPage as defaultFetchPage } from '../extract/fetch-page'
@@ -34,6 +34,14 @@ export type FeedQueueHandlerDeps = {
 
 function nowIso(now: () => Date): string {
   return now().toISOString()
+}
+
+function feedSourceLog(source: FeedSource): { readonly sourceId: FeedSource['id']; readonly hostname?: string } {
+  const hostname = feedLogHostname(source.feedUrl)
+  return {
+    sourceId: source.id,
+    ...(hostname === undefined ? {} : { hostname }),
+  }
 }
 
 function stores(env: Cloudflare.Env, deps: FeedQueueHandlerDeps): {
@@ -157,7 +165,7 @@ async function processMessage(
       logFeed({
         stage: 'collect',
         durationMs: Date.now() - started,
-        sourceId: source.id,
+        ...feedSourceLog(source),
         runId: parsed.runId,
         attempt: message.attempts,
         ...feedCollectionErrorLog(result.error),
@@ -169,7 +177,7 @@ async function processMessage(
     logFeed({
       stage: 'collect',
       durationMs: Date.now() - started,
-      sourceId: source.id,
+      ...feedSourceLog(source),
       runId: parsed.runId,
       attempt: message.attempts,
       ...(result.error === null ? {} : feedCollectionErrorLog(result.error)),
@@ -182,7 +190,7 @@ async function processMessage(
       durationMs: Date.now() - started,
       errorKind: 'internal_error',
       failurePoint: feedFailurePoint(error),
-      sourceId: source.id,
+      ...feedSourceLog(source),
       runId: parsed.runId,
       attempt: message.attempts,
     })

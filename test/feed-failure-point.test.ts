@@ -192,6 +192,7 @@ describe('feed internal_error failurePoint', () => {
           errorKind: 'internal_error',
           failurePoint: stage,
           sourceId: SOURCE_ID,
+          hostname: 'example.com',
           runId: RUN_ID,
           attempt: 1,
         },
@@ -215,6 +216,7 @@ describe('feed internal_error failurePoint', () => {
           event: 'feed',
           errorKind: 'internal_error',
           failurePoint: stage,
+          hostname: 'example.com',
           attempt: FEED_QUEUE_MAX_RETRIES + 1,
         }),
       ])
@@ -242,6 +244,7 @@ describe('feed internal_error failurePoint', () => {
     expect(feedLogs(result.logs)[0]).toMatchObject({
       errorKind: 'internal_error',
       failurePoint: 'fetch',
+      hostname: 'example.com',
     })
     expectNoLeak(result.logs)
     expectNoLeak(await sourceStore.getById(SOURCE_ID))
@@ -287,6 +290,7 @@ describe('feed internal_error failurePoint', () => {
         message: 'feed collect internal_error store',
         errorKind: 'internal_error',
         failurePoint: 'store',
+        hostname: 'example.com',
         attempt: 1,
       }),
     ])
@@ -322,6 +326,7 @@ describe('feed internal_error failurePoint', () => {
         durationMs: expect.any(Number),
         errorKind: 'fetch_failed',
         sourceId: SOURCE_ID,
+        hostname: 'example.com',
         runId: RUN_ID,
         attempt: 1,
       },
@@ -362,6 +367,7 @@ describe('feed internal_error failurePoint', () => {
         errorKind: 'payload_too_large',
         bytes: 3_385_152,
         sourceId: SOURCE_ID,
+        hostname: 'example.com',
         runId: RUN_ID,
         attempt: 1,
       },
@@ -407,6 +413,7 @@ describe('feed internal_error failurePoint', () => {
         stage: 'collect',
         durationMs: expect.any(Number),
         sourceId: SOURCE_ID,
+        hostname: 'example.com',
         runId: RUN_ID,
         attempt: 1,
       },
@@ -417,7 +424,88 @@ describe('feed internal_error failurePoint', () => {
       collectionErrorMessage: null,
     })
     expect(JSON.stringify(result.logs)).not.toContain('https://')
+    expect(JSON.stringify(result.logs)).not.toContain('/feed.xml')
     expect(JSON.stringify(result.logs)).not.toContain('failurePoint')
+  })
+
+  it('logs only the feed hostname when the feed URL has userinfo, port, path, and query', async () => {
+    const sourceStore = createMemoryFeedSourceStore()
+    const feedUrl = mustUrl(
+      'https://user:secret-token@News.Example.com:8443/rss/private-path.xml?token=query-secret#frag',
+    )
+    await sourceStore.put({ ...baseSource(), feedUrl })
+    const result = await deliver(
+      {
+        sourceStore,
+        candidateStore: createMemoryCandidateStore(),
+        fetchFeed: async () => err({ kind: 'fetch_failed', url: feedUrl, reason: 'HTTP 503 raw body' }),
+        fetchPage,
+        now: () => new Date('2026-09-21T19:00:00.000Z'),
+      },
+      1,
+    )
+    expect(feedLogs(result.logs)).toEqual([
+      expect.objectContaining({
+        message: 'feed collect fetch_failed',
+        event: 'feed',
+        errorKind: 'fetch_failed',
+        hostname: 'news.example.com',
+      }),
+    ])
+    const text = JSON.stringify(result.logs)
+    expect(text).not.toContain('https://')
+    expect(text).not.toContain('secret-token')
+    expect(text).not.toContain('private-path')
+    expect(text).not.toContain('query-secret')
+    expect(text).not.toContain('8443')
+    expect(text).not.toContain('raw body')
+    expect(text).not.toContain('/rss/')
+    expect(String(feedLogs(result.logs)[0]?.message)).toMatch(/^[A-Za-z0-9_ ]+$/)
+    expect(String(feedLogs(result.logs)[0]?.message)).not.toContain('news.example.com')
+  })
+
+  it('omits hostname for an invalid queue message', async () => {
+    const logs: Record<string, unknown>[] = []
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      if (typeof line === 'object' && line !== null) {
+        logs.push(line as Record<string, unknown>)
+      }
+    })
+    let acked = false
+    const handler = createFeedQueueHandler()
+    await handler(
+      {
+        messages: [
+          {
+            id: 'feed_msg',
+            timestamp: new Date('2026-09-21T19:00:00.000Z'),
+            body: { feedUrl: 'https://attacker.example/private?token=super-secret-token' },
+            attempts: 1,
+            ack() {
+              acked = true
+            },
+            retry() {},
+          },
+        ],
+        queue: 'xteink-read-later-feed',
+        metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+        ackAll() {},
+        retryAll() {},
+      } as unknown as MessageBatch<FeedQueueMessage>,
+      {} as Cloudflare.Env,
+    )
+    expect(acked).toBe(true)
+    expect(feedLogs(logs)).toEqual([
+      {
+        message: 'feed collect invalid_url',
+        event: 'feed',
+        stage: 'collect',
+        durationMs: 0,
+        errorKind: 'invalid_url',
+      },
+    ])
+    expect(feedLogs(logs)[0]).not.toHaveProperty('hostname')
+    expectNoLeak(logs)
   })
 
   it('drops unsafe failurePoint text and plain exceptions to unknown', () => {
