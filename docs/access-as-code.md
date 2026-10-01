@@ -6,7 +6,7 @@ Zero Trust の self-hosted アプリは 2 つ。Allow の本体と、まとめ Q
 
 `infra/access/**`（と Access の workflow / スクリプト）を変える pull request では `terraform plan` が走り、結果が PR コメントと artifact に出る。`main` へのマージでは `terraform apply -auto-approve` が自動で走る。手動承認の Environment は無い。`workflow_dispatch` だけを apply の入口にはしない。
 
-トークンの値はリポジトリに書かない。Workers 用の `CLOUDFLARE_API_TOKEN` は使わない。
+トークンの値はリポジトリに書かない。Workers の deploy は secret `CLOUDFLARE_API_TOKEN` のまま。Access Terraform は secret `TF_CLOUDFLARE_API_TOKEN` を使う。
 
 plan が既存アプリやポリシーの create / destroy / replace を出したら import 漏れか作り直し。その PR はマージしない。空の state に対する apply は workflow が止める。
 
@@ -60,9 +60,9 @@ Cloudflare は親 `/digest` の配下を継承する。`/digest/*` を外して�
 - 環境変数 `CLOUDFLARE_API_TOKEN`
   - ダッシュボードの権限名: Account の **Access: Apps and Policies** の **Read** と **Edit**
   - provider ドキュメントの名前: `Access: Apps and Policies Read` と `Write`
-  - 対象アカウントだけに絞る。Workers 用トークンは流用しない
+  - 対象アカウントだけに絞る。Workers の deploy 用 secret には入れない
 - トークンの値はリポジトリに書かない。作成した値はこの文書に貼らない
-- GitHub Actions の Workers 用 secret `CLOUDFLARE_API_TOKEN` は流用しない。Wrangler の secret は変えない。Access のジョブは secret `ACCESS_CLOUDFLARE_API_TOKEN` を環境変数 `CLOUDFLARE_API_TOKEN` に入れてから Terraform を起動する
+- GitHub Actions では Workers の deploy が secret `CLOUDFLARE_API_TOKEN` を読む。Access のジョブは secret `TF_CLOUDFLARE_API_TOKEN` を環境変数 `CLOUDFLARE_API_TOKEN` に入れてから Terraform を起動する。Wrangler の secret は変えない
 - トークンはシェルと GitHub Actions の secret だけ。`api_token` 変数は無い
 - state は R2。メールアドレスとリソース ID が入る。`terraform.tfstate` は gitignore のままコミットしない
 
@@ -91,9 +91,9 @@ Workers の記事バケット `xteink-read-later-articles` とは別物。デプ
 
 | Secret | ジョブ内の環境変数 | 中身 |
 | --- | --- | --- |
-| `ACCESS_CLOUDFLARE_API_TOKEN` | `CLOUDFLARE_API_TOKEN` | Access: Apps and Policies の Read と Edit。Workers 用トークンではない |
-| `ACCESS_TF_STATE_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID` | バケット `xteink-read-later-tfstate` に絞った R2 API トークンの Access Key ID。権限は Object Read & Write |
-| `ACCESS_TF_STATE_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY` | 上の Secret Access Key |
+| `TF_CLOUDFLARE_API_TOKEN` | `CLOUDFLARE_API_TOKEN` | Access: Apps and Policies の Read と Edit。Workers deploy の secret `CLOUDFLARE_API_TOKEN` とは別 |
+| `TF_STATE_ACCESS_KEY_ID` | `AWS_ACCESS_KEY_ID` | バケット `xteink-read-later-tfstate` に絞った R2 API トークンの Access Key ID。権限は Object Read & Write |
+| `TF_STATE_SECRET_ACCESS_KEY` | `AWS_SECRET_ACCESS_KEY` | 上の Secret Access Key |
 
 Account ID は secret にしない。workflow の `TF_VAR_account_id` と `terraform.tfvars.example` にある。Workers 用 secret `CLOUDFLARE_ACCOUNT_ID` は読まない。
 
@@ -154,7 +154,7 @@ Google の login method が Allow ポリシーの Require にいる場合、UUID
 
 1. R2 にバケット `xteink-read-later-tfstate` を作る。ダッシュボードか、バケットを作れるトークンで一度だけ。Access 用トークンにも、state 用の Object Read & Write にも、バケット作成は含めない。Workers の `ensure-r2-bucket.sh` は使わない。
 2. そのバケットに絞った R2 API トークン（Object Read & Write）を作る。Access Key ID と Secret Access Key をパスワード管理に置く。リポジトリとチャットログには貼らない。
-3. Access 用 API トークン（Apps and Policies の Read と Edit）を別に作る。Workers 用トークンを流用しない。
+3. Access 用 API トークン（Apps and Policies の Read と Edit）を作り、GitHub secret `TF_CLOUDFLARE_API_TOKEN` に入れる。Workers deploy の `CLOUDFLARE_API_TOKEN` は上書きしない。
 4. いま手元にある `infra/access/terraform.tfstate` を、リポジトリの外に控える。控えはコミットしない。
 5. 上の環境変数をシェルに置く。`infra/access` で `cp terraform.tfvars.example terraform.tfvars`。
 6. Terraform 1.14.9 で、手元の state があり R2 のオブジェクトがまだ無いときだけ `terraform init -migrate-state -input=false`。R2 にすでに state があるとき、空の手元 state で migrate しない。CI は `-migrate-state` を付けない。
@@ -164,7 +164,7 @@ Google の login method が Allow ポリシーの Require にいる場合、UUID
    - `cloudflare_zero_trust_access_policy.digest_send_bypass`
    - `cloudflare_zero_trust_access_application.digest_send`
 8. `terraform plan` を見る。`No changes` であること。create / destroy / replace、precedence、include、名前の差分が残っているときは、Actions の apply を再実行しない。コードか `policy_precedence` を実体に合わせ、その差分の PR plan を見てからマージする。
-9. GitHub Actions に 3 つの secret を入れる。
+9. GitHub Actions に `TF_CLOUDFLARE_API_TOKEN`、`TF_STATE_ACCESS_KEY_ID`、`TF_STATE_SECRET_ACCESS_KEY` を入れる。`CLOUDFLARE_API_TOKEN` は Workers deploy のままにする。
 10. secret を入れたあと、開いている PR の Access Terraform を再実行し、コメントの plan が手元と同じであることを見てからマージする。
 
 手元の state を失くしているときは migrate できない。下の import を、空の remote state に対して行う。import が終わる前に apply しない。
@@ -191,7 +191,7 @@ terraform import cloudflare_zero_trust_access_application.digest_send \
   'accounts/ee3ee1637004c64111483d968da0f5b1/197e967e-d9ef-44c8-8de6-65a9db82fe33'
 ```
 
-`CLOUDFLARE_API_TOKEN` は上のコマンドの前にシェルへ置く。ファイルには書かない。Access 用のトークンであり、Workers 用ではない。R2 の `AWS_ACCESS_KEY_ID` と `AWS_SECRET_ACCESS_KEY` も同じシェルに置く。import は remote state に書く。
+`CLOUDFLARE_API_TOKEN` は上のコマンドの前にシェルへ置く。ファイルには書かない。中身は Access 用トークンで、GitHub では `TF_CLOUDFLARE_API_TOKEN` に置く。Workers deploy の secret `CLOUDFLARE_API_TOKEN` とは別。R2 の `AWS_ACCESS_KEY_ID` と `AWS_SECRET_ACCESS_KEY` も同じシェルに置く。import は remote state に書く。
 
 ID の形は provider 5.26.0 の import ドキュメントどおり。アプリは account スコープなので `accounts/<account_id>/<app_id>`。ポリシーは `<account_id>/<policy_id>`。
 

@@ -16,9 +16,9 @@ Workers の記事バケット `xteink-read-later-articles` とは別。CI はこ
 
 | 環境変数 | GitHub Actions secret | 中身 |
 | --- | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | `ACCESS_CLOUDFLARE_API_TOKEN` | Access: Apps and Policies の Read と Edit。Workers 用トークンではない |
-| `AWS_ACCESS_KEY_ID` | `ACCESS_TF_STATE_ACCESS_KEY_ID` | 上のバケットの S3 アクセスキー ID（Object Read & Write） |
-| `AWS_SECRET_ACCESS_KEY` | `ACCESS_TF_STATE_SECRET_ACCESS_KEY` | 上のシークレット |
+| `CLOUDFLARE_API_TOKEN` | `TF_CLOUDFLARE_API_TOKEN` | Access: Apps and Policies の Read と Edit。Workers deploy の secret `CLOUDFLARE_API_TOKEN` とは別 |
+| `AWS_ACCESS_KEY_ID` | `TF_STATE_ACCESS_KEY_ID` | 上のバケットの S3 アクセスキー ID（Object Read & Write） |
+| `AWS_SECRET_ACCESS_KEY` | `TF_STATE_SECRET_ACCESS_KEY` | 上のシークレット |
 
 `infra/access/**` を変える PR では `.github/workflows/access-terraform.yml` が `terraform plan` し、結果を PR コメントと artifact `access-terraform-plan` に出す。`main` へのマージでは同じ workflow が `terraform apply -auto-approve` する。手動承認の Environment は無い。`workflow_dispatch` も無い。
 

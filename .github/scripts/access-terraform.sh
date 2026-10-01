@@ -69,7 +69,7 @@ require_env() {
     fi
   done
   if [[ "${#missing[@]}" -gt 0 ]]; then
-    echo "::error::Access Terraform credentials are missing: ${missing[*]}. Set GitHub secrets ACCESS_CLOUDFLARE_API_TOKEN, ACCESS_TF_STATE_ACCESS_KEY_ID, and ACCESS_TF_STATE_SECRET_ACCESS_KEY. Values are not printed." >&2
+    echo "::error::Access Terraform credentials are missing: ${missing[*]}. Set GitHub secrets TF_CLOUDFLARE_API_TOKEN, TF_STATE_ACCESS_KEY_ID, and TF_STATE_SECRET_ACCESS_KEY. Workers deploy keeps CLOUDFLARE_API_TOKEN. Values are not printed." >&2
     exit 1
   fi
 }
