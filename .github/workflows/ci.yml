@@ -14,9 +14,34 @@ concurrency:
 permissions:
   contents: read
 
+# Path filters (MAR-149): .github/scripts/ci-changed-paths.sh
+# Do not set on.paths or on.paths-ignore. A skipped workflow leaves the
+# required check merge-gate pending. Job-level if skips are success for
+# branch protection; merge-gate still runs and accepts success or skipped
+# for check and simulator images. failure and cancelled fail the gate.
+# Unknown paths run the heavy jobs. See docs/github-merge-gates.md.
+
 jobs:
+  changes:
+    name: classify changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    outputs:
+      check: ${{ steps.filter.outputs.check }}
+      simulator: ${{ steps.filter.outputs.simulator }}
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify changed paths
+        id: filter
+        run: bash .github/scripts/ci-changed-paths.sh github
+
   check:
     name: typecheck, unit, e2e
+    needs: changes
+    if: ${{ needs.changes.outputs.check == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -40,6 +65,8 @@ jobs:
 
   simulator-images:
     name: simulator images
+    needs: changes
+    if: ${{ needs.changes.outputs.simulator == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -81,23 +108,22 @@ jobs:
   merge-gate:
     name: merge-gate
     if: always()
-    needs: [check, simulator-images]
+    needs: [changes, check, simulator-images]
     runs-on: ubuntu-latest
-    timeout-minutes: 1
+    timeout-minutes: 2
     steps:
-      - name: Require typecheck, unit, e2e, and simulator images success
-        run: |
-          check='${{ needs.check.result }}'
-          simulator='${{ needs.simulator-images.result }}'
-          echo "check job result: ${check}"
-          echo "simulator-images job result: ${simulator}"
-          test "$check" = success
-          test "$simulator" = success
+      - uses: actions/checkout@v4
+      - name: Require check and simulator success or path skip
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          SIMULATOR_RESULT: ${{ needs.simulator-images.result }}
+        run: bash .github/scripts/ci-merge-gate.sh
 
   deploy:
     name: deploy worker
-    needs: [check, simulator-images]
-    if: ${{ success() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs: [changes, check, simulator-images]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.result == 'success' && needs.changes.outputs.deploy == 'true' && needs.check.result == 'success' && (needs.simulator-images.result == 'success' || needs.simulator-images.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

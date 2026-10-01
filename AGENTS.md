@@ -30,7 +30,7 @@
 - 原則として PR 経由で `main` にマージする。GitHub の merge gate（[docs/github-merge-gates.md](docs/github-merge-gates.md)）がこれを強制する。bypass や保護の無効化はしない。
 - 次を満たしたら、追加のユーザー確認を挟まず AI がマージする。
   - チケット / 依頼の受け入れ条件を満たしている。
-  - PR の最新コミットで必須チェック `merge-gate` が成功している。これは `typecheck, unit, e2e` とシミュレータの画像帯確認（`simulator images`）が success のときだけ成功し、失敗・未実行・実行中・スキップは成功として扱わない。PR では走らないジョブ（`main` 専用の deploy など）のスキップはマージを妨げない。
+  - PR の最新コミットで必須チェック `merge-gate` が成功している。`merge-gate` は `typecheck, unit, e2e` と `simulator images` が success のとき、または変更パスの分類でそのジョブが skipped のときに成功する。失敗・キャンセル・未実行は成功にしない。workflow 全体を path filter で止めると必須チェックが pending のまま残るので、スキップはジョブの `if` だけで行う。PR では走らないジョブ（`main` 専用の deploy など）のスキップはマージを妨げない。
   - GitHub が要求するレビューがあれば完了している。必須レビューが無い場合は、CI 成功をもってマージしてよい。
   - 未解決の不具合・レビュー指摘・マージ競合がない。
 - 「PR まで」「マージしない」はマージしない明示的な制限である。制限が無い、または後からマージ許可が出た場合は、上記条件でマージする。
