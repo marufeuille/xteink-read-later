@@ -117,6 +117,7 @@ describe('toRecentClip', () => {
       jobId: jobId(1),
       status: 'failed',
       stage: 'extract',
+      updatedAt: stamp(1),
       error: { code: 'fetch_failed' },
     })
     expect(JSON.stringify(toRecentClip(withLaterStage))).not.toContain(SECRET_URL)
@@ -126,8 +127,29 @@ describe('toRecentClip', () => {
       jobId: jobId(2),
       status: 'queued',
       stage: null,
+      updatedAt: stamp(2),
     })
     expect(toRecentClip(job({ n: 3, status: 'ready', stage: 'classify' })).error).toBeUndefined()
+  })
+
+  it('keeps a usable updatedAt and drops one that cannot be shown', () => {
+    const shown = toRecentClip(
+      job({ n: 4, status: 'running', stage: 'fetch', updatedAt: '2026-10-01T07:27:00.000Z' }),
+    )
+    expect(shown.updatedAt).toBe('2026-10-01T07:27:00.000Z')
+    const hidden = job({
+      n: 5,
+      status: 'running',
+      stage: 'fetch',
+      updatedAt: `not-a-date ${TEST_CLIP_TOKEN}`,
+    })
+    expect(toRecentClip(hidden)).toEqual({
+      jobId: jobId(5),
+      status: 'running',
+      stage: 'fetch',
+    })
+    expect(JSON.stringify(toRecentClip(hidden))).not.toContain(TEST_CLIP_TOKEN)
+    expect(JSON.stringify(toRecentClip(hidden))).not.toContain('not-a-date')
   })
 })
 
@@ -255,6 +277,78 @@ describe('recentClipsHtml labels', () => {
   })
 })
 
+describe('recentClipsHtml updated time', () => {
+  it('shows a valid updatedAt as Asia/Tokyo and keeps the status and stage labels', () => {
+    const html = recentClipsHtml([
+      {
+        jobId: jobId(1),
+        status: 'running',
+        stage: 'fetch',
+        updatedAt: '2026-10-01T07:27:00.000Z',
+      },
+      {
+        jobId: jobId(2),
+        status: 'running',
+        stage: null,
+        updatedAt: '2026-09-30T15:00:00.000Z',
+      },
+    ])
+    expect(html).toContain('更新: 2026-10-01 16:27 JST')
+    expect(html).toContain('更新: 2026-10-01 00:00 JST')
+    expect(html).toContain('status: 処理中（running）')
+    expect(html).toContain('data-status="running"')
+    expect(html).toContain('stage: 本文取得（fetch）')
+    expect(html).not.toContain('class="clip-failed"')
+    expect(html).not.toContain('2026-10-01T07:27:00.000Z')
+  })
+
+  it('omits the line when updatedAt is missing or invalid and still shows failure labels', () => {
+    const html = recentClipsHtml([
+      {
+        jobId: jobId(1),
+        status: 'running',
+        stage: 'translate',
+      },
+      {
+        jobId: jobId(2),
+        status: 'failed',
+        stage: 'extract',
+        updatedAt: 'not-a-date',
+        error: { code: 'fetch_failed' },
+      },
+      {
+        jobId: jobId(3),
+        status: 'queued',
+        stage: null,
+        updatedAt: '',
+      },
+      {
+        jobId: jobId(4),
+        status: 'failed',
+        stage: 'epub',
+        updatedAt: `2026-99-99T00:00:00.000Z ${TEST_CLIP_TOKEN}`,
+        error: { code: 'epub_failed' },
+      },
+    ])
+    expect(html).not.toContain('更新:')
+    expect(html).not.toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2} JST/)
+    expect(html).not.toContain(TEST_CLIP_TOKEN)
+    expect(html).not.toContain('not-a-date')
+    expect(html).toContain('status: 処理中（running）')
+    expect(html).toContain('stage: 翻訳（translate）')
+    expect(html).toContain('status: 失敗（failed）')
+    expect(html).toContain('data-status="failed"')
+    expect(html).toContain('stage: 本文抽出（extract）')
+    expect(html).toContain('error.code: 本文取得（fetch_failed）')
+    expect(html).toContain('error.code: EPUB生成（epub_failed）')
+    expect(html).toContain('class="clip-failed"')
+    expect(html).toContain('class="fail-banner"')
+    expect(html).toContain('失敗が 2 件あります')
+    expect(html).toContain('再クリップは Shortcuts で同じ記事を送り直す。')
+    expect(html).toContain('status: 待機中（queued）')
+  })
+})
+
 describe('GET /clip/recent', () => {
   it('requires Access for HTML and does not echo the token', async () => {
     const { app, env } = appWith(createMemoryStore(), false)
@@ -351,6 +445,9 @@ describe('GET /clip/recent', () => {
       expect(html).toContain('status: 処理中（running）')
       expect(html).toContain('data-status="running"')
       expect(html).toContain('stage: 翻訳（translate）')
+      expect(block(running.jobId)).toContain('更新: 2026-09-01 09:00 JST')
+      expect(block(ready.jobId)).toContain('更新: 2026-09-01 09:00 JST')
+      expect(failedBlock).toContain('更新: 2026-09-01 09:00 JST')
       expect(html).toContain('status: 完了（ready）')
       expect(html).toContain('data-status="ready"')
       expect(html).not.toContain('secret.example')
@@ -393,11 +490,12 @@ describe('GET /clip/recent', () => {
     const body: unknown = await response.json()
     expect(body).toEqual({
       jobs: [
-        { jobId: jobId(5), status: 'queued', stage: null },
+        { jobId: jobId(5), status: 'queued', stage: null, updatedAt: stamp(2) },
         {
           jobId: jobId(4),
           status: 'failed',
           stage: 'epub',
+          updatedAt: stamp(1),
           error: { code: 'fetch_failed' },
         },
       ],
@@ -416,10 +514,93 @@ describe('GET /clip/recent', () => {
     if (typeof body !== 'object' || body === null || !('jobs' in body) || !Array.isArray(body.jobs)) {
       throw new Error('jobs')
     }
-    expect(Object.keys(body.jobs[0] ?? {}).sort()).toEqual(['jobId', 'stage', 'status'])
-    expect(Object.keys(body.jobs[1] ?? {}).sort()).toEqual(['error', 'jobId', 'stage', 'status'])
+    expect(Object.keys(body.jobs[0] ?? {}).sort()).toEqual(['jobId', 'stage', 'status', 'updatedAt'])
+    expect(Object.keys(body.jobs[1] ?? {}).sort()).toEqual(['error', 'jobId', 'stage', 'status', 'updatedAt'])
     const error = (body.jobs[1] as { error?: unknown }).error
     expect(Object.keys(error ?? {}).sort()).toEqual(['code'])
+  })
+
+  it('omits an unusable updatedAt from HTML and JSON without inventing a time', async () => {
+    const { app, store, env } = appWith(createMemoryStore(), false)
+    const broken = `not-a-date ${TEST_CLIP_TOKEN}`
+    await store.putJob(
+      job({
+        n: 6,
+        status: 'running',
+        stage: 'fetch',
+        updatedAt: broken,
+        sourceUrl: SECRET_URL,
+      }),
+    )
+    await store.putJob(
+      job({
+        n: 7,
+        status: 'failed',
+        stage: 'translate',
+        updatedAt: '2026-10-01T14:59:00.000Z',
+        message: SECRET_MESSAGE,
+        sourceUrl: SECRET_URL,
+      }),
+    )
+
+    const htmlResponse = await app.request(
+      '/clip/recent',
+      { headers: { authorization: bearerAuthorization() } },
+      env,
+    )
+    expect(htmlResponse.status).toBe(200)
+    const html = await htmlResponse.text()
+    const block = (id: string) => {
+      const at = html.indexOf(`jobId: ${id}`)
+      const start = html.lastIndexOf('<article', at)
+      const end = html.indexOf('</article>', at)
+      return html.slice(start, end)
+    }
+    const runningBlock = block(jobId(6))
+    const failedBlock = block(jobId(7))
+    expect(runningBlock).toContain('status: 処理中（running）')
+    expect(runningBlock).toContain('stage: 本文取得（fetch）')
+    expect(runningBlock).not.toContain('更新:')
+    expect(runningBlock).not.toContain(broken)
+    expect(failedBlock).toContain('更新: 2026-10-01 23:59 JST')
+    expect(failedBlock).toContain('status: 失敗（failed）')
+    expect(failedBlock).toContain('stage: 翻訳（translate）')
+    expect(failedBlock).toContain('error.code: 本文取得（fetch_failed）')
+    expect(failedBlock).toContain('class="clip-failed"')
+    expect(html).not.toContain(TEST_CLIP_TOKEN)
+    expect(html).not.toContain(SECRET_MESSAGE)
+    expect(html).not.toContain('secret.example')
+
+    const jsonResponse = await app.request(
+      '/clip/recent',
+      {
+        headers: {
+          accept: 'application/json',
+          authorization: bearerAuthorization(),
+        },
+      },
+      env,
+    )
+    expect(jsonResponse.status).toBe(200)
+    const body: unknown = await jsonResponse.json()
+    expect(body).toEqual({
+      jobs: [
+        {
+          jobId: jobId(6),
+          status: 'running',
+          stage: 'fetch',
+        },
+        {
+          jobId: jobId(7),
+          status: 'failed',
+          stage: 'translate',
+          updatedAt: '2026-10-01T14:59:00.000Z',
+          error: { code: 'fetch_failed' },
+        },
+      ],
+    })
+    expect(JSON.stringify(body)).not.toContain(TEST_CLIP_TOKEN)
+    expect(JSON.stringify(body)).not.toContain(broken)
   })
 
   it('keeps only the newest jobs', async () => {

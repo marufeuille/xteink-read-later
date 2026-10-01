@@ -1,3 +1,4 @@
+import { formatCollectedAtJst } from '../feeds/html'
 import type { ClipJobRecord, ClipJobStatus, ErrorKind, PipelineStage } from '../types'
 
 /** Newest jobs shown on the Access-protected recent clips page. */
@@ -7,6 +8,8 @@ export type RecentClip = {
   readonly jobId: ClipJobRecord['jobId']
   readonly status: ClipJobStatus
   readonly stage: PipelineStage | null
+  /** Stored instant. Omitted when it cannot be shown in Asia/Tokyo. */
+  readonly updatedAt?: string
   readonly error?: {
     readonly code: ErrorKind
   }
@@ -29,15 +32,26 @@ export function compareRecentJobs(a: ClipJobRecord, b: ClipJobRecord): number {
   return a.jobId < b.jobId ? -1 : 1
 }
 
+/** Stored instant when Asia/Tokyo can render it. Otherwise omit it instead of inventing a time. */
+function visibleUpdatedAt(value: string): string | undefined {
+  if (formatCollectedAtJst(value) === null) {
+    return undefined
+  }
+  return value
+}
+
 /** Fields safe to show. Omits URL, body, token, and error.message. */
 export function toRecentClip(job: ClipJobRecord): RecentClip {
   const latest = job.stages.at(-1)
   const stage = latest === undefined ? null : latest.stage
+  const updatedAt = visibleUpdatedAt(job.updatedAt)
+  const time = updatedAt === undefined ? {} : { updatedAt }
   if (job.status === 'failed') {
     return {
       jobId: job.jobId,
       status: job.status,
       stage,
+      ...time,
       error: { code: job.error.code },
     }
   }
@@ -45,6 +59,7 @@ export function toRecentClip(job: ClipJobRecord): RecentClip {
     jobId: job.jobId,
     status: job.status,
     stage,
+    ...time,
   }
 }
 
@@ -151,6 +166,17 @@ const RECENT_STYLES = `<style>
   }
 </style>`
 
+function updatedAtLine(updatedAt: string | undefined): string {
+  if (updatedAt === undefined) {
+    return ''
+  }
+  const formatted = formatCollectedAtJst(updatedAt)
+  if (formatted === null) {
+    return ''
+  }
+  return `<p>更新: ${escapeHtml(formatted)} JST</p>`
+}
+
 function recentClipRow(job: RecentClip): string {
   const failed = job.status === 'failed'
   const error =
@@ -161,6 +187,7 @@ function recentClipRow(job: RecentClip): string {
   const hint = failed
     ? '<p class="reclip-hint">再クリップは Shortcuts で同じ記事を送り直す。</p>'
     : ''
+  const updated = updatedAtLine(job.updatedAt)
   const articleClass = failed ? 'clip-failed' : 'clip-row'
   const alert = failed ? ' role="alert"' : ''
   return `<article class="${articleClass}" data-status="${escapeHtml(job.status)}"${alert}>
@@ -168,6 +195,7 @@ function recentClipRow(job: RecentClip): string {
   <p>jobId: ${escapeHtml(job.jobId)}</p>
   <p>status: ${escapeHtml(statusLabel(job.status))}</p>
   <p>stage: ${escapeHtml(stageLabel(job.stage))}</p>
+  ${updated}
   ${error}
   ${hint}
 </article>`
