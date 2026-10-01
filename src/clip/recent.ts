@@ -57,6 +57,18 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;')
 }
 
+/**
+ * Shown on the recent-clips HTML page as ラベル（code）.
+ * Words match `inferDisplayStatus` for these four codes. CLI-only running
+ * sub-states (工程不明 / 再試行待ち) are not used here.
+ */
+const STATUS_LABELS = {
+  queued: '待機中',
+  running: '処理中',
+  ready: '完了',
+  failed: '失敗',
+} as const satisfies Record<ClipJobStatus, string>
+
 /** Shown on the recent-clips HTML page as ラベル（code）. */
 const STAGE_LABELS = {
   queue: 'キュー',
@@ -96,6 +108,10 @@ function stageLabel(stage: string | null): string {
     return 'なし'
   }
   return labeledCode(stage, STAGE_LABELS)
+}
+
+function statusLabel(status: string): string {
+  return labeledCode(status, STATUS_LABELS)
 }
 
 const RECENT_STYLES = `<style>
@@ -150,7 +166,7 @@ function recentClipRow(job: RecentClip): string {
   return `<article class="${articleClass}" data-status="${escapeHtml(job.status)}"${alert}>
   ${badge}
   <p>jobId: ${escapeHtml(job.jobId)}</p>
-  <p>status: ${escapeHtml(job.status)}</p>
+  <p>status: ${escapeHtml(statusLabel(job.status))}</p>
   <p>stage: ${escapeHtml(stageLabel(job.stage))}</p>
   ${error}
   ${hint}
