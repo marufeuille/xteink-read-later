@@ -159,15 +159,42 @@ export type FeedLog = {
   readonly sourceId?: string
   readonly runId?: string
   readonly attempt?: number
+  /** Declared or received size. Number only, and only for payload_too_large. */
+  readonly bytes?: number
+}
+
+function finiteByteCount(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return undefined
+  }
+  return value
+}
+
+export function feedCollectionErrorLog(error: {
+  readonly kind: string
+  readonly bytes?: unknown
+}): { readonly errorKind: string; readonly bytes?: number } {
+  const bytes = error.kind === 'payload_too_large' ? finiteByteCount(error.bytes) : undefined
+  return {
+    errorKind: error.kind,
+    ...(bytes === undefined ? {} : { bytes }),
+  }
 }
 
 export function logFeed(entry: FeedLog): void {
-  const { failurePoint: rawPoint, ...rest } = entry
-  const failurePoint = rest.errorKind === 'internal_error' ? normalizeFeedFailurePoint(rawPoint) : undefined
+  const failurePoint =
+    entry.errorKind === 'internal_error' ? normalizeFeedFailurePoint(entry.failurePoint) : undefined
+  const bytes = entry.errorKind === 'payload_too_large' ? finiteByteCount(entry.bytes) : undefined
   writeStructuredLog({
     event: 'feed',
-    ...rest,
+    stage: entry.stage,
+    durationMs: entry.durationMs,
+    ...(entry.errorKind === undefined ? {} : { errorKind: entry.errorKind }),
     ...(failurePoint === undefined ? {} : { failurePoint }),
+    ...(entry.sourceId === undefined ? {} : { sourceId: entry.sourceId }),
+    ...(entry.runId === undefined ? {} : { runId: entry.runId }),
+    ...(entry.attempt === undefined ? {} : { attempt: entry.attempt }),
+    ...(bytes === undefined ? {} : { bytes }),
   })
 }
 

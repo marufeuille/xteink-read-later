@@ -89,4 +89,92 @@ describe('feed payload limit', () => {
     expect(source?.collectionErrorCode).toBeNull()
     expect(source?.itemsRegistered).toBe(1)
   })
+
+  it('logs a numeric size when collection fails as payload_too_large', async () => {
+    const feedUrl = 'https://oversized.example/feed.xml?token=super-secret-token'
+    const declaredBytes = MAX_FEED_BYTES + 385_152
+    installNetworkMock({
+      pages: {
+        [feedUrl]: {
+          html: '<rss>raw body token=super-secret-token</rss>',
+          contentType: 'application/rss+xml',
+          headers: { 'content-length': String(declaredBytes) },
+        },
+      },
+    })
+
+    const store = createMemoryStore()
+    const candidateStore = createMemoryCandidateStore()
+    const sourceStore = createMemoryFeedSourceStore()
+    const queue = createFakeQueue()
+    const feedQueue = createFakeFeedQueue()
+    const hono = createApp({ store, queue, feedQueue, candidateStore, sourceStore })
+    const env = { ...TEST_BINDINGS, CLIP_QUEUE: queue, FEED_QUEUE: feedQueue } as Cloudflare.Env
+    const created = await hono.request(
+      '/sources',
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: bearerAuthorization(),
+        },
+        body: JSON.stringify({
+          name: 'Oversized feed',
+          siteUrl: 'https://oversized.example/',
+          feedUrl,
+          sourceType: 'corporate_blog',
+        }),
+      },
+      env,
+    )
+    expect(created.status).toBe(201)
+    const sourceId = ((await created.json()) as { id: string }).id
+
+    const collect = await hono.request(
+      `/sources/${sourceId}/collect`,
+      {
+        method: 'POST',
+        headers: {
+          authorization: bearerAuthorization(),
+          'content-type': 'application/json',
+        },
+      },
+      env,
+    )
+    expect(collect.status).toBe(202)
+
+    const logs: Record<string, unknown>[] = []
+    vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      if (typeof line === 'object' && line !== null) {
+        logs.push(line as Record<string, unknown>)
+      }
+    })
+    await feedQueue.drain(env, { sourceStore, candidateStore })
+
+    const feedLogs = logs.filter((entry) => entry.event === 'feed')
+    expect(feedLogs).toEqual([
+      expect.objectContaining({
+        message: 'feed collect payload_too_large',
+        event: 'feed',
+        errorKind: 'payload_too_large',
+        bytes: declaredBytes,
+        sourceId,
+      }),
+    ])
+    const logged = feedLogs[0]
+    expect(typeof logged?.bytes).toBe('number')
+    expect(logged).not.toHaveProperty('url')
+    expect(logged).not.toHaveProperty('reason')
+    expect(logged).not.toHaveProperty('body')
+    const text = JSON.stringify(feedLogs)
+    expect(text).not.toContain('oversized.example')
+    expect(text).not.toContain('super-secret-token')
+    expect(text).not.toContain('raw body')
+    expect(text).not.toContain('Payload exceeded')
+    expect(String(logged?.message)).not.toContain(String(declaredBytes))
+
+    const source = await sourceStore.getById(asFeedSourceId(sourceId))
+    expect(source?.collectionStatus).toBe('failed')
+    expect(source?.collectionErrorCode).toBe('payload_too_large')
+  })
 })

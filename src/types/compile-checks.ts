@@ -258,6 +258,12 @@ type _feedLogHasNoUrl = Assert<'url' extends keyof FeedLog ? false : true>
 
 type _feedLogHasNoReason = Assert<'reason' extends keyof FeedLog ? false : true>
 
+type _feedLogHasNoBody = Assert<'body' extends keyof FeedLog ? false : true>
+
+type _feedLogHasNoMessage = Assert<'message' extends keyof FeedLog ? false : true>
+
+type _feedLogBytesIsNumber = Assert<Equals<NonNullable<FeedLog['bytes']>, number>>
+
 type _pipelineLogHasNoJobId = Assert<'jobId' extends keyof PipelineLog ? false : true>
 
 type PipelineStage = (typeof PIPELINE_STAGES)[number]

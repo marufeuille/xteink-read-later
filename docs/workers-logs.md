@@ -11,7 +11,7 @@ URL、本文、API token はログに足さない。`message` に載せるのは
 | `pipeline` | `stage`, `durationMs`, `errorKind`。job が `ready` / `failed` になったログだけ `clipOutcome` |
 | `daily_digest` | `status` = `published` / `empty` / `failed` |
 | `opds_download` | 件数。`durationMs` と `articleId` |
-| `feed` | `stage` = `collect`。失敗だけ `errorKind`。`internal_error` だけ `failurePoint`（`fetch` / `parse` / `store` / `unknown`）。成功に `errorKind` は無い |
+| `feed` | `stage` = `collect`。失敗だけ `errorKind`。`internal_error` だけ `failurePoint`（`fetch` / `parse` / `store` / `unknown`）。`payload_too_large` だけ `bytes`（数値）。成功に `errorKind` は無い |
 | （invocation） | `$workers.outcome` = `exceededCpu` |
 
 `pipeline` で `clipOutcome` の無い `errorKind` は工程の失敗や再試行である。clip の失敗件数には数えない。`feed` の `errorKind` は収集の失敗で、下の日次クエリに含める。`site_recovery` の `url` は従来どおり残す。`message` には入れない。
@@ -55,6 +55,12 @@ Cloudflare は入れ子の OR（grouped OR）を AND に正規化する。これ
 | `event=feed` `errorKind=internal_error` の `failurePoint` | 例外が出た段階。`fetch` / `parse` / `store` / `unknown`。URL・本文・例外メッセージは無い |
 
 `feed` 行の `clipOutcome` と `status` は空である。内訳は Group by の `errorKind` に出る。`fetch_failed` と `internal_error` は再試行のたびに 1 行出る。`payload_too_large` と `invalid_feed` は再試行しない。`invalid_url` は不正なキューメッセージで、1 回だけ出して ack する。
+
+`payload_too_large` の `bytes` は、`Content-Length` か受信済みバイト数の数値だけである。`message` には入れない。URL、本文、Secret、例外メッセージは付けない。サイズで絞るときは次を使う。
+
+```text
+$metadata.service = "xteink-read-later" AND event = "feed" AND errorKind = "payload_too_large"
+```
 
 ### 保存クエリ `xteink-read-later feed`
 
