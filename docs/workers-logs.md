@@ -32,10 +32,12 @@ Cron は `0 19 * * *`（UTC 19:00、日本時間 4:00）。そのあと、時間
 2. **Observability** の検索欄に次を貼る。Worker の画面が既にこの script に絞っていても、アカウント全体の Observability で混ざらないよう `$metadata.service` を付けてある。
 
 ```text
-$metadata.service = "xteink-read-later" AND ((event = "pipeline" AND (clipOutcome = "ready" OR clipOutcome = "failed")) OR event = "daily_digest" OR event = "opds_download" OR event = "feed")
+$metadata.service = "xteink-read-later" AND regex(event, "^(pipeline|daily_digest|opds_download|feed)$")
 ```
 
-検索欄が括弧を受け付けないときは、Query Builder で同じ条件にする。`$metadata.service` は `xteink-read-later`。その中で `event = pipeline` かつ `clipOutcome` が `ready` または `failed`、あるいは `event` が `daily_digest`、`opds_download`、または `feed`。
+Cloudflare は入れ子の OR（grouped OR）を AND に正規化する。これらの保存クエリに grouped OR は使わない。
+
+`event` は `pipeline`、`daily_digest`、`opds_download`、`feed` のいずれかに一致する。`clipOutcome` や `errorKind` では絞らず、下の Group by で読む。
 
 3. 時間範囲は直近 24 時間。Visualization は count。Group by は `event`, `clipOutcome`, `errorKind`, `status`。
 4. ダッシュボードの Save で `xteink-read-later daily ops` として保存する。正本はこのファイル。
@@ -52,6 +54,16 @@ $metadata.service = "xteink-read-later" AND ((event = "pipeline" AND (clipOutcom
 | `event=feed` で `errorKind` が無い | 収集成功（`stage=collect`）。失敗件数には数えない |
 
 `feed` 行の `clipOutcome` と `status` は空である。内訳は Group by の `errorKind` に出る。`fetch_failed` と `internal_error` は再試行のたびに 1 行出る。`payload_too_large` と `invalid_feed` は再試行しない。`invalid_url` は不正なキューメッセージで、1 回だけ出して ack する。
+
+### 保存クエリ `xteink-read-later feed`
+
+フィード収集だけを見るときは次を貼る。
+
+```text
+$metadata.service = "xteink-read-later" AND event = "feed"
+```
+
+Save で `xteink-read-later feed` として保存する。
 
 ### 保存クエリ `xteink-read-later exceededCpu`
 
