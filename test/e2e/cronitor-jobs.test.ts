@@ -15,6 +15,7 @@ import {
   CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING,
   CRONITOR_TELEMETRY_ORIGIN,
 } from '../../src/telemetry/cronitor'
+import { cronitorIpv4Fetch } from '../../src/telemetry/cronitor-ipv4'
 import {
   asClipJobId,
   asClipRunId,
@@ -32,6 +33,7 @@ import {
   readCronitorPing,
   type RecordedCronitorPing,
 } from '../cronitor-fetch'
+import { createScriptedCronitorConnect, httpResponse } from '../cronitor-ipv4-harness'
 import { createFakeDigestQueue } from '../fake-digest-queue'
 import { createFakeFeedQueue } from '../fake-feed-queue'
 import { createFakeR2Bucket } from '../fake-r2'
@@ -308,6 +310,60 @@ describe('Cronitor job telemetry e2e', () => {
     const logs = cronitorLogLines()
     expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
     expectNoTelemetrySecrets(logs, [SECRET, API_KEY, CLIP_MONITOR, PAGE_URL])
+  })
+
+  it('collects the feed when the ipv4 socket sends, and when the dial fails', async () => {
+    const enabled = source({
+      id: asFeedSourceId(`src_${'e'.repeat(32)}`),
+      name: 'Zenn',
+      feedUrl: mustUrl('https://zenn.dev/topics/cloudflare/feed'),
+    })
+    const okStore = createMemoryFeedSourceStore()
+    await okStore.put(enabled)
+    const okQueue = createFakeFeedQueue()
+    const scripted = createScriptedCronitorConnect(() =>
+      httpResponse(200, { 'Content-Type': 'application/json', 'Content-Length': '0' }),
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const sent = await runCollect(
+      okStore,
+      okQueue,
+      (input, init) =>
+        cronitorIpv4Fetch(input, init, {
+          connect: scripted.connect,
+          lookup: async () => ['44.230.87.160'],
+        }),
+    )
+    expect(sent.failed).toBe(0)
+    expect(okQueue.size).toBe(1)
+    expect(scripted.dials.length).toBeGreaterThanOrEqual(2)
+    expect(scripted.dials.every((dial) => dial.hostname === '44.230.87.160')).toBe(true)
+    expect(scripted.dials.every((dial) => dial.sni === 'cronitor.link')).toBe(true)
+    const sentLogs = cronitorLogLines()
+    expect(sentLogs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
+    expect(sentLogs[0]).toMatchObject({ outcome: 'sent', transport: 'ipv4' })
+    expect(sentLogs[1]).toMatchObject({ outcome: 'sent', pingState: 'complete', transport: 'ipv4' })
+    expectNoTelemetrySecrets(sentLogs, [API_KEY, FEED_MONITOR, '44.230.87.160', PAGE_URL])
+
+    const failStore = createMemoryFeedSourceStore()
+    await failStore.put({ ...enabled, id: asFeedSourceId(`src_${'f'.repeat(32)}`) })
+    const failQueue = createFakeFeedQueue()
+    const failing = createScriptedCronitorConnect(() => new Error(`${SECRET} dial-failure-token`))
+    const collected = await runCollect(
+      failStore,
+      failQueue,
+      (input, init) =>
+        cronitorIpv4Fetch(input, init, {
+          connect: failing.connect,
+          lookup: async () => ['1.2.3.4'],
+        }),
+    )
+    expect(collected.failed).toBe(0)
+    expect(failQueue.size).toBe(1)
+    const failedLogs = cronitorLogLines().slice(sentLogs.length)
+    expect(failedLogs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(failedLogs[0]).toMatchObject({ outcome: 'network', transport: 'ipv4', cause: 'connect' })
+    expectNoTelemetrySecrets(failedLogs, [SECRET, API_KEY, FEED_MONITOR, '1.2.3.4', 'dial-failure-token', PAGE_URL])
   })
 
   it('still finishes the clip export when Cronitor returns a non-2xx body', async () => {

@@ -1,4 +1,13 @@
-import { logCronitor, type CronitorLogOutcome } from '../log'
+import { logCronitor, type CronitorLog, type CronitorLogOutcome } from '../log'
+import {
+  CRONITOR_IPV4_HEADER,
+  CRONITOR_IPV4_TRANSPORT,
+  CRONITOR_TELEMETRY_HOSTS,
+  CronitorLinkError,
+  cronitorIpv4Fetch,
+  isCronitorTimeout,
+  type CronitorConnect,
+} from './cronitor-ipv4'
 
 /**
  * Best-effort Cronitor Job telemetry.
@@ -61,7 +70,7 @@ type PingOptions = {
   readonly timeoutMs: number
 }
 
-const CRONITOR_REDIRECT_ORIGINS = new Set(['https://cronitor.link', 'https://eu.cronitor.link'])
+const CRONITOR_REDIRECT_ORIGINS = new Set(CRONITOR_TELEMETRY_HOSTS.map((host) => `https://${host}`))
 const MAX_CRONITOR_REDIRECTS = 2
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
@@ -170,10 +179,6 @@ function buildCronitorPingUrl(options: {
   return url.toString()
 }
 
-function isTimeout(error: unknown): boolean {
-  return error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
-}
-
 async function discardBody(response: Response): Promise<void> {
   try {
     // Read the body so the subrequest finishes. cancel() can reset the connection
@@ -215,8 +220,8 @@ async function sendCronitorPing(options: PingOptions): Promise<void> {
     return
   }
 
-  // One timeout covers every hop. cache no-store keeps a cached 200 from hiding a miss.
-  // Follow only same-host https redirects: the API key is in the path.
+  // One timeout covers DNS, the socket, and every allowed redirect.
+  // The API key stays in the path, so only cronitor.link and eu.cronitor.link are followed.
   const signal = AbortSignal.timeout(options.timeoutMs)
   try {
     for (let hop = 0; hop <= MAX_CRONITOR_REDIRECTS; hop += 1) {
@@ -226,6 +231,7 @@ async function sendCronitorPing(options: PingOptions): Promise<void> {
         cache: 'no-store',
         signal,
       })
+      const transport = transportFrom(response)
       if (REDIRECT_STATUSES.has(response.status)) {
         const next = allowedRedirect(current, response)
         await discardBody(response)
@@ -234,6 +240,7 @@ async function sendCronitorPing(options: PingOptions): Promise<void> {
             outcome: 'redirect_blocked',
             pingState: options.state,
             httpStatus: response.status,
+            ...transport,
           })
           return
         }
@@ -242,22 +249,67 @@ async function sendCronitorPing(options: PingOptions): Promise<void> {
       }
       await discardBody(response)
       if (response.status >= 200 && response.status < 300) {
-        logCronitorSafe({ outcome: 'sent', pingState: options.state })
+        logCronitorSafe({ outcome: 'sent', pingState: options.state, ...transport })
         return
       }
       logCronitorSafe({
         outcome: 'http_error',
         pingState: options.state,
         httpStatus: response.status,
+        ...transport,
       })
       return
     }
   } catch (error) {
     logCronitorSafe({
-      outcome: isTimeout(error) ? 'timeout' : 'network',
       pingState: options.state,
+      ...failureFields(error),
     })
   }
+}
+
+function transportFrom(response: Response): { readonly transport: 'ipv4' } | Record<string, never> {
+  return response.headers.get(CRONITOR_IPV4_HEADER) === CRONITOR_IPV4_TRANSPORT ? { transport: 'ipv4' } : {}
+}
+
+function failureFields(error: unknown): Pick<CronitorLog, 'outcome' | 'transport' | 'cause'> {
+  const outcome = isCronitorTimeout(error) ? 'timeout' : 'network'
+  if (error instanceof CronitorLinkError) {
+    return { outcome, transport: 'ipv4', cause: error.code }
+  }
+  return { outcome }
+}
+
+let socketConnect: Promise<CronitorConnect | null> | undefined
+
+function loadSocketConnect(): Promise<CronitorConnect | null> {
+  socketConnect ??= importSocketConnect()
+  return socketConnect
+}
+
+async function importSocketConnect(): Promise<CronitorConnect | null> {
+  try {
+    // Literal path: the bundler includes cronitor-sockets.ts and its static
+    // cloudflare:sockets import. Node tests cannot resolve that module.
+    const loaded = await import('./cronitor-sockets')
+    return loaded.cronitorConnect
+  } catch {
+    return null
+  }
+}
+
+export async function selectCronitorFetch(
+  injected: typeof fetch | undefined,
+  load: () => Promise<CronitorConnect | null>,
+): Promise<typeof fetch> {
+  if (injected !== undefined) {
+    return injected
+  }
+  const connect = await load()
+  if (connect === null) {
+    return fetch
+  }
+  return (input, init) => cronitorIpv4Fetch(input, init, { connect })
 }
 
 export async function traceCronitorJob<T>(options: TraceCronitorJobOptions<T>): Promise<T> {
@@ -276,7 +328,7 @@ export async function traceCronitorJob<T>(options: TraceCronitorJobOptions<T>): 
   const series = options.series ?? crypto.randomUUID()
   const clock = options.now ?? Date.now
   const timeoutMs = options.timeoutMs ?? CRONITOR_PING_TIMEOUT_MS
-  const fetchImpl = options.fetch ?? fetch
+  const fetchImpl = await selectCronitorFetch(options.fetch, loadSocketConnect)
   const ping = (state: CronitorState, metrics?: CronitorJobMetrics, message?: string): Promise<void> =>
     sendCronitorPing({
       apiKey: apiKey.value,

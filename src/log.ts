@@ -80,6 +80,10 @@ export type CronitorLog = {
   readonly outcome: CronitorLogOutcome
   readonly pingState?: 'run' | 'complete' | 'fail'
   readonly httpStatus?: number
+  // ipv4 only. Absent when the ping used the injected fetch fallback.
+  readonly transport?: 'ipv4'
+  // Fixed token. Absent on success. Never an exception message, URL, or address.
+  readonly cause?: 'dns' | 'connect' | 'http'
 }
 
 export function logCronitor(entry: Omit<CronitorLog, 'event'>): void {
@@ -88,6 +92,8 @@ export function logCronitor(entry: Omit<CronitorLog, 'event'>): void {
     outcome: entry.outcome,
     ...(entry.pingState === undefined ? {} : { pingState: entry.pingState }),
     ...(entry.httpStatus === undefined ? {} : { httpStatus: entry.httpStatus }),
+    ...(entry.transport === undefined ? {} : { transport: entry.transport }),
+    ...(entry.cause === undefined ? {} : { cause: entry.cause }),
   } satisfies CronitorLog)
 }
 
