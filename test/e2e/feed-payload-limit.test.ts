@@ -159,18 +159,24 @@ describe('feed payload limit', () => {
         errorKind: 'payload_too_large',
         bytes: declaredBytes,
         sourceId,
+        hostname: 'oversized.example',
       }),
     ])
     const logged = feedLogs[0]
     expect(typeof logged?.bytes).toBe('number')
+    expect(logged?.hostname).toBe('oversized.example')
     expect(logged).not.toHaveProperty('url')
     expect(logged).not.toHaveProperty('reason')
     expect(logged).not.toHaveProperty('body')
     const text = JSON.stringify(feedLogs)
-    expect(text).not.toContain('oversized.example')
+    expect(text).not.toContain('https://oversized.example/feed.xml?token=super-secret-token')
+    expect(text).not.toContain('/feed.xml')
+    expect(text).not.toContain('?token=')
     expect(text).not.toContain('super-secret-token')
     expect(text).not.toContain('raw body')
     expect(text).not.toContain('Payload exceeded')
+    expect(String(logged?.message)).toMatch(/^[A-Za-z0-9_ ]+$/)
+    expect(String(logged?.message)).not.toContain('oversized.example')
     expect(String(logged?.message)).not.toContain(String(declaredBytes))
 
     const source = await sourceStore.getById(asFeedSourceId(sourceId))

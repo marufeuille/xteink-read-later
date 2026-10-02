@@ -58,6 +58,8 @@ Cloudflare は入れ子の OR（grouped OR）を AND に正規化する。これ
 
 `payload_too_large` の `bytes` は、`Content-Length` か受信済みバイト数の数値だけである。`message` には入れない。URL、本文、Secret、例外メッセージは付けない。サイズで絞るときは次を使う。
 
+`hostname` はフィード URL のホスト名だけで、path と query は含めない。情報源が分かっている成功と失敗に付き、`event = "feed" AND hostname = "example.com"` で検索する。
+
 ```text
 $metadata.service = "xteink-read-later" AND event = "feed" AND errorKind = "payload_too_large"
 ```
