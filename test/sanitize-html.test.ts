@@ -323,6 +323,82 @@ describe('tables and nested lists', () => {
     expect(roundTrip).toContain('<table')
     expect(roundTrip).toContain('<th>Flag</th>')
     expect(roundTrip).toContain('<td>Node builtins</td>')
+    expect(roundTrip).not.toContain('&lt;table')
+  })
+
+  it('round-trips a table that htmlToMarkdown prefixes with whitespace', () => {
+    const html = [
+      '<p>比較の前置きです。表の前に本文がある。</p>',
+      '<table>',
+      '  <thead>',
+      '    <tr><th>項目</th><th>内容</th></tr>',
+      '  </thead>',
+      '  <tbody>',
+      '    <tr><td>会話分析</td><td>日本語の質問</td></tr>',
+      '  </tbody>',
+      '</table>',
+    ].join('\n')
+    const markdown = htmlToMarkdown(html, BASE)
+    const tableLine = markdown.split('\n').find((line) => line.includes('<table'))
+    expect(tableLine, markdown).toBeDefined()
+    expect(tableLine?.startsWith('<table'), markdown).toBe(false)
+    expect(tableLine?.trimStart().startsWith('<table')).toBe(true)
+    expect(tableLine).toMatch(/>\s+</)
+    const roundTrip = markdownToHtml(markdown, BASE)
+    expect(roundTrip).toContain('<table>')
+    expect(roundTrip).toContain('<th>項目</th>')
+    expect(roundTrip).toContain('<td>会話分析</td>')
+    expect(roundTrip).toContain('<td>日本語の質問</td>')
+    expect(roundTrip).not.toContain('&lt;table')
+    expect(roundTrip).not.toContain('&lt;th')
+    expect(roundTrip).not.toContain('&lt;td')
+  })
+
+  it('renders a flush HTML table and one with leading and inter-tag whitespace', () => {
+    const flush = markdownToHtml(
+      '<table><thead><tr><th>Flag</th><th>Meaning</th></tr></thead><tbody><tr><td>nodejs_compat</td><td>Node builtins</td></tr></tbody></table>',
+      BASE,
+    )
+    expect(flush).toContain('<table>')
+    expect(flush).toContain('<th>Flag</th>')
+    expect(flush).toContain('<td>Node builtins</td>')
+    expect(flush).not.toContain('&lt;table')
+
+    const spaced = markdownToHtml(
+      '前文です。\n\n <table> <thead> <tr> <th>項目</th> <th>内容</th> </tr> </thead> <tbody> <tr> <td>会話分析</td> <td>日本語の質問</td> </tr> </tbody> </table>',
+      BASE,
+    )
+    expect(spaced).toContain('<p>前文です。</p>')
+    expect(spaced).toContain('<table>')
+    expect(spaced).toContain('<th>項目</th>')
+    expect(spaced).toContain('<td>会話分析</td>')
+    expect(spaced).not.toContain('&lt;table')
+    expect(spaced).not.toContain('&lt;thead')
+
+    const indented = markdownToHtml(
+      ['前文です。', ' <table>', '  <thead>', '    <tr><th>項目</th></tr>', '  </thead>', ' </table>'].join('\n'),
+      BASE,
+    )
+    expect(indented).toContain('<p>前文です。</p>')
+    expect(indented).toContain('<table>')
+    expect(indented).toContain('<th>項目</th>')
+    expect(indented).not.toContain('&lt;table')
+  })
+
+  it('does not absorb a whitespace-prefixed HTML table into a pipe table', () => {
+    const html = markdownToHtml(
+      [
+        '| Flag | Meaning |',
+        '| --- | --- |',
+        '| nodejs_compat | Node builtins |',
+        ' <table> <thead> <tr> <th>項目</th> </tr> </thead> <tbody> <tr> <td>a|b</td> </tr> </tbody> </table>',
+      ].join('\n'),
+      BASE,
+    )
+    expect(html).toContain('<td>nodejs_compat</td>')
+    expect(html).toContain('<th>項目</th>')
+    expect(html).toContain('<td>a|b</td>')
+    expect(html).not.toContain('&lt;table')
   })
 
   it('turns GFM pipe tables into HTML tables with sanitized cell links', () => {
