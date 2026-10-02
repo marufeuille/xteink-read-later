@@ -9,7 +9,7 @@ URL、本文、API token はログに足さない。`message` に載せるのは
 | `event` | 日次で見る値 |
 | --- | --- |
 | `pipeline` | `stage`, `durationMs`, `errorKind`。job が `ready` / `failed` になったログだけ `clipOutcome` |
-| `daily_digest` | `status` = `published` / `empty` / `failed` |
+| `daily_digest` | `status` = `published` / `empty` / `failed` / `running`。`running` は途中進捗（`stage`）。完了は `published` / `empty` / `failed` |
 | `opds_download` | 件数。`durationMs` と `articleId` |
 | `feed` | `stage` = `collect`。失敗だけ `errorKind`。`internal_error` だけ `failurePoint`（`fetch` / `parse` / `store` / `unknown`）。`payload_too_large` だけ `bytes`（数値）。成功に `errorKind` は無い |
 | （invocation） | `$workers.outcome` = `exceededCpu` |
@@ -48,11 +48,15 @@ Cloudflare は入れ子の OR（grouped OR）を AND に正規化する。これ
 | --- | --- |
 | `event=pipeline` `clipOutcome=ready` | clip の ready 件数 |
 | `event=pipeline` `clipOutcome=failed` を `errorKind` ごと | clip の failed 件数と内訳 |
-| `event=daily_digest` の `status` | `published` / `empty` / `failed` |
+| `event=daily_digest` の `status` | `published` / `empty` / `failed` が号の結果。`running` は途中進捗で、完了件数に数えない |
+| `event=daily_digest` の `stage` | `start` / `plan` / `evaluate` / `summarize` / `publish` / `watchdog`。進捗行だけに付く。`published` と `empty` には付けない |
+| `event=daily_digest` の `errorKind` | `retry_exhausted` は CPU 超過を含むリトライ枯渇。`internal_error` は最後の試行でも例外が出た印。号全体が止まったときは `status=failed`。1 件だけ飛ばして続行したときは `status=running` のまま `errorKind=retry_exhausted` |
 | `event=opds_download` | OPDS の EPUB 取得要求件数 |
 | `event=feed` を `errorKind` ごと | フィード収集の失敗。`payload_too_large` / `internal_error` / `fetch_failed` / `invalid_feed` / `invalid_url` |
 | `event=feed` で `errorKind` が無い | 収集成功（`stage=collect`）。失敗件数には数えない |
 | `event=feed` `errorKind=internal_error` の `failurePoint` | 例外が出た段階。`fetch` / `parse` / `store` / `unknown`。URL・本文・例外メッセージは無い |
+
+`running` は queue の 1 工程（候補ページ、評価 1 件、要約 1 件、EPUB 化）が始まった印である。`exceededCpu` でその invocation が落ちても、この行は日次クエリに残る。最後の配信は重い処理をやり直さず、`retry_exhausted` を残して次の工程へ進むか、EPUB 化なら `status=failed` にする。更新が止まった号は遅延メッセージ `watchdog` が `status=failed` にする。どちらも `event=daily_digest` なので、上の保存クエリのまま見える。
 
 `feed` 行の `clipOutcome` と `status` は空である。内訳は Group by の `errorKind` に出る。`fetch_failed` と `internal_error` は再試行のたびに 1 行出る。`payload_too_large` と `invalid_feed` は再試行しない。`invalid_url` は不正なキューメッセージで、1 回だけ出して ack する。
 

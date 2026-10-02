@@ -4,6 +4,7 @@ import { createApp } from '../../src/app'
 import { digestConfirmUrl, digestQrExpiresAt, signDigestQrToken } from '../../src/digest/confirm-link'
 import { qrJpeg } from '../../src/digest/qr-jpeg'
 import { buildDummyDailyWrite } from '../../src/daily/issue'
+import { createMemoryDigestRunStore } from '../../src/daily/run-store'
 import { publishLatestDaily } from '../../src/daily/publish'
 import { handleScheduled } from '../../src/schedule'
 import { unavailableClassification } from '../../src/classify/taxonomy'
@@ -217,6 +218,7 @@ describe('daily digest fixture e2e', () => {
       store,
       candidateStore,
       digestStore,
+      runStore: createMemoryDigestRunStore(),
       now: () => NOW,
     })
     expect(clip.size).toBe(0)
@@ -447,7 +449,13 @@ describe('daily digest fixture e2e', () => {
       digestQueue: digest,
       now: () => NOW,
     })
-    await digest.drain(env, { store, candidateStore, digestStore, now: () => NOW })
+    await digest.drain(env, {
+      store,
+      candidateStore,
+      digestStore,
+      runStore: createMemoryDigestRunStore(),
+      now: () => NOW,
+    })
 
     const listedMeta = await store.listMeta()
     const todayMeta = listedMeta.find((item) => item.title === `まとめ ${TODAY}`)

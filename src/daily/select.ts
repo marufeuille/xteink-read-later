@@ -89,7 +89,10 @@ function compareDigestCandidates(left: CandidateArticle, right: CandidateArticle
   return reverseCompare(left.id, right.id)
 }
 
-function compareNewest(left: CandidateArticle, right: CandidateArticle): number {
+function compareNewest(
+  left: Pick<CandidateArticle, 'discoveredAt' | 'id'>,
+  right: Pick<CandidateArticle, 'discoveredAt' | 'id'>,
+): number {
   const byDiscovered = reverseCompare(left.discoveredAt, right.discoveredAt)
   if (byDiscovered !== 0) {
     return byDiscovered
@@ -138,9 +141,11 @@ export function digestSourceAtCap(
   return false
 }
 
+type DigestEvaluationOrder = Pick<CandidateArticle, 'id' | 'canonicalUrl' | 'discoveredAt'>
+
 /** Newest article first inside a site, then one article from each site in turn. */
-export function orderDigestEvaluations(candidates: readonly CandidateArticle[]): CandidateArticle[] {
-  const groups = new Map<string, CandidateArticle[]>()
+export function orderDigestEvaluations<T extends DigestEvaluationOrder>(candidates: readonly T[]): T[] {
+  const groups = new Map<string, T[]>()
   for (const candidate of candidates) {
     const key = digestSourceKey(candidate)
     const group = groups.get(key)
@@ -164,7 +169,7 @@ export function orderDigestEvaluations(candidates: readonly CandidateArticle[]):
       }
       return left.key < right.key ? -1 : left.key > right.key ? 1 : 0
     })
-  const result: CandidateArticle[] = []
+  const result: T[] = []
   for (let index = 0; ; index += 1) {
     let added = false
     for (const group of ordered) {

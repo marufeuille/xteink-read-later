@@ -317,5 +317,8 @@ describe('daily workers logs query', () => {
     expect(doc).toContain('failurePoint')
     expect(doc).toContain('feed_schedule')
     expect(doc).toContain('予算スキップのまま残る `unevaluated` は候補ごとに出さない')
+    expect(doc).toContain('`running` は途中進捗で、完了件数に数えない')
+    expect(doc).toContain('`retry_exhausted` は CPU 超過を含むリトライ枯渇')
+    expect(doc).toContain('watchdog')
   })
 })
