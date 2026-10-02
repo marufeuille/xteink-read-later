@@ -30,6 +30,7 @@ const SUMMARY_KEYS = [
   'clipOutcome',
   'status',
   'result',
+  'label',
   'action',
   'outcome',
   'pingState',
@@ -169,6 +170,31 @@ export type DigestConfirmLog = {
 
 export function logDigestConfirm(entry: Omit<DigestConfirmLog, 'event'>): void {
   writeStructuredLog({ event: 'digest_confirm', ...entry } satisfies DigestConfirmLog)
+}
+
+export type DigestInterestResult = 'recorded' | 'already_recorded' | 'ignored'
+
+export type DigestInterestReason = 'not_in_issue' | 'invalid_expiry'
+
+/** Weak positive only. Ordinary-or-below is the absence of a row, not a log line. */
+export type DigestInterestLog = {
+  readonly event: 'digest_interest'
+  readonly result: DigestInterestResult
+  readonly label?: 'weak_positive'
+  readonly reason?: DigestInterestReason
+  readonly issueDate?: string
+  readonly candidateId: CandidateId
+}
+
+export function logDigestInterest(entry: Omit<DigestInterestLog, 'event'>): void {
+  writeStructuredLog({
+    event: 'digest_interest',
+    result: entry.result,
+    candidateId: entry.candidateId,
+    ...(entry.label === undefined ? {} : { label: entry.label }),
+    ...(entry.reason === undefined ? {} : { reason: entry.reason }),
+    ...(entry.issueDate === undefined ? {} : { issueDate: entry.issueDate }),
+  } satisfies DigestInterestLog)
 }
 
 export type CandidateRecommendLog = {

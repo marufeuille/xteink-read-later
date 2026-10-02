@@ -119,4 +119,14 @@ describe('D1 candidate migration', () => {
     expect(sql).toContain('avoid republishing')
     expect(sql).not.toMatch(/content_html|summary_html|excerpt/)
   })
+
+  it('stores digest QR interest without bodies, denylist, or judgment prompts', () => {
+    const sql = readFileSync(join(root, 'migrations/0009_digest_qr_interest.sql'), 'utf8')
+    expect(sql).toContain('MAR-175')
+    expect(sql).toContain('CREATE TABLE digest_qr_interest')
+    expect(sql).toContain('PRIMARY KEY (issue_date, candidate_id)')
+    expect(sql).toContain('ordinary-or-below')
+    expect(sql).not.toMatch(/content_html|summary_html|canonical_url|denylist|hostname/)
+    expect(sql).not.toMatch(/\b(DELETE|UPDATE|DROP)\b/i)
+  })
 })

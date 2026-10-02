@@ -2,7 +2,7 @@
 
 `src/log.ts` は `console.log` にオブジェクトを渡す。Workers Logs はそのフィールドを索引する。`JSON.stringify` した文字列は message 1本になり、`event` や `errorKind` では絞れない。
 
-URL、本文、API token はログに足さない。`message` に載せるのは `event` と、`stage` / `clipOutcome` / `status` / `result` / `action` / `outcome` / `pingState` / `errorKind` / `failurePoint` のうち英数字と `_` だけの値。
+URL、本文、API token はログに足さない。`message` に載せるのは `event` と、`stage` / `clipOutcome` / `status` / `result` / `label` / `action` / `outcome` / `pingState` / `errorKind` / `failurePoint` のうち英数字と `_` だけの値。
 
 ## フィールド
 
@@ -10,6 +10,7 @@ URL、本文、API token はログに足さない。`message` に載せるのは
 | --- | --- |
 | `pipeline` | `stage`, `durationMs`, `errorKind`。job が `ready` / `failed` になったログだけ `clipOutcome` |
 | `daily_digest` | `status` = `published` / `empty` / `failed` / `running`。`running` は途中進捗（`stage`）。完了は `published` / `empty` / `failed` |
+| `digest_interest` | その号の QR から全文送信した弱いいいね。`result` = `recorded` / `already_recorded` / `ignored`。記録できたときだけ `label` = `weak_positive`。`ignored` は `reason` = `not_in_issue` / `invalid_expiry` |
 | `opds_download` | 件数。`durationMs` と `articleId` |
 | `feed` | `stage` = `collect`。失敗だけ `errorKind`。`internal_error` だけ `failurePoint`（`fetch` / `parse` / `store` / `unknown`）。`payload_too_large` だけ `bytes`（数値）。成功に `errorKind` は無い |
 | （invocation） | `$workers.outcome` = `exceededCpu` |
@@ -89,6 +90,50 @@ $metadata.service = "xteink-read-later" AND $workers.outcome = "exceededCpu"
 ```
 
 Save で `xteink-read-later exceededCpu` として保存する。
+
+## 保存クエリ `xteink-read-later digest interest`
+
+朝 digest の QR から全文を送った記録。号に載ったが送っていない記事はログに出ない。そちらの普通以下は、下の D1 の突合で見る。
+
+```text
+$metadata.service = "xteink-read-later" AND event = "digest_interest"
+```
+
+Save で `xteink-read-later digest interest` として保存する。時間範囲は直近 24 時間。Visualization は count。Group by は `result`, `label`, `reason`。
+
+| 行 | 意味 |
+| --- | --- |
+| `result=recorded` `label=weak_positive` | その号の掲載集合にあり、QR の POST で全文送信できた。新規の弱いいいね |
+| `result=already_recorded` `label=weak_positive` | 同じ号・同じ候補の再送信。最初の `fetched_at` は変えない |
+| `result=ignored` `reason=not_in_issue` | QR の送信は成功したが、その期限が指す号の掲載集合に候補が無い。digest のいいねにしない |
+| `result=ignored` `reason=invalid_expiry` | 期限が号の日付に戻らない。記録しない |
+
+`issueDate` は `YYYY-MM-DD`。`candidateId` は候補 ID。URL、token、本文は無い。確認ページの GET、有料などで送れなかった POST、`POST /clip`、候補一覧からの送信は、このイベントを出さない。
+
+未取得を含む日次の突合は D1。`ordinary_or_below` は嫌いではなく、掲載されたが QR 送信が無い状態。
+
+```sql
+SELECT
+  p.issue_date,
+  p.candidate_id,
+  CASE
+    WHEN q.candidate_id IS NOT NULL THEN 'weak_positive'
+    ELSE 'ordinary_or_below'
+  END AS label,
+  q.fetched_at
+FROM digest_published_items AS p
+LEFT JOIN digest_qr_interest AS q
+  ON q.issue_date = p.issue_date
+ AND q.candidate_id = p.candidate_id
+WHERE p.issue_date = 'YYYY-MM-DD'
+ORDER BY label, p.candidate_id;
+```
+
+```bash
+npx wrangler d1 execute xteink-read-later-candidates --remote --command "SELECT p.issue_date, p.candidate_id, CASE WHEN q.candidate_id IS NOT NULL THEN 'weak_positive' ELSE 'ordinary_or_below' END AS label FROM digest_published_items AS p LEFT JOIN digest_qr_interest AS q ON q.issue_date = p.issue_date AND q.candidate_id = p.candidate_id WHERE p.issue_date = 'YYYY-MM-DD' ORDER BY label, p.candidate_id;"
+```
+
+`digest_qr_interest` だけにあって、その号の `digest_published_items` に無い行は上の JOIN に出ない。digest 以外の取得では行を作らない。QR の期限（号の日付から 14 日）が残っている未取得は、次号の順位にはまだ使わない。期限後の未取得は、同じサイトの同点比較で一段だけ下げる。取得済みは一段だけ上げる。サイトは除外しない。
 
 ## Cronitor Job telemetry
 

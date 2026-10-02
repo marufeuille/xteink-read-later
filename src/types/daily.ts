@@ -112,9 +112,29 @@ export type DigestRunResult = {
   readonly qrCount: number
 }
 
+export type DigestQrFetchRecord = {
+  readonly issueDate: string
+  readonly candidateId: CandidateId
+  readonly fetchedAt: string
+}
+
+export type DigestInterestSnapshot = {
+  readonly published: readonly DigestPublishedItem[]
+  readonly fetches: readonly DigestQrFetchRecord[]
+}
+
+/** `not_published` means the candidate is outside that issue, so it is not a digest like. */
+export type DigestQrFetchOutcome = 'recorded' | 'already_recorded' | 'not_published'
+
 export type DigestStore = {
   readonly listPublishedCanonicalUrlsExcept: (date: string) => Promise<ReadonlySet<string>>
   readonly replacePublishedItems: (date: string, items: readonly DigestPublishedItem[]) => Promise<void>
+  readonly recordPublishedQrFetch: (input: {
+    readonly issueDate: string
+    readonly candidateId: CandidateId
+    readonly fetchedAt: string
+  }) => Promise<DigestQrFetchOutcome>
+  readonly listInterestSnapshot: () => Promise<DigestInterestSnapshot>
 }
 
 export type CreateDigestStore = (deps: Pick<Cloudflare.Env, 'CANDIDATES'>) => DigestStore

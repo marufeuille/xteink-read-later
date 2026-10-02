@@ -2,6 +2,7 @@ import { unzipSync, strFromU8 } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../src/app'
 import { digestConfirmUrl, digestQrExpiresAt, signDigestQrToken } from '../../src/digest/confirm-link'
+import { joinDigestInterest } from '../../src/digest/interest'
 import { qrJpeg } from '../../src/digest/qr-jpeg'
 import { buildDummyDailyWrite } from '../../src/daily/issue'
 import { createMemoryDigestRunStore } from '../../src/daily/run-store'
@@ -223,7 +224,7 @@ describe('daily digest fixture e2e', () => {
     })
     expect(clip.size).toBe(0)
 
-    const app = createApp({ store, candidateStore, queue: clip, now: () => NOW })
+    const app = createApp({ store, candidateStore, digestStore, queue: clip, now: () => NOW })
     const catalog = await app.request(
       'https://read.example.com/opds',
       { headers: { authorization: basicAuthorization() } },
@@ -305,6 +306,13 @@ describe('daily digest fixture e2e', () => {
     expect(sent.status).toBe(200)
     expect(await sent.text()).toContain('全文の準備を開始しました')
     expect(clip.size).toBe(1)
+    const afterSend = joinDigestInterest(await digestStore.listInterestSnapshot())
+    expect(afterSend.find((item) => item.candidateId === 'cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')?.label).toBe(
+      'weak_positive',
+    )
+    expect(afterSend.find((item) => item.candidateId === 'cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')?.label).toBe(
+      'ordinary_or_below',
+    )
 
     const tampered = `${confirm.slice(0, -1)}${confirm.endsWith('a') ? 'b' : 'a'}`
     const rejected = await app.request(tampered, { method: 'POST' }, env)

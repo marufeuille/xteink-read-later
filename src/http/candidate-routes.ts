@@ -21,6 +21,8 @@ import {
   type CandidateStore,
   type ClipQueueMessage,
   type CreateArticleStore,
+  type CreateDigestStore,
+  type DigestStore,
   type EvaluateSystemOne,
   type FetchPage,
 } from '../types'
@@ -46,6 +48,8 @@ export type CandidateHttpDeps = {
   readonly repairPublishedDates?: () => Promise<void>
   readonly evaluateRecommend?: EvaluateSystemOne
   readonly getAccessIdentity?: GetAccessIdentity
+  readonly digestStore?: DigestStore
+  readonly createDigestStore?: CreateDigestStore
 }
 
 const NOTICE_MESSAGES: Record<CandidateNoticeKind, string> = {

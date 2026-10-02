@@ -458,6 +458,51 @@ describe('daily digest selection', () => {
     expect(selected.map((item) => item.title)).toEqual(expect.arrayContaining(['bob warehouse', 'loglass dbt']))
   })
 
+  it('lets a past QR fetch win a tie against a newer article from another site', async () => {
+    const { candidateStore, digestStore, store } = memoryDigest()
+    const likedId = asCandidateId('cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
+    await digestStore.replacePublishedItems(YESTERDAY, [
+      {
+        date: YESTERDAY,
+        candidateId: likedId,
+        canonicalUrl: mustUrl('https://alpha.example/old'),
+        title: '昨日の alpha',
+      },
+    ])
+    expect(
+      await digestStore.recordPublishedQrFetch({
+        issueDate: YESTERDAY,
+        candidateId: likedId,
+        fetchedAt: '2026-09-20T01:00:00.000Z',
+      }),
+    ).toBe('recorded')
+    await candidateStore.put(
+      listedCandidate({
+        id: asCandidateId('cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+        canonicalUrl: mustUrl('https://alpha.example/new'),
+        title: '新しい alpha',
+        discoveredAt: '2026-09-20T00:00:00.000Z',
+      }),
+    )
+    await candidateStore.put(
+      listedCandidate({
+        id: asCandidateId('cand_cccccccccccccccccccccccccccccccc'),
+        canonicalUrl: mustUrl('https://beta.example/new'),
+        title: '新しい beta',
+        discoveredAt: '2026-09-21T02:00:00.000Z',
+      }),
+    )
+    const result = await runDigest({ store, candidateStore, digestStore })
+    expect(result.status).toBe('published')
+    const chapter = epubChapter(
+      (await store.getEpub(result.articleId ?? asArticleId('art_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'))) ??
+        new Uint8Array(),
+    )
+    expect(chapter.indexOf('新しい alpha')).toBeGreaterThanOrEqual(0)
+    expect(chapter.indexOf('新しい alpha')).toBeLessThan(chapter.indexOf('新しい beta'))
+    expect(chapter).not.toContain('https://alpha.example/old')
+  })
+
   it('rotates unevaluated articles across sites before filling one feed', () => {
     const sakana = Array.from({ length: 4 }, (_, index) =>
       listedCandidate({

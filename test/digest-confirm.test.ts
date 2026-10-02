@@ -283,6 +283,7 @@ describe('digest confirm HTTP', () => {
   async function harness(candidate: CandidateArticle) {
     const store = createMemoryStore()
     const candidateStore = createMemoryCandidateStore()
+    const digestStore = createMemoryDigestStore()
     const queue = createFakeQueue()
     await candidateStore.put(candidate)
     const logs: string[] = []
@@ -292,11 +293,12 @@ describe('digest confirm HTTP', () => {
     const app = createApp({
       store,
       candidateStore,
+      digestStore,
       queue,
       now: () => NOW,
     })
     const env = { ...TEST_BINDINGS, CLIP_TOKEN: SECRET, PUBLIC_ORIGIN: ORIGIN, CLIP_QUEUE: queue } as Cloudflare.Env
-    return { store, candidateStore, queue, app, env, logs }
+    return { store, candidateStore, digestStore, queue, app, env, logs }
   }
 
   it('does not call the queue on GET and enqueues only on POST', async () => {
