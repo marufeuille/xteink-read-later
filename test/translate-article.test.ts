@@ -4,6 +4,9 @@ import {
   OPENAI_CHAT_URL,
   OPENAI_MAX_INPUT_CHARS,
   OPENAI_MODEL,
+  TRANSLATE_CHUNK_MAX_CHARS,
+  TRANSLATE_SECTION_RULE,
+  TRANSLATE_SYSTEM_PROMPT,
   TRANSLATE_TIMEOUT_MS,
 } from '../src/translate/constants'
 import { parseHttpUrl, type ExtractedArticle, type HttpUrl, type TranslateDeps } from '../src/types'
@@ -340,6 +343,8 @@ describe('translateArticle', () => {
         contentHtml?: string
       }
       expect(user.contentHtml).toBeUndefined()
+      expect(user).not.toHaveProperty('part')
+      expect(body.messages[0]?.content).toBe(TRANSLATE_SYSTEM_PROMPT)
       expect(user.content).toContain('# Keep compatibility_date current')
       expect(user.content).toContain('nodejs_compat')
       expect(user.content).not.toMatch(/<script|<nav|<iframe|<svg|<form/i)
@@ -374,6 +379,166 @@ describe('translateArticle', () => {
       }
       expect(result.error.extracted).toEqual(input)
       expect(result.error.reason).toContain('size limit')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('translates a long article in sections that each stay inside the timeout budget', async () => {
+    const calls: Array<{ content: string; part: { index: number; total: number }; system: string }> = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: RequestInit) => {
+        const raw = typeof init?.body === 'string' ? init.body : ''
+        const body = JSON.parse(raw) as { messages: Array<{ content: string }> }
+        const system = body.messages[0]?.content ?? ''
+        const user = JSON.parse(body.messages[1]?.content ?? '{}') as {
+          content?: string
+          part?: { index: number; total: number }
+        }
+        const content = user.content ?? ''
+        const part = user.part
+        if (part === undefined) {
+          throw new Error('expected part')
+        }
+        calls.push({ content, part, system })
+        expect(content.length).toBeLessThanOrEqual(TRANSLATE_CHUNK_MAX_CHARS)
+        return Response.json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  title: '見出し',
+                  content: content.includes('KEEP_FENCE_TOKEN')
+                    ? `区間${part.index}\n\n\`\`\`\nKEEP_FENCE_TOKEN\n\`\`\``
+                    : `区間${part.index}\n\n訳した本文`,
+                }),
+              },
+            },
+          ],
+        })
+      }),
+    )
+    try {
+      const sentence = 'Review every generated line before it ships. '
+      const paragraph = `<p>${sentence.repeat(80)}</p>`
+      const result = await translateArticle(
+        article({
+          title: 'The code nobody reads',
+          contentHtml: `<h1>The code nobody reads</h1>${paragraph.repeat(3)}<pre><code>KEEP_FENCE_TOKEN</code></pre>${paragraph.repeat(3)}`,
+        }),
+        { OPENAI_API_KEY: 'sk-test' },
+      )
+      expect(calls.length).toBeGreaterThan(1)
+      expect(calls.map((call) => call.part.index)).toEqual(calls.map((_, index) => index + 1))
+      expect(calls.every((call) => call.part.total === calls.length)).toBe(true)
+      expect(calls.every((call) => call.system.endsWith(TRANSLATE_SECTION_RULE))).toBe(true)
+      const fenceCalls = calls.filter((call) => call.content.includes('KEEP_FENCE_TOKEN'))
+      expect(fenceCalls).toHaveLength(1)
+      expect(fenceCalls[0]?.content).toMatch(/```[\s\S]*KEEP_FENCE_TOKEN[\s\S]*```/)
+      expect(result.ok).toBe(true)
+      if (!result.ok) {
+        return
+      }
+      const first = result.value.contentHtml.indexOf('区間1')
+      const second = result.value.contentHtml.indexOf('区間2')
+      expect(first).toBeGreaterThanOrEqual(0)
+      expect(second).toBeGreaterThan(first)
+      expect(result.value.contentHtml).toContain('KEEP_FENCE_TOKEN')
+      expect(result.value.contentHtml).toContain('<pre><code>')
+      expect(result.value.title).toBe('The code nobody reads')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('names the section when a later chunk times out', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        calls += 1
+        if (calls === 1) {
+          return Promise.resolve(
+            Response.json({
+              choices: [
+                {
+                  message: {
+                    content: JSON.stringify({ title: '見出し', content: '最初の区間' }),
+                  },
+                },
+              ],
+            }),
+          )
+        }
+        return new Promise<Response>(() => {})
+      }),
+    )
+    try {
+      const sentence = 'Review every generated line before it ships. '
+      const pending = translateArticle(
+        article({ contentHtml: `<p>${sentence.repeat(400)}</p>` }),
+        { OPENAI_API_KEY: 'sk-test' },
+      )
+      await vi.advanceTimersByTimeAsync(TRANSLATE_TIMEOUT_MS)
+      const result = await pending
+      expect(calls).toBe(2)
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.kind).toBe('translate_failed')
+      expect(result.error.reason).toMatch(/^OpenAI request timed out \(section 2 of [0-9]+\)$/)
+    } finally {
+      vi.unstubAllGlobals()
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops at the first failing section and does not call OpenAI again', async () => {
+    let calls = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1
+        return new Response('nope', { status: 500 })
+      }),
+    )
+    try {
+      const sentence = 'Review every generated line before it ships. '
+      const input = article({ contentHtml: `<p>${sentence.repeat(400)}</p>` })
+      const result = await translateArticle(input, { OPENAI_API_KEY: 'sk-test' })
+      expect(calls).toBe(1)
+      expect(result.ok).toBe(false)
+      if (result.ok) {
+        return
+      }
+      expect(result.error.extracted).toEqual(input)
+      expect(result.error.reason).toMatch(/^OpenAI HTTP 500 \(section 1 of [0-9]+\)$/)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('does not call OpenAI for a long Japanese article', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const result = await translateArticle(
+        article({
+          language: 'ja',
+          title: '長い日本語',
+          contentHtml: `<p>${'これは日本語の本文です。'.repeat(800)}</p>`,
+        }),
+        { OPENAI_API_KEY: 'sk-test' },
+      )
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(result.ok).toBe(true)
+      if (!result.ok) {
+        return
+      }
+      expect(result.value.translated).toBe(false)
     } finally {
       vi.unstubAllGlobals()
     }
