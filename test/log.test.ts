@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   feedCollectionErrorLog,
+  feedLogHostname,
   logCandidateClip,
   logDailyDigest,
   logFeed,
@@ -243,6 +244,54 @@ describe('feed payload_too_large size log', () => {
   })
 })
 
+describe('feed hostname log', () => {
+  it('keeps a searchable hostname and drops path, query, url, and secrets', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const feedUrl = 'https://user:secret-token@News.Example.com:8443/rss/private-path.xml?token=query-secret#frag'
+    expect(feedLogHostname(feedUrl)).toBe('news.example.com')
+    expect(feedLogHostname('https://[2001:db8::1]/feed?x=1')).toBe('[2001:db8::1]')
+    expect(feedLogHostname('https://例え.jp/path?q=1')).toBe('xn--r8jz45g.jp')
+    expect(feedLogHostname('not a url')).toBeUndefined()
+
+    logFeed({
+      stage: 'collect',
+      durationMs: 4,
+      errorKind: 'fetch_failed',
+      sourceId: 'src_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      hostname: 'localhost',
+    })
+    logFeed({
+      stage: 'collect',
+      durationMs: 5,
+      errorKind: 'fetch_failed',
+      hostname: feedUrl,
+    })
+    const calls = vi.mocked(console.log).mock.calls.map((call) => call[0] as Record<string, unknown>)
+    expect(calls[0]).toEqual({
+      message: 'feed collect fetch_failed',
+      event: 'feed',
+      stage: 'collect',
+      durationMs: 4,
+      errorKind: 'fetch_failed',
+      sourceId: 'src_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      hostname: 'localhost',
+    })
+    expect(String(calls[0]?.message)).toMatch(/^[A-Za-z0-9_ ]+$/)
+    expect(String(calls[0]?.message)).not.toContain('localhost')
+    expect(calls[1]).not.toHaveProperty('hostname')
+    expect(calls[1]).not.toHaveProperty('body')
+    expect(feedLogHostname('https://example.com./rss/private-path.xml?token=query-secret')).toBe('example.com')
+    const text = JSON.stringify(calls)
+    expect(text).not.toContain('https://')
+    expect(text).not.toContain('private-path')
+    expect(text).not.toContain('query-secret')
+    expect(text).not.toContain('secret-token')
+    expect(text).not.toContain('8443')
+    expect(text).not.toContain('raw body')
+    expect(text).not.toContain('/rss/')
+  })
+})
+
 describe('daily workers logs query', () => {
   it('documents the saved queries for the post-cron summary', () => {
     const doc = readFileSync(
@@ -259,6 +308,9 @@ describe('daily workers logs query', () => {
     expect(doc).toContain('opds_download')
     expect(doc).toContain('payload_too_large')
     expect(doc).toContain('`payload_too_large` だけ `bytes`（数値）')
+    expect(doc).toContain(
+      '`hostname` はフィード URL のホスト名だけで、path と query は含めない。情報源が分かっている成功と失敗に付き、`event = "feed" AND hostname = "example.com"` で検索する。',
+    )
     expect(doc).toContain('URL、本文、Secret、例外メッセージは付けない')
     expect(doc).toContain('errorKind = "payload_too_large"')
     expect(doc).toContain('internal_error')
