@@ -14,6 +14,35 @@ export function digestQrExpiresAt(issueDate: string): number {
   return Math.floor(start / 1000) + DIGEST_QR_TTL_DAYS * 24 * 60 * 60
 }
 
+/** Inverse of `digestQrExpiresAt`. Other expiry values are not an issue date. */
+export function issueDateFromDigestQrExpires(expiresAt: number): string | null {
+  if (!Number.isSafeInteger(expiresAt) || expiresAt < 0) {
+    return null
+  }
+  const startSec = expiresAt - DIGEST_QR_TTL_DAYS * 24 * 60 * 60
+  if (startSec < 0) {
+    return null
+  }
+  const shifted = new Date(startSec * 1000 + 9 * 60 * 60 * 1000)
+  if (Number.isNaN(shifted.getTime())) {
+    return null
+  }
+  if (shifted.getUTCHours() !== 0 || shifted.getUTCMinutes() !== 0 || shifted.getUTCSeconds() !== 0) {
+    return null
+  }
+  const month = String(shifted.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(shifted.getUTCDate()).padStart(2, '0')
+  const issueDate = `${shifted.getUTCFullYear()}-${month}-${day}`
+  try {
+    if (digestQrExpiresAt(issueDate) !== expiresAt) {
+      return null
+    }
+  } catch {
+    return null
+  }
+  return issueDate
+}
+
 /** Origin only. A path, query, hash, or userinfo means the value is not a public origin. */
 export function workerPublicOrigin(value: string | undefined): string | null {
   if (typeof value !== 'string') {

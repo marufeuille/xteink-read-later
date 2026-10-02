@@ -235,6 +235,8 @@ curl -sS -X POST "$WORKER/candidates/$CANDIDATE_ID/recommend" \
 
 まとめ EPUB の各記事の下に、確認ページへの白地 PNG の QR を入れる。スマホで開くと「全文を送る」が出る。GET は送信しない。ボタンの POST だけが候補一覧と同じ全文 Queue に入る。Google ログインは要らない。署名は候補 ID と、号の日付から 14 日の期限に紐づく。`CLIP_TOKEN` は URL に入らない。同じ日にまとめを作り直しても QR は同じ。完成済みの全文は再利用し、新しい run は作らない。有料・取得できない記事は理由を出して送らない。通常の記事 EPUB には画像を入れない。`/digest/send` は Allow のパスに入れず、別アプリの Bypass にしてある。
 
+QR の POST で全文送信できた記事だけを、その号の弱いいいねとして `digest_qr_interest` に残す。号に載ったが QR で送っていない記事は普通以下で、強い嫌いにはしない。`POST /clip` や候補一覧からの送信は、掲載集合に入っていてもいいねにしない。確認ページを開いただけでも記録しない。次号では、同じサイトの過去の取得を同点のときだけ一段上げ、QR 期限後の未取得を一段下げる。期限内の未取得はまだ下げない。サイトの除外や判定プロンプトの変更はしない。見方は [docs/workers-logs.md](docs/workers-logs.md) の `digest_interest`。
+
 `PUBLIC_ORIGIN` は秘密ではない。`wrangler.jsonc` の `vars` に本番 origin（末尾スラッシュなし）を置く。未設定、またはパスやクエリ付きのときはまとめ自体は出るが QR は付かない。
 
 ```bash

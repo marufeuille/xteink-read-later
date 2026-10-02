@@ -1,5 +1,6 @@
 import { reevaluateCandidate } from '../candidates/recommend'
 import { workerPublicOrigin } from '../digest/confirm-link'
+import { digestSourceInterestPrior, joinDigestInterest } from '../digest/interest'
 import { logDailyDigest, type DailyDigestErrorKind, type DailyDigestStage } from '../log'
 import { createD1CandidateStore } from '../store/d1-candidates'
 import { createD1DigestStore } from '../store/d1-digest'
@@ -515,7 +516,14 @@ async function beginSummarize(
   byId: ReadonlyMap<CandidateId, CandidateArticle>,
   used: ReadonlySet<string>,
 ): Promise<DigestDeliveryOutcome> {
-  const selected = selectDigestCandidates([...byId.values()], { usedCanonicalUrls: used })
+  const sourceInterest = digestSourceInterestPrior(
+    joinDigestInterest(await ctx.digestStore.listInterestSnapshot()),
+    ctx.now().getTime(),
+  )
+  const selected = selectDigestCandidates([...byId.values()], {
+    usedCanonicalUrls: used,
+    sourceInterest,
+  })
   if (selected.length === 0) {
     if (loaded.record.exhaustedSkips > 0) {
       return failDay(ctx, loaded, 'evaluate', 'retry_exhausted')

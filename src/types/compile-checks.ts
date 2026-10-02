@@ -50,6 +50,7 @@ import type {
   CandidateRecommendLog,
   DailyDigestLog,
   DigestConfirmLog,
+  DigestInterestLog,
   DigestScheduleLog,
   CronitorLog,
   FeedLog,
@@ -465,6 +466,12 @@ type _dailyDigestLogHasNoBody = Assert<'contentHtml' extends keyof DailyDigestLo
 type _digestQrTtlIs14Days = Assert<Equals<typeof DIGEST_QR_TTL_DAYS, 14>>
 type _digestConfirmLogHasNoToken = Assert<'token' extends keyof DigestConfirmLog ? false : true>
 type _digestConfirmLogHasNoUrl = Assert<'url' extends keyof DigestConfirmLog ? false : true>
+type _digestInterestLogHasNoUrl = Assert<'url' extends keyof DigestInterestLog ? false : true>
+type _digestInterestLogHasNoToken = Assert<'token' extends keyof DigestInterestLog ? false : true>
+type _digestInterestLogHasNoBody = Assert<'contentHtml' extends keyof DigestInterestLog ? false : true>
+type _digestInterestLabelIsWeak = Assert<
+  Equals<NonNullable<DigestInterestLog['label']>, 'weak_positive'>
+>
 type _postDailyDigestUsesBearer = Assert<
   ApiRoutes['postDailyDigest']['auth'] extends { readonly scheme: 'bearer' } ? true : false
 >
@@ -578,5 +585,9 @@ export type CompileChecks = {
   readonly digestQrTtlIs14Days: _digestQrTtlIs14Days
   readonly digestConfirmLogHasNoToken: _digestConfirmLogHasNoToken
   readonly digestConfirmLogHasNoUrl: _digestConfirmLogHasNoUrl
+  readonly digestInterestLogHasNoUrl: _digestInterestLogHasNoUrl
+  readonly digestInterestLogHasNoToken: _digestInterestLogHasNoToken
+  readonly digestInterestLogHasNoBody: _digestInterestLogHasNoBody
+  readonly digestInterestLabelIsWeak: _digestInterestLabelIsWeak
   readonly postDailyDigestUsesBearer: _postDailyDigestUsesBearer
 }

@@ -4,6 +4,7 @@ import {
   digestConfirmPath,
   verifyDigestQrToken,
 } from '../digest/confirm-link'
+import { recordDigestQrFetch } from '../digest/interest'
 import {
   digestConfirmRejectedHtml,
   digestConfirmResultHtml,
@@ -13,6 +14,7 @@ import {
 import { htmlResponse } from '../feeds/html'
 import { logDigestConfirm } from '../log'
 import { createD1CandidateStore } from '../store/d1-candidates'
+import { createD1DigestStore } from '../store/d1-digest'
 import { createR2Store } from '../store/r2'
 import {
   isCandidateId,
@@ -20,6 +22,7 @@ import {
   type ArticleStore,
   type CandidateStore,
   type ClipQueueMessage,
+  type DigestStore,
 } from '../types'
 import type { CandidateHttpDeps } from './candidate-routes'
 
@@ -51,6 +54,14 @@ function articleStoreFor(env: Cloudflare.Env, deps: CandidateHttpDeps): ArticleS
 
 function clipQueueFor(env: Cloudflare.Env, deps: CandidateHttpDeps): Queue<ClipQueueMessage> {
   return deps.queue ?? env.CLIP_QUEUE
+}
+
+function digestStoreFor(env: Cloudflare.Env, deps: CandidateHttpDeps): DigestStore {
+  if (deps.digestStore !== undefined) {
+    return deps.digestStore
+  }
+  const create = deps.createDigestStore ?? createD1DigestStore
+  return create(env)
 }
 
 function confirmLog(input: {
@@ -148,6 +159,12 @@ export function mountDigestConfirmRoutes(app: Hono<AppEnv>, deps: CandidateHttpD
     confirmLog({
       candidateId: candidate.id,
       result: kind === 'queued' ? 'queued' : 'reused',
+    })
+    await recordDigestQrFetch({
+      digestStore: digestStoreFor(c.env, deps),
+      candidateId: candidate.id,
+      expiresAt: verified.expiresAt,
+      fetchedAt: new Date(nowMs).toISOString(),
     })
     return htmlResponse(
       '全文を送る',

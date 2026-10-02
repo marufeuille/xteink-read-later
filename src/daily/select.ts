@@ -1,3 +1,4 @@
+import type { DigestSourceInterest } from '../digest/interest'
 import type { CandidateArticle, DigestBucket, DigestBucketQuota, RecommendGrade } from '../types'
 import { DIGEST_BUCKET_QUOTAS, DIGEST_BUCKETS, DIGEST_MAX_PER_SOURCE } from '../types'
 
@@ -69,7 +70,21 @@ function reverseCompare(left: string, right: string): number {
   return left < right ? 1 : -1
 }
 
-function compareDigestCandidates(left: CandidateArticle, right: CandidateArticle): number {
+function sourceInterestOf(
+  candidate: CandidateArticle,
+  sourceInterest: ReadonlyMap<string, DigestSourceInterest> | undefined,
+): number {
+  if (sourceInterest === undefined) {
+    return 0
+  }
+  return sourceInterest.get(digestSourceKey(candidate)) ?? 0
+}
+
+function compareDigestCandidates(
+  left: CandidateArticle,
+  right: CandidateArticle,
+  sourceInterest?: ReadonlyMap<string, DigestSourceInterest>,
+): number {
   const byConcrete = flagScore(right, 'concrete') - flagScore(left, 'concrete')
   if (byConcrete !== 0) {
     return byConcrete
@@ -81,6 +96,10 @@ function compareDigestCandidates(left: CandidateArticle, right: CandidateArticle
   const byConfidence = (evaluatedOf(right)?.confidence ?? 0) - (evaluatedOf(left)?.confidence ?? 0)
   if (byConfidence !== 0) {
     return byConfidence
+  }
+  const byInterest = sourceInterestOf(right, sourceInterest) - sourceInterestOf(left, sourceInterest)
+  if (byInterest !== 0) {
+    return byInterest
   }
   const byDiscovered = reverseCompare(left.discoveredAt, right.discoveredAt)
   if (byDiscovered !== 0) {
@@ -190,6 +209,8 @@ export function selectDigestCandidates(
   input: {
     readonly usedCanonicalUrls: ReadonlySet<string>
     readonly quotas?: Readonly<Record<DigestBucket, DigestBucketQuota>>
+    /** Weak tie-break after confidence. Missing keys are 0. This does not drop a site. */
+    readonly sourceInterest?: ReadonlyMap<string, DigestSourceInterest>
   },
 ): CandidateArticle[] {
   const quotas = input.quotas ?? DIGEST_BUCKET_QUOTAS
@@ -210,7 +231,9 @@ export function selectDigestCandidates(
   const selected: CandidateArticle[] = []
   const sourceCounts = new Map<string, number>()
   for (const bucket of DIGEST_BUCKETS) {
-    const ranked = [...buckets[bucket]].sort(compareDigestCandidates)
+    const ranked = [...buckets[bucket]].sort((left, right) =>
+      compareDigestCandidates(left, right, input.sourceInterest),
+    )
     let taken = 0
     for (const candidate of ranked) {
       if (taken >= quotas[bucket].max) {
