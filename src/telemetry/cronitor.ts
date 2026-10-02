@@ -1,3 +1,14 @@
+import { logCronitor, type CronitorLog, type CronitorLogOutcome } from '../log'
+import {
+  CRONITOR_IPV4_HEADER,
+  CRONITOR_IPV4_TRANSPORT,
+  CRONITOR_TELEMETRY_HOSTS,
+  CronitorLinkError,
+  cronitorIpv4Fetch,
+  isCronitorTimeout,
+  type CronitorConnect,
+} from './cronitor-ipv4'
+
 /**
  * Best-effort Cronitor Job telemetry.
  * Ping failures, timeouts, and missing secrets never fail the caller.
@@ -59,13 +70,53 @@ type PingOptions = {
   readonly timeoutMs: number
 }
 
-function readBinding(env: object, name: string): string | undefined {
+const CRONITOR_REDIRECT_ORIGINS = new Set(CRONITOR_TELEMETRY_HOSTS.map((host) => `https://${host}`))
+const MAX_CRONITOR_REDIRECTS = 2
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+type BindingRead =
+  | { readonly ok: true; readonly value: string }
+  | { readonly ok: false; readonly reason: 'missing' | 'blank' | 'not_string' }
+
+function readBinding(env: object, name: string): BindingRead {
   const value = (env as Record<string, unknown>)[name]
-  if (typeof value !== 'string') {
-    return undefined
+  if (value === undefined) {
+    return { ok: false, reason: 'missing' }
   }
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : undefined
+  if (typeof value !== 'string') {
+    return { ok: false, reason: 'not_string' }
+  }
+  if (value.trim().length === 0) {
+    return { ok: false, reason: 'blank' }
+  }
+  return { ok: true, value: value.trim() }
+}
+
+function bindingSkipOutcome(which: 'api' | 'monitor', reason: 'missing' | 'blank' | 'not_string'): CronitorLogOutcome {
+  if (which === 'api') {
+    if (reason === 'missing') {
+      return 'missing_api_key'
+    }
+    if (reason === 'blank') {
+      return 'blank_api_key'
+    }
+    return 'api_key_not_string'
+  }
+  if (reason === 'missing') {
+    return 'missing_monitor_key'
+  }
+  if (reason === 'blank') {
+    return 'blank_monitor_key'
+  }
+  return 'monitor_key_not_string'
+}
+
+function logCronitorSafe(entry: Parameters<typeof logCronitor>[0]): void {
+  try {
+    logCronitor(entry)
+  } catch {
+    // A log failure must not fail the clip or feed job.
+  }
 }
 
 function formatMetricValue(name: (typeof METRIC_ORDER)[number], value: number): string | null {
@@ -128,38 +179,160 @@ function buildCronitorPingUrl(options: {
   return url.toString()
 }
 
+async function discardBody(response: Response): Promise<void> {
+  try {
+    // Read the body so the subrequest finishes. cancel() can reset the connection
+    // before Cronitor commits the event: they respond 200 before authenticating.
+    await response.arrayBuffer()
+  } catch {
+    // Do not log the error. The message can include the request URL.
+  }
+}
+
+function allowedRedirect(current: string, response: Response): string | null {
+  const location = response.headers.get('location')
+  if (location === null || location.length === 0) {
+    return null
+  }
+  let resolved: URL
+  try {
+    resolved = new URL(location, current)
+  } catch {
+    return null
+  }
+  if (resolved.protocol !== 'https:' || !CRONITOR_REDIRECT_ORIGINS.has(resolved.origin)) {
+    return null
+  }
+  return resolved.toString()
+}
+
 async function sendCronitorPing(options: PingOptions): Promise<void> {
+  let current: string
   try {
     const url = buildCronitorPingUrl(options)
     if (url === null) {
+      logCronitorSafe({ outcome: 'invalid_ping', pingState: options.state })
       return
     }
-    const response = await options.fetch(url, {
-      method: 'GET',
-      redirect: 'manual',
-      signal: AbortSignal.timeout(options.timeoutMs),
-    })
-    await response.body?.cancel()
+    current = url
   } catch {
+    logCronitorSafe({ outcome: 'invalid_ping', pingState: options.state })
     return
   }
+
+  // One timeout covers DNS, the socket, and every allowed redirect.
+  // The API key stays in the path, so only cronitor.link and eu.cronitor.link are followed.
+  const signal = AbortSignal.timeout(options.timeoutMs)
+  try {
+    for (let hop = 0; hop <= MAX_CRONITOR_REDIRECTS; hop += 1) {
+      const response = await options.fetch(current, {
+        method: 'GET',
+        redirect: 'manual',
+        cache: 'no-store',
+        signal,
+      })
+      const transport = transportFrom(response)
+      if (REDIRECT_STATUSES.has(response.status)) {
+        const next = allowedRedirect(current, response)
+        await discardBody(response)
+        if (next === null || hop === MAX_CRONITOR_REDIRECTS) {
+          logCronitorSafe({
+            outcome: 'redirect_blocked',
+            pingState: options.state,
+            httpStatus: response.status,
+            ...transport,
+          })
+          return
+        }
+        current = next
+        continue
+      }
+      await discardBody(response)
+      if (response.status >= 200 && response.status < 300) {
+        logCronitorSafe({ outcome: 'sent', pingState: options.state, ...transport })
+        return
+      }
+      logCronitorSafe({
+        outcome: 'http_error',
+        pingState: options.state,
+        httpStatus: response.status,
+        ...transport,
+      })
+      return
+    }
+  } catch (error) {
+    logCronitorSafe({
+      pingState: options.state,
+      ...failureFields(error),
+    })
+  }
+}
+
+function transportFrom(response: Response): { readonly transport: 'ipv4' } | Record<string, never> {
+  return response.headers.get(CRONITOR_IPV4_HEADER) === CRONITOR_IPV4_TRANSPORT ? { transport: 'ipv4' } : {}
+}
+
+function failureFields(error: unknown): Pick<CronitorLog, 'outcome' | 'transport' | 'cause'> {
+  const outcome = isCronitorTimeout(error) ? 'timeout' : 'network'
+  if (error instanceof CronitorLinkError) {
+    return { outcome, transport: 'ipv4', cause: error.code }
+  }
+  return { outcome }
+}
+
+let socketConnect: Promise<CronitorConnect | null> | undefined
+
+function loadSocketConnect(): Promise<CronitorConnect | null> {
+  socketConnect ??= importSocketConnect()
+  return socketConnect
+}
+
+async function importSocketConnect(): Promise<CronitorConnect | null> {
+  try {
+    // Literal path: the bundler includes cronitor-sockets.ts and its static
+    // cloudflare:sockets import. Node tests cannot resolve that module.
+    const loaded = await import('./cronitor-sockets')
+    return loaded.cronitorConnect
+  } catch {
+    return null
+  }
+}
+
+export async function selectCronitorFetch(
+  injected: typeof fetch | undefined,
+  load: () => Promise<CronitorConnect | null>,
+): Promise<typeof fetch> {
+  if (injected !== undefined) {
+    return injected
+  }
+  const connect = await load()
+  if (connect === null) {
+    return fetch
+  }
+  return (input, init) => cronitorIpv4Fetch(input, init, { connect })
 }
 
 export async function traceCronitorJob<T>(options: TraceCronitorJobOptions<T>): Promise<T> {
   const apiKey = readBinding(options.env, CRONITOR_API_KEY_BINDING)
   const monitorKey = readBinding(options.env, options.monitorKeyBinding)
-  if (apiKey === undefined || monitorKey === undefined) {
+  if (!apiKey.ok || !monitorKey.ok) {
+    if (!apiKey.ok) {
+      logCronitorSafe({ outcome: bindingSkipOutcome('api', apiKey.reason) })
+    }
+    if (!monitorKey.ok) {
+      logCronitorSafe({ outcome: bindingSkipOutcome('monitor', monitorKey.reason) })
+    }
     return options.job()
   }
 
   const series = options.series ?? crypto.randomUUID()
   const clock = options.now ?? Date.now
   const timeoutMs = options.timeoutMs ?? CRONITOR_PING_TIMEOUT_MS
-  const fetchImpl = options.fetch ?? fetch
+  const fetchImpl = await selectCronitorFetch(options.fetch, loadSocketConnect)
   const ping = (state: CronitorState, metrics?: CronitorJobMetrics, message?: string): Promise<void> =>
     sendCronitorPing({
-      apiKey,
-      monitorKey,
+      apiKey: apiKey.value,
+      monitorKey: monitorKey.value,
       state,
       series,
       fetch: fetchImpl,
@@ -179,18 +352,22 @@ export async function traceCronitorJob<T>(options: TraceCronitorJobOptions<T>): 
     throw error
   }
 
+  let measured: CronitorJobMetrics
+  let terminalFail: boolean
   try {
-    const measured = {
+    measured = {
       ...options.metrics(result),
       duration: elapsedSeconds(clock, started),
     }
-    if (options.failed?.(result) ?? false) {
-      await ping('fail', measured, options.failMessage)
-    } else {
-      await ping('complete', measured)
-    }
+    terminalFail = options.failed?.(result) ?? false
   } catch {
+    logCronitorSafe({ outcome: 'metrics_failed' })
     return result
+  }
+  if (terminalFail) {
+    await ping('fail', measured, options.failMessage)
+  } else {
+    await ping('complete', measured)
   }
   return result
 }

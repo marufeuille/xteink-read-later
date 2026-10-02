@@ -32,6 +32,7 @@ const SUMMARY_KEYS = [
   'result',
   'action',
   'outcome',
+  'pingState',
   'errorKind',
   'failurePoint',
 ] as const
@@ -57,6 +58,43 @@ function summaryMessage(fields: Record<string, unknown>): string {
 function writeStructuredLog(entry: object): void {
   const fields = definedEntries(entry)
   console.log({ message: summaryMessage(fields), ...fields })
+}
+
+export type CronitorLogOutcome =
+  | 'missing_api_key'
+  | 'missing_monitor_key'
+  | 'blank_api_key'
+  | 'blank_monitor_key'
+  | 'api_key_not_string'
+  | 'monitor_key_not_string'
+  | 'invalid_ping'
+  | 'redirect_blocked'
+  | 'sent'
+  | 'http_error'
+  | 'timeout'
+  | 'network'
+  | 'metrics_failed'
+
+export type CronitorLog = {
+  readonly event: 'cronitor'
+  readonly outcome: CronitorLogOutcome
+  readonly pingState?: 'run' | 'complete' | 'fail'
+  readonly httpStatus?: number
+  // ipv4 only. Absent when the ping used the injected fetch fallback.
+  readonly transport?: 'ipv4'
+  // Fixed token. Absent on success. Never an exception message, URL, or address.
+  readonly cause?: 'dns' | 'connect' | 'http'
+}
+
+export function logCronitor(entry: Omit<CronitorLog, 'event'>): void {
+  writeStructuredLog({
+    event: 'cronitor',
+    outcome: entry.outcome,
+    ...(entry.pingState === undefined ? {} : { pingState: entry.pingState }),
+    ...(entry.httpStatus === undefined ? {} : { httpStatus: entry.httpStatus }),
+    ...(entry.transport === undefined ? {} : { transport: entry.transport }),
+    ...(entry.cause === undefined ? {} : { cause: entry.cause }),
+  } satisfies CronitorLog)
 }
 
 export function logPipeline(entry: PipelineLog, ctx?: PipelineLogContext): void {

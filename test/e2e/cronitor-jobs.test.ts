@@ -15,6 +15,7 @@ import {
   CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING,
   CRONITOR_TELEMETRY_ORIGIN,
 } from '../../src/telemetry/cronitor'
+import { cronitorIpv4Fetch } from '../../src/telemetry/cronitor-ipv4'
 import {
   asClipJobId,
   asClipRunId,
@@ -32,6 +33,7 @@ import {
   readCronitorPing,
   type RecordedCronitorPing,
 } from '../cronitor-fetch'
+import { createScriptedCronitorConnect, httpResponse } from '../cronitor-ipv4-harness'
 import { createFakeDigestQueue } from '../fake-digest-queue'
 import { createFakeFeedQueue } from '../fake-feed-queue'
 import { createFakeR2Bucket } from '../fake-r2'
@@ -46,6 +48,7 @@ const SECRET = 'telemetry-secret-must-not-leak'
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 function fixture(name: string): string {
@@ -103,9 +106,27 @@ function expectRunThen(pings: readonly RecordedCronitorPing[], state: 'complete'
     expect(url.pathname).toBe(`/p/${API_KEY}/${monitorKey}`)
     expect(ping.method).toBe('GET')
     expect(ping.redirect).toBe('manual')
+    expect(ping.cache).toBe('no-store')
     expect(ping.href).not.toContain(PAGE_URL)
     expect(ping.href).not.toContain(EMPTY_URL)
     expect(ping.href).not.toContain(SECRET)
+  }
+}
+
+function cronitorLogLines(): Record<string, unknown>[] {
+  return vi
+    .mocked(console.log)
+    .mock.calls.map((call) => call[0])
+    .filter(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' && value !== null && (value as { event?: unknown }).event === 'cronitor',
+    )
+}
+
+function expectNoTelemetrySecrets(logs: readonly Record<string, unknown>[], forbidden: readonly string[]): void {
+  const text = JSON.stringify(logs)
+  for (const secret of forbidden) {
+    expect(text).not.toContain(secret)
   }
 }
 
@@ -140,7 +161,11 @@ function clipBatch(url: string, jobId: string, runId: string): MessageBatch<Clip
   }
 }
 
-function installWorkerFetch(options: { readonly throwCronitor?: boolean } = {}): { readonly pings: RecordedCronitorPing[] } {
+function installWorkerFetch(options: {
+  readonly throwCronitor?: boolean
+  readonly cronitorStatus?: number
+  readonly cronitorBody?: string
+} = {}): { readonly pings: RecordedCronitorPing[] } {
   const pages: Record<string, string> = {
     [PAGE_URL]: fixture('ja-tech.html'),
     [EMPTY_URL]: fixture('empty.html'),
@@ -155,7 +180,7 @@ function installWorkerFetch(options: { readonly throwCronitor?: boolean } = {}):
         if (options.throwCronitor === true) {
           throw new Error(`cronitor ${SECRET}`)
         }
-        return new Response('ok')
+        return new Response(options.cronitorBody ?? 'ok', { status: options.cronitorStatus ?? 200 })
       }
       const html = pages[url]
       if (html === undefined) {
@@ -183,6 +208,7 @@ describe('Cronitor job telemetry e2e', () => {
     const feed = createFakeFeedQueue()
     const digest = createFakeDigestQueue()
     const cronitor = createCronitorFetch()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const env = envWithCronitor({ FEED_QUEUE: feed, DIGEST_QUEUE: digest })
     const scheduled = await handleScheduled({ cron: FEED_COLLECT_CRON }, env, {
       sourceStore,
@@ -198,6 +224,9 @@ describe('Cronitor job telemetry e2e', () => {
     expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
     expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('0')
     expect(cronitor.pings[1]?.message).toBeNull()
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
+    expectNoTelemetrySecrets(logs, [API_KEY, FEED_MONITOR, 'https://zenn.dev'])
   })
 
   it('pings fail when scheduled enqueue fails, and still collects when Cronitor throws', async () => {
@@ -225,10 +254,14 @@ describe('Cronitor job telemetry e2e', () => {
     await okStore.put({ ...enabled, id: asFeedSourceId(`src_${'c'.repeat(32)}`) })
     const okQueue = createFakeFeedQueue()
     const thrown = createThrowingCronitorFetch(new Error(SECRET))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const collected = await runCollect(okStore, okQueue, thrown.fetch)
     expect(collected.failed).toBe(0)
     expect(okQueue.size).toBe(1)
     expect(thrown.calls).toBe(2)
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.outcome)).toEqual(['network', 'network'])
+    expectNoTelemetrySecrets(logs, [SECRET, API_KEY, FEED_MONITOR, PAGE_URL])
   })
 
   it('pings run then complete from the clip queue export', async () => {
@@ -265,6 +298,7 @@ describe('Cronitor job telemetry e2e', () => {
   it('still finishes the clip export when Cronitor throws', async () => {
     const bucket = createFakeR2Bucket()
     const env = envWithCronitor({ ARTICLES: bucket })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const { pings } = installWorkerFetch({ throwCronitor: true })
     const jobId = `job_${'f'.repeat(32)}`
     await worker.queue(clipBatch(PAGE_URL, jobId, `run_${'1'.repeat(32)}`), env)
@@ -273,6 +307,83 @@ describe('Cronitor job telemetry e2e', () => {
     expect(job?.status).toBe('ready')
     expect(pings).toHaveLength(2)
     expect(pings.map((ping) => ping.state)).toEqual(['run', 'complete'])
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expectNoTelemetrySecrets(logs, [SECRET, API_KEY, CLIP_MONITOR, PAGE_URL])
+  })
+
+  it('collects the feed when the ipv4 socket sends, and when the dial fails', async () => {
+    const enabled = source({
+      id: asFeedSourceId(`src_${'e'.repeat(32)}`),
+      name: 'Zenn',
+      feedUrl: mustUrl('https://zenn.dev/topics/cloudflare/feed'),
+    })
+    const okStore = createMemoryFeedSourceStore()
+    await okStore.put(enabled)
+    const okQueue = createFakeFeedQueue()
+    const scripted = createScriptedCronitorConnect(() =>
+      httpResponse(200, { 'Content-Type': 'application/json', 'Content-Length': '0' }),
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const sent = await runCollect(
+      okStore,
+      okQueue,
+      (input, init) =>
+        cronitorIpv4Fetch(input, init, {
+          connect: scripted.connect,
+          lookup: async () => ['44.230.87.160'],
+        }),
+    )
+    expect(sent.failed).toBe(0)
+    expect(okQueue.size).toBe(1)
+    expect(scripted.dials.length).toBeGreaterThanOrEqual(2)
+    expect(scripted.dials.every((dial) => dial.hostname === '44.230.87.160')).toBe(true)
+    expect(scripted.dials.every((dial) => dial.sni === 'cronitor.link')).toBe(true)
+    const sentLogs = cronitorLogLines()
+    expect(sentLogs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
+    expect(sentLogs[0]).toMatchObject({ outcome: 'sent', transport: 'ipv4' })
+    expect(sentLogs[1]).toMatchObject({ outcome: 'sent', pingState: 'complete', transport: 'ipv4' })
+    expectNoTelemetrySecrets(sentLogs, [API_KEY, FEED_MONITOR, '44.230.87.160', PAGE_URL])
+
+    const failStore = createMemoryFeedSourceStore()
+    await failStore.put({ ...enabled, id: asFeedSourceId(`src_${'f'.repeat(32)}`) })
+    const failQueue = createFakeFeedQueue()
+    const failing = createScriptedCronitorConnect(() => new Error(`${SECRET} dial-failure-token`))
+    const collected = await runCollect(
+      failStore,
+      failQueue,
+      (input, init) =>
+        cronitorIpv4Fetch(input, init, {
+          connect: failing.connect,
+          lookup: async () => ['1.2.3.4'],
+        }),
+    )
+    expect(collected.failed).toBe(0)
+    expect(failQueue.size).toBe(1)
+    const failedLogs = cronitorLogLines().slice(sentLogs.length)
+    expect(failedLogs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(failedLogs[0]).toMatchObject({ outcome: 'network', transport: 'ipv4', cause: 'connect' })
+    expectNoTelemetrySecrets(failedLogs, [SECRET, API_KEY, FEED_MONITOR, '1.2.3.4', 'dial-failure-token', PAGE_URL])
+  })
+
+  it('still finishes the clip export when Cronitor returns a non-2xx body', async () => {
+    const bucket = createFakeR2Bucket()
+    const env = envWithCronitor({ ARTICLES: bucket })
+    const body = 'secret-body-must-not-leak'
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { pings } = installWorkerFetch({ cronitorStatus: 500, cronitorBody: body })
+    const jobId = `job_${'2'.repeat(32)}`
+    await worker.queue(clipBatch(PAGE_URL, jobId, `run_${'3'.repeat(32)}`), env)
+
+    const job = await createR2Store(env).getJob(asClipJobId(jobId))
+    expect(job?.status).toBe('ready')
+    expect(pings).toHaveLength(2)
+    expect(pings[0]?.cache).toBe('no-store')
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor http_error run', 'cronitor http_error complete'])
+    expect(logs[0]).toMatchObject({ outcome: 'http_error', pingState: 'run', httpStatus: 500 })
+    expect(logs[1]).toMatchObject({ outcome: 'http_error', pingState: 'complete', httpStatus: 500 })
+    expectNoTelemetrySecrets(logs, [body, API_KEY, CLIP_MONITOR, PAGE_URL, SECRET])
   })
 })
 
