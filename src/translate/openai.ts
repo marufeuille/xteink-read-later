@@ -10,6 +10,13 @@ import { err, ok } from '../types'
 import { htmlToMarkdown, markdownToHtml } from '../extract/sanitize-html'
 import { splitMarkdownForTranslation } from './chunks'
 import {
+  addOpenAiUsage,
+  readOpenAiChatUsage,
+  withOpenAiUsage,
+  ZERO_OPENAI_TOKEN_USAGE,
+  type OpenAiTokenUsage,
+} from './openai-usage'
+import {
   OPENAI_CHAT_URL,
   OPENAI_MAX_COMPLETION_TOKENS,
   OPENAI_MAX_INPUT_CHARS,
@@ -134,12 +141,17 @@ function systemPrompt(section: TranslateSection | undefined): string {
     : `${TRANSLATE_SYSTEM_PROMPT}\n- ${TRANSLATE_SECTION_RULE}`
 }
 
+type TranslatedSection = {
+  readonly markdown: string
+  readonly usage: OpenAiTokenUsage
+}
+
 async function requestTranslatedMarkdown(
   article: ExtractedArticle,
   source: string,
   apiKey: string,
   section: TranslateSection | undefined,
-): Promise<Result<string, TranslateFailedError>> {
+): Promise<Result<TranslatedSection, TranslateFailedError>> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TRANSLATE_TIMEOUT_MS)
   const suffix = sectionSuffix(section)
@@ -188,7 +200,7 @@ async function requestTranslatedMarkdown(
     if (parsed === null) {
       return fail(article, `OpenAI response was not valid title/content JSON${suffix}`)
     }
-    return ok(parsed.markdown)
+    return ok({ markdown: parsed.markdown, usage: readOpenAiChatUsage(payload) })
   } catch (cause) {
     if (controller.signal.aborted || isAbortError(cause)) {
       return fail(article, `OpenAI request timed out${suffix}`)
@@ -222,28 +234,32 @@ function articleFromMarkdown(
   })
 }
 
-export const translateArticle: TranslateArticle = async (
-  article,
-  deps: TranslateDeps,
-): Promise<Result<TranslatedArticle, TranslateFailedError>> => {
+export const translateArticle: TranslateArticle = async (article, deps: TranslateDeps) => {
   const source = htmlToMarkdown(article.contentHtml, article.canonicalUrl)
   if (source.length === 0) {
-    return fail(article, 'Sanitized article was empty')
+    return withOpenAiUsage(fail(article, 'Sanitized article was empty'))
   }
 
+  // Japanese articles are not sent to OpenAI. Token usage stays 0/0.
   if (article.language === 'ja') {
-    return articleFromMarkdown(article, article.title, source, false)
+    return withOpenAiUsage(articleFromMarkdown(article, article.title, source, false))
   }
 
   const apiKey = openaiApiKey(deps)
   if (apiKey === null) {
-    return fail(article, 'OPENAI_API_KEY is not set')
+    return withOpenAiUsage(fail(article, 'OPENAI_API_KEY is not set'))
   }
   if (source.length > OPENAI_MAX_INPUT_CHARS) {
-    return fail(article, 'Extracted HTML exceeds the translation size limit')
+    return withOpenAiUsage(fail(article, 'Extracted HTML exceeds the translation size limit'))
   }
 
   const chunks = splitMarkdownForTranslation(source, TRANSLATE_CHUNK_MAX_CHARS)
+  // Sum of sections that returned a translation. A failed call (HTTP error,
+  // timeout, or bad JSON) does not add that call's tokens. Earlier sections
+  // stay on the error so the clip batch can still report them. This total is
+  // for observability, not an invoice. If this function throws, the queue
+  // counts the message as zero because it never received a usage object.
+  let usage = ZERO_OPENAI_TOKEN_USAGE
   const translated: string[] = []
   for (let index = 0; index < chunks.length; index += 1) {
     const chunk = chunks[index]
@@ -253,12 +269,13 @@ export const translateArticle: TranslateArticle = async (
     const section = chunks.length === 1 ? undefined : { index: index + 1, total: chunks.length }
     const result = await requestTranslatedMarkdown(article, chunk, apiKey, section)
     if (!result.ok) {
-      return result
+      return withOpenAiUsage(fail(article, result.error.reason), usage)
     }
-    translated.push(result.value)
+    usage = addOpenAiUsage(usage, result.value.usage)
+    translated.push(result.value.markdown)
   }
   if (translated.length === 0) {
-    return fail(article, 'Sanitized article was empty')
+    return withOpenAiUsage(fail(article, 'Sanitized article was empty'))
   }
-  return articleFromMarkdown(article, article.title, translated.join('\n\n'), true)
+  return withOpenAiUsage(articleFromMarkdown(article, article.title, translated.join('\n\n'), true), usage)
 }

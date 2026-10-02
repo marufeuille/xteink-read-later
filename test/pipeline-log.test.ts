@@ -6,6 +6,7 @@ import { createExtractPipeline } from '../src/extract/pipeline'
 import { pipelineLogFields } from '../src/log'
 import { loggedText } from './logged-text'
 import { createClipPipeline } from '../src/pipeline/clip'
+import { withOpenAiUsage } from '../src/translate/openai-usage'
 import {
   asClipJobId,
   asClipRunId,
@@ -72,7 +73,7 @@ describe('pipeline log context', () => {
     const pipeline = createClipPipeline({
       extractPipeline: createExtractPipeline({ fetchPage }),
       translateArticle: async (article) =>
-        err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 401' }),
+        withOpenAiUsage(err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 401' })),
     })
     await pipeline(url(), { OPENAI_API_KEY: 'sk-secret-must-not-leak' }, { jobId, attempt: 2 })
     const events = spy.mock.calls.map((call) => JSON.parse(loggedText(call[0])) as Record<string, unknown>)

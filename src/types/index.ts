@@ -295,6 +295,7 @@ export type {
   ExtractPipeline,
   ExtractResult,
   FetchPage,
+  OpenAiTokenUsage,
   ParseClipUrl,
   TranslateArticle,
   TranslateDeps,

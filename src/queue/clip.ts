@@ -4,6 +4,14 @@ import { errorMessage } from '../http/error-response'
 import { shouldProcessClipRun } from '../job/clip'
 import { logPipeline } from '../log'
 import { clipPipeline as defaultClipPipeline } from '../pipeline/clip'
+import { OPENAI_MODEL } from '../translate/constants'
+import {
+  addOpenAiUsage,
+  estimateOpenAiUsd,
+  normalizeOpenAiUsage,
+  ZERO_OPENAI_TOKEN_USAGE,
+  type OpenAiTokenUsage,
+} from '../translate/openai-usage'
 import {
   CRONITOR_CLIP_FAIL_MESSAGE,
   CRONITOR_CLIP_MONITOR_KEY_BINDING,
@@ -47,6 +55,18 @@ export type ClipQueueHandlerDeps = {
 }
 
 type ClipQueueMessageOutcome = 'ready' | 'failed' | 'retry' | 'skipped' | 'invalid'
+
+type ClipQueueMessageResult = {
+  readonly outcome: ClipQueueMessageOutcome
+  readonly usage: OpenAiTokenUsage
+}
+
+function clipMessageResult(
+  outcome: ClipQueueMessageOutcome,
+  usage: OpenAiTokenUsage = ZERO_OPENAI_TOKEN_USAGE,
+): ClipQueueMessageResult {
+  return { outcome, usage: normalizeOpenAiUsage(usage) }
+}
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -294,12 +314,12 @@ async function processMessage(
   message: Message<ClipQueueMessage>,
   env: Cloudflare.Env,
   deps: ClipQueueHandlerDeps,
-): Promise<ClipQueueMessageOutcome> {
+): Promise<ClipQueueMessageResult> {
   const parsed = parseClipQueueMessage(message.body)
   if (parsed === null) {
     logPipeline({ stage: 'queue', durationMs: 0, errorKind: 'invalid_url' })
     message.ack()
-    return 'invalid'
+    return clipMessageResult('invalid')
   }
 
   const stages: ClipStageRecord[] = []
@@ -332,7 +352,7 @@ async function processMessage(
         updatedAt: nowIso(),
       })
       message.retry()
-      return 'retry'
+      return clipMessageResult('retry')
     }
     await deleteCheckpointForRun(store, parsed.jobId, parsed.runId)
     await putJobIfCurrentRun(store, {
@@ -347,7 +367,8 @@ async function processMessage(
       updatedAt: nowIso(),
     })
     message.ack()
-    return 'failed'
+    // The pipeline threw before usage could be read. Count this message as 0.
+    return clipMessageResult('failed')
   }
 }
 
@@ -357,7 +378,7 @@ async function runClipQueueMessage(
   env: Cloudflare.Env,
   deps: ClipQueueHandlerDeps,
   stages: ClipStageRecord[],
-): Promise<ClipQueueMessageOutcome> {
+): Promise<ClipQueueMessageResult> {
   const { jobId, runId, url } = parsed
   const store = storeFor(env, deps)
   const pipeline = deps.clipPipeline ?? defaultClipPipeline
@@ -366,7 +387,7 @@ async function runClipQueueMessage(
   if (!shouldProcessClipRun(existing, runId)) {
     await deleteCheckpointForRun(store, jobId, runId)
     message.ack()
-    return 'skipped'
+    return clipMessageResult('skipped')
   }
 
   const fields = jobFields(parsed, existing, message.attempts)
@@ -383,7 +404,7 @@ async function runClipQueueMessage(
       updatedAt: nowIso(),
     }))
   ) {
-    return 'skipped'
+    return clipMessageResult('skipped')
   }
 
   const checkpoint = await checkpointForRun(store, jobId, runId)
@@ -403,18 +424,19 @@ async function runClipQueueMessage(
       })
     },
   })
+  const usage = normalizeOpenAiUsage(result.usage)
   if (result.ok) {
     const { id, article, epub } = result.value
     if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
-      return 'skipped'
+      return clipMessageResult('skipped', usage)
     }
     await store.put(clipArticleWrite(id, article, epub), log)
     if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
-      return 'skipped'
+      return clipMessageResult('skipped', usage)
     }
     const classification = await classifyQueuedArticle(article, env, classify, id, log)
     if (!(await continueCurrentRunOrAck(store, message, jobId, runId))) {
-      return 'skipped'
+      return clipMessageResult('skipped', usage)
     }
     if (classification.status !== 'skipped') {
       await store.putClassification(id, classification)
@@ -432,12 +454,12 @@ async function runClipQueueMessage(
       updatedAt: nowIso(),
     }
     if (!(await putCurrentRunOrAck(store, message, readyJob))) {
-      return 'skipped'
+      return clipMessageResult('skipped', usage)
     }
     await deleteCheckpointForRun(store, jobId, runId)
     await attachCompletedCandidate(env, deps, readyJob)
     message.ack()
-    return 'ready'
+    return clipMessageResult('ready', usage)
   }
 
   if (shouldRetryClipError(result.error, message.attempts)) {
@@ -457,7 +479,7 @@ async function runClipQueueMessage(
       updatedAt: nowIso(),
     })
     message.retry()
-    return 'retry'
+    return clipMessageResult('retry', usage)
   }
 
   logPipeline(
@@ -482,7 +504,7 @@ async function runClipQueueMessage(
     updatedAt: nowIso(),
   })
   message.ack()
-  return 'failed'
+  return clipMessageResult('failed', usage)
 }
 
 export function createClipQueueHandler(
@@ -497,18 +519,31 @@ export function createClipQueueHandler(
       job: async () => {
         let count = 0
         let errorCount = 0
+        let usage = ZERO_OPENAI_TOKEN_USAGE
         for (const message of batch.messages) {
-          const outcome = await processMessage(message, env, deps)
+          const processed = await processMessage(message, env, deps)
           count += 1
-          if (outcome === 'failed' || outcome === 'invalid') {
+          if (processed.outcome === 'failed' || processed.outcome === 'invalid') {
             errorCount += 1
           }
+          usage = addOpenAiUsage(usage, processed.usage)
         }
-        return { count, errorCount }
+        return {
+          count,
+          errorCount,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          estimatedUsd: estimateOpenAiUsd(OPENAI_MODEL, usage.promptTokens, usage.completionTokens),
+        }
       },
       metrics: (summary) => ({
         count: summary.count,
         error_count: summary.errorCount,
+        custom: {
+          prompt_tokens: summary.promptTokens,
+          completion_tokens: summary.completionTokens,
+          ...(summary.estimatedUsd === null ? {} : { estimated_usd: summary.estimatedUsd }),
+        },
       }),
       failed: (summary) => summary.errorCount > 0,
     })

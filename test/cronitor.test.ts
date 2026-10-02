@@ -7,6 +7,7 @@ import { runScheduledFeedCollection } from '../src/feeds/schedule'
 import { unavailableClassification } from '../src/classify/taxonomy'
 import { createClipPipeline } from '../src/pipeline/clip'
 import { CLIP_QUEUE_NAME, createClipQueueHandler } from '../src/queue/clip'
+import { withOpenAiUsage } from '../src/translate/openai-usage'
 import { handleScheduled } from '../src/schedule'
 import { createMemoryFeedSourceStore } from '../src/store/memory-sources'
 import { createMemoryStore } from '../src/store/memory'
@@ -142,14 +143,15 @@ function expectRunThen(pings: readonly RecordedCronitorPing[], state: 'complete'
   }
 }
 
-function clipMessage(attempts = 1): Message<ClipQueueMessage> {
+function clipMessage(attempts = 1, mark = 'a'): Message<ClipQueueMessage> {
+  const runMark = String.fromCharCode(mark.charCodeAt(0) + 1)
   return {
-    id: 'msg_1',
+    id: `msg_${mark}`,
     timestamp: new Date('2026-10-01T00:00:00.000Z'),
     attempts,
     body: {
-      jobId: asClipJobId(`job_${'a'.repeat(32)}`),
-      runId: asClipRunId(`run_${'b'.repeat(32)}`),
+      jobId: asClipJobId(`job_${mark.repeat(32)}`),
+      runId: asClipRunId(`run_${runMark.repeat(32)}`),
       url: mustUrl('https://example.com/ja/workers-cpu'),
     },
     ack() {},
@@ -176,11 +178,13 @@ function batchOf(messages: readonly Message<ClipQueueMessage>[]): MessageBatch<C
 }
 
 const jaTranslate: TranslateArticle = async (article) =>
-  ok({
-    ...article,
-    language: 'ja',
-    translated: false,
-  })
+  withOpenAiUsage(
+    ok({
+      ...article,
+      language: 'ja',
+      translated: false,
+    }),
+  )
 
 describe('Cronitor job telemetry', () => {
   it('documents the Worker secret names and keeps the Access HTTP monitors', () => {
@@ -205,9 +209,17 @@ describe('Cronitor job telemetry', () => {
     expect(docs).toContain('eu.cronitor.link')
     expect(docs).toContain('ipv4')
     expect(docs).toContain('`dns` / `connect` / `http` / `sockets`')
+    expect(docs).toContain('prompt_tokens')
+    expect(docs).toContain('completion_tokens')
+    expect(docs).toContain('estimated_usd')
+    expect(docs).toContain('請求')
+    expect(docs).toContain('metric.prompt_tokens.sum < N over 24 hours')
+    expect(docs).toContain('最大 10')
     const workersLogs = readFileSync(join(root, '..', 'docs', 'workers-logs.md'), 'utf8')
     expect(workersLogs).toContain('`ipv4`')
     expect(workersLogs).toContain('`dns` / `connect` / `http` / `sockets`')
+    expect(workersLogs).toContain('prompt_tokens')
+    expect(workersLogs).toContain('estimated_usd')
     expect(workersLogs).toContain('$metadata.service = "xteink-read-later" AND event = "cronitor"')
     expect(workersLogs).toContain('regex(event, "^(pipeline|daily_digest|opds_download|feed)$")')
     expect(index).toContain('await handleScheduled(controller, env)')
@@ -240,6 +252,100 @@ describe('Cronitor job telemetry', () => {
     expect(cronitor.pings[1]?.href).toContain('metric=count%3A4')
     expect(cronitor.pings[1]?.href).toContain('metric=duration%3A2.5')
     expect(cronitor.pings[1]?.href).toContain('metric=error_count%3A0')
+    expect(cronitor.pings[1]?.metrics.has('prompt_tokens')).toBe(false)
+  })
+
+  it('sends custom metrics on complete and fail, and never on run', async () => {
+    const cronitor = createCronitorFetch()
+    const stamps = [0, 1_000]
+    let tick = 0
+    await traceCronitorJob({
+      env: cronitorBindings(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: cronitor.fetch,
+      now: () => stamps[tick++] ?? 0,
+      job: async () => ({ errorCount: 0 }),
+      metrics: () => ({
+        count: 1,
+        error_count: 0,
+        custom: {
+          prompt_tokens: 10.9,
+          completion_tokens: 4,
+          estimated_usd: 0.0000854,
+          negative: -1,
+          nan: Number.NaN,
+          'bad name': 3,
+          count: 99,
+        },
+      }),
+    })
+
+    expectRunThen(cronitor.pings, 'complete', CLIP_MONITOR)
+    expect(cronitor.pings[0]?.metrics.size).toBe(0)
+    expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
+    expect(cronitor.pings[1]?.metrics.get('duration')).toBe('1')
+    expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.get('prompt_tokens')).toBe('10')
+    expect(cronitor.pings[1]?.metrics.get('completion_tokens')).toBe('4')
+    expect(cronitor.pings[1]?.metrics.get('estimated_usd')).toBe('0.000085')
+    expect(cronitor.pings[1]?.metrics.has('negative')).toBe(false)
+    expect(cronitor.pings[1]?.metrics.has('nan')).toBe(false)
+    expect(cronitor.pings[1]?.metrics.has('bad name')).toBe(false)
+    expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
+    const completeMetrics = [...new URL(cronitor.pings[1]?.href ?? '').searchParams.getAll('metric')]
+    expect(completeMetrics.filter((metric) => metric.startsWith('count:'))).toEqual(['count:1'])
+
+    const failing = createCronitorFetch()
+    tick = 0
+    await traceCronitorJob({
+      env: cronitorBindings(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: failing.fetch,
+      now: () => stamps[tick++] ?? 0,
+      job: async () => ({ errorCount: 2 }),
+      metrics: () => ({
+        count: 2,
+        error_count: 2,
+        custom: { prompt_tokens: 80, completion_tokens: 20, estimated_usd: 0 },
+      }),
+      failed: (summary) => summary.errorCount > 0,
+    })
+    expectRunThen(failing.pings, 'fail', CLIP_MONITOR)
+    expect(failing.pings[0]?.metrics.size).toBe(0)
+    expect(failing.pings[1]?.message).toBe(CRONITOR_CLIP_FAIL_MESSAGE)
+    expect(failing.pings[1]?.metrics.get('error_count')).toBe('2')
+    expect(failing.pings[1]?.metrics.get('prompt_tokens')).toBe('80')
+    expect(failing.pings[1]?.metrics.get('completion_tokens')).toBe('20')
+    expect(failing.pings[1]?.metrics.get('estimated_usd')).toBe('0')
+  })
+
+  it('sends at most 10 custom metrics and skips invalid names without using the cap', async () => {
+    const cronitor = createCronitorFetch()
+    const custom: Record<string, number> = { skipped: -1 }
+    for (let index = 0; index < 12; index += 1) {
+      custom[`extra_${index}`] = index
+    }
+    await traceCronitorJob({
+      env: cronitorBindings(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: cronitor.fetch,
+      job: async () => 'ok',
+      metrics: () => ({ count: 1, error_count: 0, custom }),
+    })
+    const metrics = cronitor.pings[1]?.metrics
+    expect(metrics?.has('skipped')).toBe(false)
+    for (let index = 0; index < 10; index += 1) {
+      expect(metrics?.get(`extra_${index}`)).toBe(String(index))
+    }
+    expect(metrics?.has('extra_10')).toBe(false)
+    expect(metrics?.has('extra_11')).toBe(false)
+    const customCount = [...(metrics?.keys() ?? [])].filter(
+      (name) => name !== 'count' && name !== 'duration' && name !== 'error_count',
+    )
+    expect(customCount).toHaveLength(10)
   })
 
   it('sends fail without the thrown error text, then rethrows', async () => {
@@ -265,6 +371,7 @@ describe('Cronitor job telemetry', () => {
     expect(cronitor.pings[1]?.metrics.get('duration')).toBe('1.5')
     expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('1')
     expect(cronitor.pings[1]?.metrics.has('count')).toBe(false)
+    expect(cronitor.pings[1]?.metrics.has('prompt_tokens')).toBe(false)
     expect(cronitor.pings[1]?.href).not.toContain('example.com')
   })
 
@@ -608,6 +715,8 @@ describe('scheduled feed collection telemetry', () => {
     expectRunThen(cronitor.pings, 'complete', FEED_MONITOR)
     expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
     expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.has('prompt_tokens')).toBe(false)
+    expect(cronitor.pings[1]?.metrics.has('estimated_usd')).toBe(false)
     expect(cronitor.pings).toHaveLength(2)
     const logs = cronitorLogLines()
     expect(logs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
@@ -641,6 +750,8 @@ describe('scheduled feed collection telemetry', () => {
     expect(cronitor.pings[1]?.message).toBe(CRONITOR_FEED_COLLECT_FAIL_MESSAGE)
     expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
     expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('1')
+    expect(cronitor.pings[1]?.metrics.has('prompt_tokens')).toBe(false)
+    expect(cronitor.pings[1]?.metrics.has('estimated_usd')).toBe(false)
     expect(cronitor.pings[1]?.href).not.toContain('queue send failed')
   })
 
@@ -740,13 +851,101 @@ describe('clip queue telemetry', () => {
     expectRunThen(cronitor.pings, 'complete', CLIP_MONITOR)
     expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
     expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.get('prompt_tokens')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.get('completion_tokens')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.get('estimated_usd')).toBe('0')
+    expect(cronitor.pings[0]?.metrics.size).toBe(0)
     expect(cronitor.pings[1]?.href).not.toContain('example.com')
+  })
+
+  it('sums OpenAI token usage across the batch on complete, and on a terminal fail', async () => {
+    const store = createMemoryStore()
+    const cronitor = createCronitorFetch()
+    let calls = 0
+    const translateArticle: TranslateArticle = async (article) => {
+      calls += 1
+      const usage =
+        calls === 1
+          ? { promptTokens: 1000, completionTokens: 400 }
+          : { promptTokens: 250, completionTokens: 50 }
+      return withOpenAiUsage(
+        ok({
+          ...article,
+          language: 'ja',
+          translated: false,
+        }),
+        usage,
+      )
+    }
+    const clipPipeline = createClipPipeline({
+      extractPipeline: createExtractPipeline({
+        fetchPage: async (url) =>
+          ok({
+            requestedUrl: url,
+            finalUrl: url,
+            contentType: 'text/html',
+            html: jaHtml,
+          }),
+      }),
+      translateArticle,
+    })
+    await createClipQueueHandler({
+      store,
+      clipPipeline,
+      classifyArticle: async () => unavailableClassification('skipped'),
+      cronitorFetch: cronitor.fetch,
+    })(batchOf([clipMessage(1, 'a'), clipMessage(1, 'c')]), cronitorBindings())
+
+    expect(calls).toBe(2)
+    expectRunThen(cronitor.pings, 'complete', CLIP_MONITOR)
+    expect(cronitor.pings[0]?.metrics.size).toBe(0)
+    expect(cronitor.pings[1]?.metrics.get('count')).toBe('2')
+    expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.get('prompt_tokens')).toBe('1250')
+    expect(cronitor.pings[1]?.metrics.get('completion_tokens')).toBe('450')
+    // 1250 * $0.2 + 450 * $1.2 per million tokens.
+    expect(cronitor.pings[1]?.metrics.get('estimated_usd')).toBe('0.00079')
+
+    const failing = createCronitorFetch()
+    const failingTranslate: TranslateArticle = async (article) =>
+      withOpenAiUsage(err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 500' }), {
+        promptTokens: 80,
+        completionTokens: 20,
+      })
+    await createClipQueueHandler({
+      store: createMemoryStore(),
+      clipPipeline: createClipPipeline({
+        extractPipeline: createExtractPipeline({
+          fetchPage: async (url) =>
+            ok({
+              requestedUrl: url,
+              finalUrl: url,
+              contentType: 'text/html',
+              html: jaHtml,
+            }),
+        }),
+        translateArticle: failingTranslate,
+      }),
+      cronitorFetch: failing.fetch,
+    })(batchOf([clipMessage(4)]), cronitorBindings())
+
+    expectRunThen(failing.pings, 'fail', CLIP_MONITOR)
+    expect(failing.pings[0]?.metrics.size).toBe(0)
+    expect(failing.pings[1]?.message).toBe(CRONITOR_CLIP_FAIL_MESSAGE)
+    expect(failing.pings[1]?.metrics.get('count')).toBe('1')
+    expect(failing.pings[1]?.metrics.get('error_count')).toBe('1')
+    expect(failing.pings[1]?.metrics.get('prompt_tokens')).toBe('80')
+    expect(failing.pings[1]?.metrics.get('completion_tokens')).toBe('20')
+    expect(failing.pings[1]?.metrics.get('estimated_usd')).toBe('0.00004')
+    expect(failing.pings[1]?.href).not.toContain('example.com')
   })
 
   it('sends fail for a terminal clip error and complete while retries remain', async () => {
     const url = mustUrl('https://example.com/ja/workers-cpu')
-    const failing: ClipPipeline = async () => err({ kind: 'extract_failed', url, reason: SECRET })
-    const retrying: ClipPipeline = async () => err({ kind: 'fetch_failed', url, reason: SECRET })
+    const failing: ClipPipeline = async () =>
+      withOpenAiUsage(err({ kind: 'extract_failed', url, reason: SECRET }))
+    const retrying: ClipPipeline = async () =>
+      withOpenAiUsage(err({ kind: 'fetch_failed', url, reason: SECRET }))
     const terminal = createCronitorFetch()
     const retry = createCronitorFetch()
     await createClipQueueHandler({
@@ -763,9 +962,14 @@ describe('clip queue telemetry', () => {
     expectRunThen(terminal.pings, 'fail', CLIP_MONITOR)
     expect(terminal.pings[1]?.message).toBe(CRONITOR_CLIP_FAIL_MESSAGE)
     expect(terminal.pings[1]?.metrics.get('error_count')).toBe('1')
+    expect(terminal.pings[1]?.metrics.get('prompt_tokens')).toBe('0')
+    expect(terminal.pings[1]?.metrics.get('completion_tokens')).toBe('0')
+    expect(terminal.pings[1]?.metrics.get('estimated_usd')).toBe('0')
+    expect(terminal.pings[0]?.metrics.size).toBe(0)
     expect(terminal.pings[1]?.href).not.toContain(SECRET)
     expectRunThen(retry.pings, 'complete', CLIP_MONITOR)
     expect(retry.pings[1]?.metrics.get('error_count')).toBe('0')
+    expect(retry.pings[1]?.metrics.get('prompt_tokens')).toBe('0')
     expect(retry.pings[1]?.href).not.toContain(SECRET)
   })
 
@@ -781,6 +985,8 @@ describe('clip queue telemetry', () => {
     expectRunThen(cronitor.pings, 'fail', CLIP_MONITOR)
     expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
     expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('1')
+    expect(cronitor.pings[1]?.metrics.get('prompt_tokens')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.get('estimated_usd')).toBe('0')
   })
 
   it('still finishes the clip when Cronitor throws', async () => {

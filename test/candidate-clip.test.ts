@@ -7,6 +7,7 @@ import { sendCandidateClip } from '../src/candidates/clip'
 import { resolveCandidateDelivery } from '../src/candidates/delivery'
 import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
+import { withOpenAiUsage } from '../src/translate/openai-usage'
 import { logCandidateClip, logOpdsDownload } from '../src/log'
 import { loggedText } from './logged-text'
 import { unevaluatedRecommendation } from '../src/recommend/taxonomy'
@@ -44,12 +45,14 @@ function mustUrl(value: string): HttpUrl {
 }
 
 const jaTranslate: TranslateArticle = async (article) =>
-  ok({
-    ...article,
-    language: 'ja',
-    translated: article.language !== 'ja',
-    title: article.language === 'ja' ? article.title : `${article.title}（日本語）`,
-  })
+  withOpenAiUsage(
+    ok({
+      ...article,
+      language: 'ja',
+      translated: article.language !== 'ja',
+      title: article.language === 'ja' ? article.title : `${article.title}（日本語）`,
+    }),
+  )
 
 const jaTechPage: FetchPage = async (url) =>
   ok({

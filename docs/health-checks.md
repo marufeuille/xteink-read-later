@@ -87,7 +87,7 @@ Alerts: Email を Masahiro へ。任意で第二の宛先（Ops inbox）にも�
 
 Access 外形監視の Website check（`xteink-books-access-wall` / `xteink-digest-send-no-access`）とは別。それらは残す。置き換えない。Heartbeat だけのモニターはまだ置かない。
 
-Worker が [Telemetry API](https://cronitor.io/docs/telemetry-api) へ Job の寿命を送る。URL は `https://cronitor.link/p/<API key>/<monitor key>`。`state=run` が開始、`complete` が成功終了、`fail` が失敗。メトリックは `metric` を繰り返す。`count`、`duration`（秒）、`error_count`。同じ実行の `run` と `complete` / `fail` は `series` で揃える。
+Worker が [Telemetry API](https://cronitor.io/docs/telemetry-api) へ Job の寿命を送る。URL は `https://cronitor.link/p/<API key>/<monitor key>`。`state=run` が開始、`complete` が成功終了、`fail` が失敗。メトリックは `metric` を繰り返す。built-in は `count`、`duration`（秒）、`error_count`。カスタムメトリクスも同じ `metric=name:value` で、1 イベントあたり最大 10 個（built-in とは別枠）。カスタムは `complete` と `fail` だけに付ける。`run` にはメトリクスを付けない。`run` と終端の両方へ同じ値を送ると Cronitor の集計が二重になる。同じ実行の `run` と `complete` / `fail` は `series` で揃える。
 
 ping の失敗、タイムアウト、非 2xx、secret の未設定や空文字は本処理を失敗させない。各 ping は最大 2 秒で打ち切る（DNS、接続、許可したリダイレクトを同じ制限に含める）。応答ステータスを読み、本文は上限まで読む。`https://cronitor.link` と `https://eu.cronitor.link` への https リダイレクトだけ、最大 2 回まで辿る。それ以外の `Location` は辿らない。API key はパスに入るので、他ホストへは渡さない。API key、モニターキー、記事 URL、例外メッセージは Cronitor の `message` に載せない。失敗時の `message` は固定文（`feed collection failed` / `clip processing failed`）だけ。
 
@@ -101,13 +101,35 @@ ping の失敗、タイムアウト、非 2xx、secret の未設定や空文字�
 | --- | --- |
 | `CRONITOR_API_KEY` | Telemetry 用 API key（権限 `monitor:telemetry`）。収集とクリップで共有。Access の外形プローブでも、Cloudflare Access / Workers のトークンでもない |
 | `CRONITOR_FEED_COLLECT_MONITOR_KEY` | 定期収集。cron `0 19 * * *`（04:00 Asia/Tokyo）の feed 収集 enqueue。`count` は対象にした有効情報源数、`error_count` は enqueue 失敗数。`error_count > 0` または例外で `fail`。情報源ごとの取得（feed queue）は見ない。同じ cron の日次ダイジェスト enqueue も見ない |
-| `CRONITOR_CLIP_MONITOR_KEY` | クリップ処理。clip queue consumer の 1 バッチ（本番の `max_batch_size` は 1）。`count` はバッチのメッセージ数、`error_count` は終端失敗と不正メッセージ。どちらかがあれば `fail`。`message.retry` の途中は `complete`（まだ終端ではない）。キューが動かない時間は ping しない |
+| `CRONITOR_CLIP_MONITOR_KEY` | クリップ処理。clip queue consumer の 1 バッチ（本番の `max_batch_size` は 1）。`count` はバッチのメッセージ数、`error_count` は終端失敗と不正メッセージ。どちらかがあれば `fail`。`message.retry` の途中は `complete`（まだ終端ではない）。終端の `complete` / `fail` には、そのバッチの OpenAI `prompt_tokens`、`completion_tokens`、概算 `estimated_usd` も載る。`run` には付けない。キューが動かない時間は ping しない |
 
 モニターキーの文字列はコードに埋め込まない。Cronitor 側のキーと secret の値を同じにする。例: 収集 `xteink-feed-collect`、クリップ `xteink-clip`。
 
 本番は `wrangler secret put` で上の 3 つを入れる。ローカルは `.dev.vars`。値が空、または API key とモニターキーの片方だけ、のときは送らない。値はここに書かない。
 
 未知のキーへ ping すると Cronitor がモニターを自動作成することがある。Ops は UI で Job モニターを先に 2 本作る（このリポジトリは作らない。secret の値も PR に置かない）。収集は 1 日 1 回（UTC 19:00）の未実行で知らせる。クリップはスケジュール未実行を見ない（クリップが無い時間は異常ではない）。`fail` と、必要なら `metric.duration` / `metric.error_count` の断言は Ops が付ける。アラート先は Access 外形監視と同じでよい。
+
+### クリップの OpenAI カスタムメトリクス
+
+[Custom metrics](https://cronitor.io/docs/custom-metrics) は built-in と同じく `metric=name:value` を繰り返す。1 イベントあたりカスタムは最大 10 個。`run` には付けない。`complete` と `fail` だけに付ける。定期収集（feed-collect）は OpenAI を呼ばないので、次の名前は付かない。
+
+| 名前 | 意味 |
+| --- | --- |
+| `prompt_tokens` | バッチ内の OpenAI `usage.prompt_tokens` の合計。非負整数 |
+| `completion_tokens` | バッチ内の `usage.completion_tokens` の合計。非負整数 |
+| `estimated_usd` | 上の合計に単価を掛けた概算 USD。小数第 6 位まで。観測用であり、OpenAI の請求額ではない |
+
+単価は bakeoff と同じ表（`src/translate/openai-usage.ts`）。本番モデル `gpt-5.6-luna` は入力 100 万トークンあたり 0.2 USD、出力 100 万トークンあたり 1.2 USD。請求書との突合はしない。classify / recommend（Jev）とダイジェスト要約の usage はこの ping に載せない。
+
+日本語の記事（`language === 'ja'`）は OpenAI を呼ばない。その記事のトークンは 0 / 0、概算も 0。長文を分割したときは、翻訳として使えたセクションの usage を足す。途中のセクションが失敗したとき、その失敗した呼び出しのトークンは足さない。それより前に成功したセクションのトークンはエラーと一緒に返し、バッチの `complete` または `fail` に含める。パイプラインが例外で落ち、usage を読む前に終わったメッセージは 0 として数える。チェックポイントから EPUB だけやり直す attempt は OpenAI を呼ばないので 0 である。翻訳そのものをやり直した attempt は、その attempt のトークンをその ping に載せる。
+
+任意の断言例（Ops が UI で付ける。このリポジトリはモニターを作らない）:
+
+```text
+metric.prompt_tokens.sum < N over 24 hours
+```
+
+`N` は運用で決める。高いクリップを見つけるための目安であり、請求の上限ではない。
 
 ## Access の経路を変えたときだけ
 

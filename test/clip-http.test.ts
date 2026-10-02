@@ -11,6 +11,7 @@ import { createMemoryStore } from '../src/store/memory'
 import { createR2Store } from '../src/store/r2'
 import { OPENAI_CHAT_URL } from '../src/translate/constants'
 import { translateArticle as openAiTranslate } from '../src/translate/openai'
+import { withOpenAiUsage } from '../src/translate/openai-usage'
 import { OPENROUTER_DECISIONS_URL } from '../src/jev/constants'
 import {
   asArticleId,
@@ -67,12 +68,14 @@ type ClipJson = {
 }
 
 const jaTranslate: TranslateArticle = async (article) =>
-  ok({
-    ...article,
-    language: 'ja',
-    translated: article.language !== 'ja',
-    title: article.language === 'ja' ? article.title : `${article.title}（日本語）`,
-  })
+  withOpenAiUsage(
+    ok({
+      ...article,
+      language: 'ja',
+      translated: article.language !== 'ja',
+      title: article.language === 'ja' ? article.title : `${article.title}（日本語）`,
+    }),
+  )
 
 const jaTechPage: FetchPage = async (url) =>
   ok({
@@ -556,7 +559,7 @@ describe('POST /clip', () => {
 
   it('records translate_failed on the job without extracted article', async () => {
     const translateArticle: TranslateArticle = async (extracted) =>
-      err({ kind: 'translate_failed', extracted, reason: 'OpenAI HTTP 500' })
+      withOpenAiUsage(err({ kind: 'translate_failed', extracted, reason: 'OpenAI HTTP 500' }))
     const ctx = appWithFetch(
       async (url) =>
         ok({

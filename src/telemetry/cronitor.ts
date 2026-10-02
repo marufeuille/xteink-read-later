@@ -28,6 +28,11 @@ export const CRONITOR_CLIP_FAIL_MESSAGE = 'clip processing failed'
 
 const METRIC_ORDER = ['count', 'duration', 'error_count'] as const
 const MAX_MESSAGE_CHARS = 2_000
+/** Cronitor allows at most 10 custom metrics per event. Built-ins are separate. */
+const MAX_CUSTOM_METRICS = 10
+const CUSTOM_METRIC_NAME = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
+const ESTIMATED_USD_METRIC = 'estimated_usd'
+const ESTIMATED_USD_DIGITS = 6
 
 export type CronitorState = 'run' | 'complete' | 'fail'
 
@@ -35,6 +40,11 @@ export type CronitorJobMetrics = {
   readonly count?: number
   readonly duration?: number
   readonly error_count?: number
+  /**
+   * Extra `metric=name:value` pairs. traceCronitorJob sends metrics on complete
+   * and fail only, never on run, so customs are not double-counted.
+   */
+  readonly custom?: Readonly<Record<string, number>>
 }
 
 export type CronitorMonitorKeyBinding =
@@ -130,6 +140,36 @@ function formatMetricValue(name: (typeof METRIC_ORDER)[number], value: number): 
   return String(Math.trunc(value))
 }
 
+function formatCustomMetricValue(name: string, value: number): string | null {
+  if (!Number.isFinite(value) || value < 0) {
+    return null
+  }
+  if (name === ESTIMATED_USD_METRIC) {
+    const scale = 10 ** ESTIMATED_USD_DIGITS
+    const rounded = Math.round(value * scale) / scale
+    return rounded === 0 ? '0' : String(rounded)
+  }
+  return String(Math.trunc(value))
+}
+
+function appendCustomMetrics(params: URLSearchParams, custom: Readonly<Record<string, number>>): void {
+  let sent = 0
+  for (const [name, value] of Object.entries(custom)) {
+    if (sent >= MAX_CUSTOM_METRICS) {
+      break
+    }
+    if (!CUSTOM_METRIC_NAME.test(name) || METRIC_ORDER.some((builtin) => builtin === name)) {
+      continue
+    }
+    const formatted = formatCustomMetricValue(name, value)
+    if (formatted === null) {
+      continue
+    }
+    params.append('metric', `${name}:${formatted}`)
+    sent += 1
+  }
+}
+
 function appendMetrics(params: URLSearchParams, metrics: CronitorJobMetrics): void {
   for (const name of METRIC_ORDER) {
     const value = metrics[name]
@@ -141,6 +181,9 @@ function appendMetrics(params: URLSearchParams, metrics: CronitorJobMetrics): vo
       continue
     }
     params.append('metric', `${name}:${formatted}`)
+  }
+  if (metrics.custom !== undefined) {
+    appendCustomMetrics(params, metrics.custom)
   }
 }
 
@@ -336,6 +379,7 @@ export async function traceCronitorJob<T>(options: TraceCronitorJobOptions<T>): 
       ...(message === undefined || message.length === 0 ? {} : { message }),
     })
 
+  // run stays metrics-free. Customs on run and complete would double-count in Cronitor.
   await ping('run')
   const started = clock()
 

@@ -1,3 +1,4 @@
+// Clip Cronitor estimates use the shared rate table in ./openai-usage.ts for this model.
 export const OPENAI_MODEL = 'gpt-5.6-luna'
 export const OPENAI_CHAT_URL = 'https://api.openai.com/v1/chat/completions'
 export const OPENAI_MAX_INPUT_CHARS = 80_000

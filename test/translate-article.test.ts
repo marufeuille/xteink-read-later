@@ -55,6 +55,7 @@ describe('translateArticle', () => {
       }
       expect(result.value.translated).toBe(false)
       expect(result.value.language).toBe('ja')
+      expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0 })
       expect(result.value.contentHtml).toContain('npx wrangler dev')
       expect(result.value.title).toBe(input.title)
     } finally {
@@ -104,6 +105,7 @@ describe('translateArticle', () => {
           },
         },
       ],
+      usage: { prompt_tokens: 120.9, completion_tokens: 40, total_tokens: 999 },
     }
     vi.stubGlobal(
       'fetch',
@@ -123,6 +125,7 @@ describe('translateArticle', () => {
       expect(result.value.title).toBe('Keep compatibility_date current')
       expect(result.value.contentHtml).toContain('{"compatibility_date":"2026-09-19"}')
       expect(result.value.contentHtml).toContain('<pre><code>')
+      expect(result.usage).toEqual({ promptTokens: 120, completionTokens: 40 })
     } finally {
       vi.unstubAllGlobals()
     }
@@ -139,6 +142,7 @@ describe('translateArticle', () => {
       expect(result.error.kind).toBe('translate_failed')
       expect(result.error.extracted).toEqual(input)
       expect(result.error.reason).toContain('OPENAI_API_KEY')
+      expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0 })
     }
   })
 
@@ -416,6 +420,7 @@ describe('translateArticle', () => {
               },
             },
           ],
+          usage: { prompt_tokens: part.index * 10, completion_tokens: 3 },
         })
       }),
     )
@@ -447,6 +452,11 @@ describe('translateArticle', () => {
       expect(result.value.contentHtml).toContain('KEEP_FENCE_TOKEN')
       expect(result.value.contentHtml).toContain('<pre><code>')
       expect(result.value.title).toBe('The code nobody reads')
+      const sectionCount = calls.length
+      expect(result.usage).toEqual({
+        promptTokens: (sectionCount * (sectionCount + 1) * 10) / 2,
+        completionTokens: sectionCount * 3,
+      })
     } finally {
       vi.unstubAllGlobals()
     }
@@ -469,6 +479,7 @@ describe('translateArticle', () => {
                   },
                 },
               ],
+              usage: { prompt_tokens: 55, completion_tokens: 12 },
             }),
           )
         }
@@ -490,6 +501,7 @@ describe('translateArticle', () => {
       }
       expect(result.error.kind).toBe('translate_failed')
       expect(result.error.reason).toMatch(/^OpenAI request timed out \(section 2 of [0-9]+\)$/)
+      expect(result.usage).toEqual({ promptTokens: 55, completionTokens: 12 })
     } finally {
       vi.unstubAllGlobals()
       vi.useRealTimers()
@@ -516,6 +528,7 @@ describe('translateArticle', () => {
       }
       expect(result.error.extracted).toEqual(input)
       expect(result.error.reason).toMatch(/^OpenAI HTTP 500 \(section 1 of [0-9]+\)$/)
+      expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0 })
     } finally {
       vi.unstubAllGlobals()
     }
@@ -539,6 +552,32 @@ describe('translateArticle', () => {
         return
       }
       expect(result.value.translated).toBe(false)
+      expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0 })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('ignores missing or unusable usage fields', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({ title: '見出し', content: '本文' }),
+              },
+            },
+          ],
+          usage: { prompt_tokens: -5, completion_tokens: Number.NaN },
+        }),
+      ),
+    )
+    try {
+      const result = await translateArticle(article(), { OPENAI_API_KEY: 'sk-test' })
+      expect(result.ok).toBe(true)
+      expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0 })
     } finally {
       vi.unstubAllGlobals()
     }
