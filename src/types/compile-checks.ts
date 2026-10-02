@@ -51,6 +51,7 @@ import type {
   DailyDigestLog,
   DigestConfirmLog,
   DigestScheduleLog,
+  CronitorLog,
   FeedLog,
   FeedScheduleLog,
   OpdsDownloadLog,
@@ -446,6 +447,12 @@ type _dailyTimezoneIsTokyo = Assert<Equals<typeof DAILY_TIMEZONE, 'Asia/Tokyo'>>
 type _feedCollectCronIsUtc1900 = Assert<Equals<typeof FEED_COLLECT_CRON, '0 19 * * *'>>
 type _feedCollectTimezoneIsTokyo = Assert<Equals<typeof FEED_COLLECT_TIMEZONE, 'Asia/Tokyo'>>
 type _feedScheduleLogHasNoUrl = Assert<'url' extends keyof FeedScheduleLog ? false : true>
+
+type _cronitorLogHasNoUrl = Assert<'url' extends keyof CronitorLog ? false : true>
+
+type _cronitorLogHasNoBody = Assert<'body' extends keyof CronitorLog ? false : true>
+
+type _cronitorLogHttpStatusIsNumber = Assert<Equals<NonNullable<CronitorLog['httpStatus']>, number>>
 type _dailyDigestCronIsUtc1900 = Assert<Equals<typeof DAILY_DIGEST_CRON, '0 19 * * *'>>
 type _dailyDigestTimezoneIsTokyo = Assert<Equals<typeof DAILY_DIGEST_TIMEZONE, 'Asia/Tokyo'>>
 type _digestScheduleLogHasNoUrl = Assert<'url' extends keyof DigestScheduleLog ? false : true>
@@ -554,6 +561,9 @@ export type CompileChecks = {
   readonly feedCollectCronIsUtc1900: _feedCollectCronIsUtc1900
   readonly feedCollectTimezoneIsTokyo: _feedCollectTimezoneIsTokyo
   readonly feedScheduleLogHasNoUrl: _feedScheduleLogHasNoUrl
+  readonly cronitorLogHasNoUrl: _cronitorLogHasNoUrl
+  readonly cronitorLogHasNoBody: _cronitorLogHasNoBody
+  readonly cronitorLogHttpStatusIsNumber: _cronitorLogHttpStatusIsNumber
   readonly dailyDigestCronIsUtc1900: _dailyDigestCronIsUtc1900
   readonly dailyDigestTimezoneIsTokyo: _dailyDigestTimezoneIsTokyo
   readonly digestScheduleLogHasNoUrl: _digestScheduleLogHasNoUrl

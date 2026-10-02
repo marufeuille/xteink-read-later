@@ -2,6 +2,7 @@ export type RecordedCronitorPing = {
   readonly href: string
   readonly method: string
   readonly redirect: string
+  readonly cache: string
   readonly state: string
   readonly series: string
   readonly message: string | null
@@ -27,6 +28,7 @@ export function readCronitorPing(input: RequestInfo | URL, init?: RequestInit): 
     series: url.searchParams.get('series') ?? '',
     message: url.searchParams.get('message'),
     metrics,
+    cache: init?.cache ?? '',
   }
 }
 

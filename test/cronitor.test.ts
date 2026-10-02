@@ -39,6 +39,7 @@ import {
   createCronitorFetch,
   createHangingCronitorFetch,
   createThrowingCronitorFetch,
+  readCronitorPing,
   type RecordedCronitorPing,
 } from './cronitor-fetch'
 import { createFakeDigestQueue } from './fake-digest-queue'
@@ -103,7 +104,31 @@ function expectPingTransport(ping: RecordedCronitorPing, monitorKey: string): vo
   expect(url.pathname).toBe(`/p/${API_KEY}/${monitorKey}`)
   expect(ping.method).toBe('GET')
   expect(ping.redirect).toBe('manual')
+  expect(ping.cache).toBe('no-store')
   expect(ping.href).not.toContain(SECRET)
+}
+
+function cronitorLogLines(): Record<string, unknown>[] {
+  return vi
+    .mocked(console.log)
+    .mock.calls.map((call) => call[0])
+    .filter(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' && value !== null && (value as { event?: unknown }).event === 'cronitor',
+    )
+}
+
+function expectNoTelemetrySecrets(logs: readonly Record<string, unknown>[], forbidden: readonly string[]): void {
+  const text = JSON.stringify(logs)
+  for (const secret of forbidden) {
+    expect(text).not.toContain(secret)
+  }
+  for (const entry of logs) {
+    expect(entry).not.toHaveProperty('url')
+    expect(entry).not.toHaveProperty('body')
+    expect(entry).not.toHaveProperty('href')
+    expect(String(entry.message)).toMatch(/^cronitor(?: [A-Za-z0-9_]+)*$/)
+  }
 }
 
 function expectRunThen(pings: readonly RecordedCronitorPing[], state: 'complete' | 'fail', monitorKey: string): void {
@@ -174,6 +199,13 @@ describe('Cronitor job telemetry', () => {
     expect(docs).toContain('xteink-digest-send-no-access')
     expect(docs).toContain(CRONITOR_FEED_COLLECT_FAIL_MESSAGE)
     expect(docs).toContain(CRONITOR_CLIP_FAIL_MESSAGE)
+    expect(docs).toContain('missing_api_key')
+    expect(docs).toContain('blank_monitor_key')
+    expect(docs).toContain('redirect_blocked')
+    expect(docs).toContain('eu.cronitor.link')
+    const workersLogs = readFileSync(join(root, '..', 'docs', 'workers-logs.md'), 'utf8')
+    expect(workersLogs).toContain('$metadata.service = "xteink-read-later" AND event = "cronitor"')
+    expect(workersLogs).toContain('regex(event, "^(pipeline|daily_digest|opds_download|feed)$")')
     expect(index).toContain('await handleScheduled(controller, env)')
     expect(index).toContain('createClipQueueHandler')
     expect(CRONITOR_PING_TIMEOUT_MS).toBe(2_000)
@@ -233,8 +265,10 @@ describe('Cronitor job telemetry', () => {
   })
 
   it('keeps the job result when Cronitor returns an error or throws', async () => {
-    const failing = createCronitorFetch(() => new Response('nope', { status: 503 }))
-    const thrown = createThrowingCronitorFetch(new Error(SECRET))
+    const body = 'secret-body-must-not-leak'
+    const failing = createCronitorFetch(() => new Response(body, { status: 503 }))
+    const thrown = createThrowingCronitorFetch(new Error(`${SECRET} https://example.com/private`))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const env = cronitorBindings()
     const options = {
       env,
@@ -247,9 +281,22 @@ describe('Cronitor job telemetry', () => {
     await expect(traceCronitorJob({ ...options, fetch: thrown.fetch })).resolves.toBe('kept')
     expect(failing.pings).toHaveLength(2)
     expect(thrown.calls).toBe(2)
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual([
+      'cronitor http_error run',
+      'cronitor http_error complete',
+      'cronitor network run',
+      'cronitor network complete',
+    ])
+    expect(logs[0]).toMatchObject({ outcome: 'http_error', pingState: 'run', httpStatus: 503 })
+    expect(logs[1]).toMatchObject({ outcome: 'http_error', pingState: 'complete', httpStatus: 503 })
+    expect(logs[2]).toMatchObject({ outcome: 'network', pingState: 'run' })
+    expect(logs[2]).not.toHaveProperty('httpStatus')
+    expectNoTelemetrySecrets(logs, [body, SECRET, API_KEY, CLIP_MONITOR, 'example.com', 'private'])
   })
 
   it('does not wait forever when Cronitor hangs', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const started = Date.now()
     const result = await traceCronitorJob({
       env: cronitorBindings(),
@@ -262,20 +309,58 @@ describe('Cronitor job telemetry', () => {
     })
     expect(result).toBe('done')
     expect(Date.now() - started).toBeLessThan(1_000)
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor timeout run', 'cronitor timeout complete'])
+    expectNoTelemetrySecrets(logs, [API_KEY, FEED_MONITOR, 'TimeoutError', 'aborted'])
   })
 
-  it('skips pings when the API key or monitor key is missing or blank', async () => {
+  it('logs a fixed code and skips the ping when a binding is missing, blank, or not a string', async () => {
     const cronitor = createCronitorFetch()
-    const cases = [
-      {},
-      { [CRONITOR_API_KEY_BINDING]: '' },
-      { [CRONITOR_API_KEY_BINDING]: '   ', [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]: FEED_MONITOR },
-      { [CRONITOR_API_KEY_BINDING]: API_KEY, [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]: ' ' },
-      { [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]: FEED_MONITOR },
+    const cases: ReadonlyArray<{ readonly env: Cloudflare.Env; readonly outcomes: readonly string[] }> = [
+      {
+        env: { ...TEST_BINDINGS } as Cloudflare.Env,
+        outcomes: ['missing_api_key', 'missing_monitor_key'],
+      },
+      {
+        env: { ...TEST_BINDINGS, [CRONITOR_API_KEY_BINDING]: '' } as Cloudflare.Env,
+        outcomes: ['blank_api_key', 'missing_monitor_key'],
+      },
+      {
+        env: cronitorBindings({ [CRONITOR_API_KEY_BINDING]: '   ' }),
+        outcomes: ['blank_api_key'],
+      },
+      {
+        env: cronitorBindings({ [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]: ' ' }),
+        outcomes: ['blank_monitor_key'],
+      },
+      {
+        env: {
+          ...TEST_BINDINGS,
+          [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]: FEED_MONITOR,
+        } as Cloudflare.Env,
+        outcomes: ['missing_api_key'],
+      },
+      {
+        env: {
+          ...TEST_BINDINGS,
+          [CRONITOR_API_KEY_BINDING]: 12,
+          [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]: FEED_MONITOR,
+        } as unknown as Cloudflare.Env,
+        outcomes: ['api_key_not_string'],
+      },
+      {
+        env: {
+          ...TEST_BINDINGS,
+          [CRONITOR_API_KEY_BINDING]: API_KEY,
+          [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]: { key: FEED_MONITOR },
+        } as unknown as Cloudflare.Env,
+        outcomes: ['monitor_key_not_string'],
+      },
     ]
-    for (const overrides of cases) {
+    for (const item of cases) {
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
       const result = await traceCronitorJob({
-        env: { ...TEST_BINDINGS, ...overrides } as Cloudflare.Env,
+        env: item.env,
         monitorKeyBinding: CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING,
         failMessage: CRONITOR_FEED_COLLECT_FAIL_MESSAGE,
         fetch: cronitor.fetch,
@@ -283,8 +368,178 @@ describe('Cronitor job telemetry', () => {
         metrics: () => ({ count: 1, error_count: 0 }),
       })
       expect(result).toBe('ran')
+      const logs = cronitorLogLines()
+      expect(logs.map((entry) => entry.outcome)).toEqual(item.outcomes)
+      expect(logs.map((entry) => entry.message)).toEqual(item.outcomes.map((outcome) => `cronitor ${outcome}`))
+      for (const entry of logs) {
+        expect(entry).not.toHaveProperty('pingState')
+        expect(entry).not.toHaveProperty('httpStatus')
+      }
+      expectNoTelemetrySecrets(logs, [API_KEY, FEED_MONITOR, SECRET, 'https://'])
+      spy.mockRestore()
     }
     expect(cronitor.pings).toEqual([])
+  })
+
+  it('reads the ping body and logs sent for run then complete', async () => {
+    let pulls = 0
+    const cronitor = createCronitorFetch(
+      () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              pulls += 1
+              controller.enqueue(new TextEncoder().encode('ok'))
+              controller.close()
+            },
+          }),
+        ),
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await traceCronitorJob({
+      env: cronitorBindings(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: cronitor.fetch,
+      job: async () => 'ok',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    expect(pulls).toBe(2)
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
+    expectNoTelemetrySecrets(logs, [API_KEY, CLIP_MONITOR])
+  })
+
+  it('does not follow a redirect off cronitor.link', async () => {
+    const locations = [
+      `https://evil.example/p/${API_KEY}/${CLIP_MONITOR}`,
+      'https://cronitor.link.evil.example/p/next',
+      'http://cronitor.link/p/next',
+    ]
+    for (const location of locations) {
+      const cronitor = createCronitorFetch(
+        () => new Response(null, { status: 302, headers: { location } }),
+      )
+      const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      await expect(
+        traceCronitorJob({
+          env: cronitorBindings(),
+          monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+          failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+          fetch: cronitor.fetch,
+          job: async () => 'kept',
+          metrics: () => ({ count: 1, error_count: 0 }),
+        }),
+      ).resolves.toBe('kept')
+      expect(cronitor.pings).toHaveLength(2)
+      for (const ping of cronitor.pings) {
+        expect(new URL(ping.href).origin).toBe(CRONITOR_TELEMETRY_ORIGIN)
+        expect(ping.cache).toBe('no-store')
+        expect(ping.redirect).toBe('manual')
+      }
+      const logs = cronitorLogLines()
+      expect(logs.map((entry) => entry.message)).toEqual([
+        'cronitor redirect_blocked run',
+        'cronitor redirect_blocked complete',
+      ])
+      expect(logs[0]).toMatchObject({ outcome: 'redirect_blocked', pingState: 'run', httpStatus: 302 })
+      expectNoTelemetrySecrets(logs, [API_KEY, CLIP_MONITOR, location, 'evil.example'])
+      spy.mockRestore()
+    }
+  })
+
+  it('follows at most two https redirects on cronitor.link or eu.cronitor.link', async () => {
+    const followed: RecordedCronitorPing[] = []
+    let calls = 0
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const ping = readCronitorPing(input, init)
+      followed.push(ping)
+      calls += 1
+      if (calls % 2 === 1) {
+        const next = new URL(ping.href)
+        next.hostname = calls === 1 ? 'cronitor.link' : 'eu.cronitor.link'
+        next.searchParams.set('hop', '1')
+        return new Response(null, { status: 302, headers: { location: next.toString() } })
+      }
+      return new Response('ok')
+    }
+    const followedLogs = vi.spyOn(console, 'log').mockImplementation(() => {})
+    await traceCronitorJob({
+      env: cronitorBindings(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: fetchImpl,
+      job: async () => 'ok',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    expect(followed.map((ping) => ping.state)).toEqual(['run', 'run', 'complete', 'complete'])
+    expect(new URL(followed[1]?.href ?? '').origin).toBe('https://cronitor.link')
+    expect(new URL(followed[3]?.href ?? '').origin).toBe('https://eu.cronitor.link')
+    expect(cronitorLogLines().map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
+    followedLogs.mockRestore()
+
+    const blocked: string[] = []
+    const blockingFetch: typeof fetch = async (input, init) => {
+      blocked.push(readCronitorPing(input, init).href)
+      return new Response(null, {
+        status: 302,
+        headers: { location: 'https://cronitor.link/p/again' },
+      })
+    }
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await traceCronitorJob({
+      env: cronitorBindings(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: blockingFetch,
+      job: async () => 'ok',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    expect(blocked).toHaveLength(6)
+    expect(cronitorLogLines().map((entry) => entry.outcome)).toEqual(['redirect_blocked', 'redirect_blocked'])
+  })
+
+  it('logs metrics_failed and still returns the job when metrics throws', async () => {
+    const cronitor = createCronitorFetch()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await expect(
+      traceCronitorJob({
+        env: cronitorBindings(),
+        monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+        failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+        fetch: cronitor.fetch,
+        job: async () => 'kept',
+        metrics: () => {
+          throw new Error(`${SECRET} https://example.com/metrics`)
+        },
+      }),
+    ).resolves.toBe('kept')
+    expect(cronitor.pings.map((ping) => ping.state)).toEqual(['run'])
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor metrics_failed'])
+    expect(logs[1]).not.toHaveProperty('pingState')
+    expectNoTelemetrySecrets(logs, [SECRET, API_KEY, CLIP_MONITOR, 'example.com'])
+  })
+
+  it('logs invalid_ping when the series is empty and still runs the job', async () => {
+    const cronitor = createCronitorFetch()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await expect(
+      traceCronitorJob({
+        env: cronitorBindings(),
+        monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+        failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+        fetch: cronitor.fetch,
+        series: '',
+        job: async () => 'kept',
+        metrics: () => ({ count: 1, error_count: 0 }),
+      }),
+    ).resolves.toBe('kept')
+    expect(cronitor.pings).toEqual([])
+    expect(cronitorLogLines().map((entry) => entry.message)).toEqual([
+      'cronitor invalid_ping run',
+      'cronitor invalid_ping complete',
+    ])
   })
 
   it('encodes monitor keys so the telemetry host stays cronitor.link', async () => {
@@ -328,6 +583,7 @@ describe('scheduled feed collection telemetry', () => {
     const feed = createFakeFeedQueue()
     const digest = createFakeDigestQueue()
     const cronitor = createCronitorFetch()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const env = {
       ...cronitorBindings(),
       FEED_QUEUE: feed,
@@ -349,6 +605,9 @@ describe('scheduled feed collection telemetry', () => {
     expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
     expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('0')
     expect(cronitor.pings).toHaveLength(2)
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
+    expectNoTelemetrySecrets(logs, [API_KEY, FEED_MONITOR, 'https://zenn.dev'])
   })
 
   it('sends fail when enqueue fails and omits the queue error text', async () => {
@@ -392,6 +651,7 @@ describe('scheduled feed collection telemetry', () => {
     )
     const feed = createFakeFeedQueue()
     const cronitor = createThrowingCronitorFetch(new Error(SECRET))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const result = await runScheduledFeedCollection(cronitorBindings(), {
       sourceStore,
       feedQueue: feed,
@@ -401,6 +661,9 @@ describe('scheduled feed collection telemetry', () => {
     expect(result).toMatchObject({ queued: 1, failed: 0 })
     expect(feed.size).toBe(1)
     expect(cronitor.calls).toBe(2)
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.outcome)).toEqual(['network', 'network'])
+    expectNoTelemetrySecrets(logs, [SECRET, API_KEY, FEED_MONITOR])
   })
 
   it('sends fail and rethrows when listing sources throws', async () => {
@@ -509,7 +772,8 @@ describe('clip queue telemetry', () => {
 
   it('still finishes the clip when Cronitor throws', async () => {
     const store = createMemoryStore()
-    const cronitor = createThrowingCronitorFetch()
+    const cronitor = createThrowingCronitorFetch(new Error(`${SECRET} https://example.com/ja/workers-cpu`))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const queue = createFakeQueue()
     const clipPipeline = createClipPipeline({
       extractPipeline: createExtractPipeline({
@@ -538,5 +802,8 @@ describe('clip queue telemetry', () => {
 
     expect((await store.getJob(asClipJobId(`job_${'e'.repeat(32)}`)))?.status).toBe('ready')
     expect(cronitor.calls).toBe(2)
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expectNoTelemetrySecrets(logs, [SECRET, API_KEY, CLIP_MONITOR, 'example.com', 'workers-cpu'])
   })
 })

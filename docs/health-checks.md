@@ -89,7 +89,9 @@ Access 外形監視の Website check（`xteink-books-access-wall` / `xteink-dige
 
 Worker が [Telemetry API](https://cronitor.io/docs/telemetry-api) へ Job の寿命を送る。URL は `https://cronitor.link/p/<API key>/<monitor key>`。`state=run` が開始、`complete` が成功終了、`fail` が失敗。メトリックは `metric` を繰り返す。`count`、`duration`（秒）、`error_count`。同じ実行の `run` と `complete` / `fail` は `series` で揃える。
 
-ping の失敗、タイムアウト、非 2xx、secret の未設定や空文字は本処理を失敗させない。各 ping は最大 2 秒で打ち切る。リダイレクトは追わない。API key、モニターキー、記事 URL、例外メッセージは Cronitor の `message` に載せない。失敗時の `message` は固定文（`feed collection failed` / `clip processing failed`）だけ。
+ping の失敗、タイムアウト、非 2xx、secret の未設定や空文字は本処理を失敗させない。各 ping は最大 2 秒で打ち切る（同じ制限のまま、許可したリダイレクトも辿る）。レスポンス本文は読み切る。`cache` は `no-store`。`https://cronitor.link` と `https://eu.cronitor.link` への https リダイレクトだけ、最大 2 回まで辿る。それ以外の `Location` は辿らない。API key はパスに入るので、他ホストへは渡さない。API key、モニターキー、記事 URL、例外メッセージは Cronitor の `message` に載せない。失敗時の `message` は固定文（`feed collection failed` / `clip processing failed`）だけ。
+
+送ったかどうかは Workers Logs の `event=cronitor` で見る。`outcome` は `sent`（HTTP 2xx）、`http_error`、`timeout`、`network`、`redirect_blocked`、`invalid_ping`、`metrics_failed`、または secret が使えないときの `missing_api_key` / `blank_api_key` / `api_key_not_string` / `missing_monitor_key` / `blank_monitor_key` / `monitor_key_not_string`。`pingState` は `run` / `complete` / `fail`。`httpStatus` は数値だけ。ログに API key、モニターキー、URL、記事 URL、レスポンス本文、例外メッセージは出さない。Cronitor は資格情報が違っても HTTP 200 を返すことがある。`sent` は 2xx を読み切った印であり、ダッシュボードに載った証明ではない。Ops はダッシュボードとこのログの両方を見る。
 
 | Worker secret | 何を見るか |
 | --- | --- |
