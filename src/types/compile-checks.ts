@@ -453,6 +453,8 @@ type _cronitorLogHasNoUrl = Assert<'url' extends keyof CronitorLog ? false : tru
 type _cronitorLogHasNoBody = Assert<'body' extends keyof CronitorLog ? false : true>
 
 type _cronitorLogHttpStatusIsNumber = Assert<Equals<NonNullable<CronitorLog['httpStatus']>, number>>
+type _cronitorTransportIsIpv4 = Assert<Equals<NonNullable<CronitorLog['transport']>, 'ipv4'>>
+type _cronitorCauseIsClosed = Assert<Equals<NonNullable<CronitorLog['cause']>, 'dns' | 'connect' | 'http'>>
 type _dailyDigestCronIsUtc1900 = Assert<Equals<typeof DAILY_DIGEST_CRON, '0 19 * * *'>>
 type _dailyDigestTimezoneIsTokyo = Assert<Equals<typeof DAILY_DIGEST_TIMEZONE, 'Asia/Tokyo'>>
 type _digestScheduleLogHasNoUrl = Assert<'url' extends keyof DigestScheduleLog ? false : true>
@@ -564,6 +566,8 @@ export type CompileChecks = {
   readonly cronitorLogHasNoUrl: _cronitorLogHasNoUrl
   readonly cronitorLogHasNoBody: _cronitorLogHasNoBody
   readonly cronitorLogHttpStatusIsNumber: _cronitorLogHttpStatusIsNumber
+  readonly cronitorTransportIsIpv4: _cronitorTransportIsIpv4
+  readonly cronitorCauseIsClosed: _cronitorCauseIsClosed
   readonly dailyDigestCronIsUtc1900: _dailyDigestCronIsUtc1900
   readonly dailyDigestTimezoneIsTokyo: _dailyDigestTimezoneIsTokyo
   readonly digestScheduleLogHasNoUrl: _digestScheduleLogHasNoUrl
