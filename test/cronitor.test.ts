@@ -204,10 +204,10 @@ describe('Cronitor job telemetry', () => {
     expect(docs).toContain('redirect_blocked')
     expect(docs).toContain('eu.cronitor.link')
     expect(docs).toContain('ipv4')
-    expect(docs).toContain('`dns` / `connect` / `http`')
+    expect(docs).toContain('`dns` / `connect` / `http` / `sockets`')
     const workersLogs = readFileSync(join(root, '..', 'docs', 'workers-logs.md'), 'utf8')
     expect(workersLogs).toContain('`ipv4`')
-    expect(workersLogs).toContain('`dns` / `connect` / `http`')
+    expect(workersLogs).toContain('`dns` / `connect` / `http` / `sockets`')
     expect(workersLogs).toContain('$metadata.service = "xteink-read-later" AND event = "cronitor"')
     expect(workersLogs).toContain('regex(event, "^(pipeline|daily_digest|opds_download|feed)$")')
     expect(index).toContain('await handleScheduled(controller, env)')
@@ -688,17 +688,26 @@ describe('scheduled feed collection telemetry', () => {
     expect(cronitor.pings[1]?.href).not.toContain('d1 down')
   })
 
-  it('uses global fetch when no test fetch is injected', async () => {
-    const cronitor = createCronitorFetch()
-    vi.stubGlobal('fetch', cronitor.fetch)
-    const sourceStore = createMemoryFeedSourceStore()
+  it('uses the ipv4 socket path when no test fetch is injected', async () => {
+    const seen: string[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      seen.push(href)
+      return new Response(JSON.stringify({ Answer: [{ type: 1, TTL: 60, data: '1.2.3.4' }] }), { status: 200 })
+    })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
     const result = await runScheduledFeedCollection(cronitorBindings(), {
-      sourceStore,
+      sourceStore: createMemoryFeedSourceStore(),
       feedQueue: createFakeFeedQueue(),
     })
     expect(result).toMatchObject({ queued: 0, failed: 0 })
-    expectRunThen(cronitor.pings, 'complete', FEED_MONITOR)
-    expect(cronitor.pings[1]?.metrics.get('count')).toBe('0')
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(logs[0]).toMatchObject({ outcome: 'network', pingState: 'run', transport: 'ipv4', cause: 'connect' })
+    expect(logs[1]).toMatchObject({ outcome: 'network', pingState: 'complete', transport: 'ipv4', cause: 'connect' })
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.every((href) => new URL(href).hostname === 'cloudflare-dns.com')).toBe(true)
+    expectNoTelemetrySecrets(logs, [API_KEY, FEED_MONITOR, '1.2.3.4', 'cloudflare-sockets-stub', 'cronitor.link'])
   })
 })
 

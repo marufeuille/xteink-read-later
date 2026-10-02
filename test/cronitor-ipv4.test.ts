@@ -72,8 +72,9 @@ describe('Cronitor IPv4 transport', () => {
     const sockets = readFileSync(join(root, '..', 'src', 'telemetry', 'cronitor-sockets.ts'), 'utf8')
     const caller = readFileSync(join(root, '..', 'src', 'telemetry', 'cronitor.ts'), 'utf8')
     expect(sockets).toContain("from 'cloudflare:sockets'")
-    expect(caller).toContain("import('./cronitor-sockets')")
-    expect(caller).not.toContain('const specifier')
+    expect(caller).toContain("from './cronitor-sockets'")
+    expect(caller).not.toContain("import('./cronitor-sockets')")
+    expect(caller).not.toContain('return fetch')
   })
 
   it('accepts public IPv4 and rejects private, documentation, and malformed addresses', () => {
@@ -171,6 +172,56 @@ describe('Cronitor IPv4 transport', () => {
       signal: AbortSignal.timeout(1_000),
     }, { connect: scripted.connect, lookup: async () => [IPV4] })
     await expect(pending).resolves.toMatchObject({ status: 200 })
+  })
+
+  it('keeps transport and cause when every socket read fails, and still returns the job', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const scripted = createScriptedCronitorConnect(() => 'read-error')
+    const kept = await traceCronitorJob({
+      env: clipEnv(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: ipv4Fetch(scripted.connect, () => [IPV4]),
+      job: async () => 'kept',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    expect(kept).toBe('kept')
+    expect(scripted.dials.map((dial) => dial.hostname)).toEqual([
+      IPV4,
+      'cronitor.link',
+      IPV4,
+      'cronitor.link',
+    ])
+    const logs = cronitorLogs()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(logs[0]).toMatchObject({ outcome: 'network', pingState: 'run', transport: 'ipv4', cause: 'connect' })
+    expect(logs[1]).toMatchObject({
+      outcome: 'network',
+      pingState: 'complete',
+      transport: 'ipv4',
+      cause: 'connect',
+    })
+    const text = JSON.stringify(logs)
+    expect(text).not.toContain('read-failed-token')
+    expect(text).not.toContain('TypeError')
+    expect(text).not.toContain(IPV4)
+    expect(text).not.toContain(API_KEY)
+  })
+
+  it('retries the hostname when an IPv4 socket opens and then the read fails', async () => {
+    const scripted = createScriptedCronitorConnect(({ hostname }) =>
+      hostname === 'cronitor.link' ? emptyOk() : 'read-error',
+    )
+    const response = await cronitorIpv4Fetch(
+      'https://cronitor.link/p/k/m?state=run',
+      { signal: AbortSignal.timeout(1_000) },
+      { connect: scripted.connect, lookup: async () => [IPV4] },
+    )
+    expect(response.status).toBe(200)
+    expect(response.headers.get(CRONITOR_IPV4_HEADER)).toBe('ipv4')
+    expect(scripted.dials.map((dial) => dial.hostname)).toEqual([IPV4, 'cronitor.link'])
+    expect(scripted.dials[0]?.sni).toBe('cronitor.link')
+    expect(scripted.dials[1]?.sni).toBe('cronitor.link')
   })
 
   it('tries the next A record, then the hostname, when an address dial fails', async () => {
@@ -330,7 +381,7 @@ describe('Cronitor IPv4 transport', () => {
     expect(cronitorLogs().map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
   })
 
-  it('uses an injected fetch, global fetch without sockets, and the socket when connect exists', async () => {
+  it('uses an injected fetch, reports a socket load failure, and prefers ipv4 when connect exists', async () => {
     const injected = createCronitorFetch().fetch
     await expect(
       selectCronitorFetch(injected, async () => {
@@ -338,8 +389,31 @@ describe('Cronitor IPv4 transport', () => {
       }),
     ).resolves.toBe(injected)
 
-    const globalFetch = fetch
-    await expect(selectCronitorFetch(undefined, async () => null)).resolves.toBe(globalFetch)
+    const globalFetch = vi.fn(async () => new Response('plain-fetch-must-not-run'))
+    vi.stubGlobal('fetch', globalFetch)
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const unavailable = await selectCronitorFetch(undefined, async () => {
+      throw new Error('https://cronitor.link/secret 44.230.87.160 sockets exploded')
+    })
+    const kept = await traceCronitorJob({
+      env: clipEnv(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: unavailable,
+      job: async () => 'kept',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    expect(kept).toBe('kept')
+    expect(globalFetch).not.toHaveBeenCalled()
+    const failed = cronitorLogs()
+    expect(failed.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(failed[0]).toMatchObject({ outcome: 'network', pingState: 'run', transport: 'ipv4', cause: 'sockets' })
+    expect(failed[1]).toMatchObject({ outcome: 'network', pingState: 'complete', transport: 'ipv4', cause: 'sockets' })
+    const failedText = JSON.stringify(failed)
+    expect(failedText).not.toContain('cronitor.link')
+    expect(failedText).not.toContain('44.230.87.160')
+    expect(failedText).not.toContain('exploded')
+    expect(failedText).not.toContain(API_KEY)
 
     const scripted = createScriptedCronitorConnect(() => emptyOk())
     const doh = vi.fn(async () => new Response(JSON.stringify({ Answer: [{ type: 1, TTL: 60, data: IPV4 }] }), {
@@ -350,6 +424,7 @@ describe('Cronitor IPv4 transport', () => {
     expect(transport).not.toBe(globalFetch)
     const response = await transport('https://cronitor.link/p/k/m?state=run', { signal: AbortSignal.timeout(1_000) })
     expect(response.status).toBe(200)
+    expect(response.headers.get(CRONITOR_IPV4_HEADER)).toBe('ipv4')
     expect(scripted.dials[0]?.hostname).toBe(IPV4)
     expect(doh).toHaveBeenCalledOnce()
     expect(CronitorLinkError).toBeDefined()

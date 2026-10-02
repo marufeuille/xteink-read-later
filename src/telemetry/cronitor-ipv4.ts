@@ -1,8 +1,10 @@
 /**
  * Cronitor telemetry over a public IPv4 TLS socket.
  * Workers fetch() cannot pin an A record and leaves from Cloudflare anycast.
- * Production clip pings then fail before a response (outcome=network).
- * TCP sockets use a different egress prefix and can dial an IPv4 literal.
+ * TCP sockets use a different egress prefix than Workers fetch().
+ * The production edge does not apply startTls({ expectedServerHostname }) to SNI.
+ * A dial to an IPv4 literal can open and then fail while the HTTP response is read.
+ * That failure is retried, and the last attempt dials the hostname so SNI is that name.
  * The API key stays on cronitor.link / eu.cronitor.link only.
  */
 
@@ -16,7 +18,7 @@ const MAX_HEADER_BYTES = 8_192
 const MAX_HTTP_BYTES = 65_536
 const MAX_DNS_TTL_MS = 60_000
 
-export type CronitorLinkCause = 'dns' | 'connect' | 'http'
+export type CronitorLinkCause = 'dns' | 'connect' | 'http' | 'sockets'
 
 export class CronitorLinkError extends Error {
   readonly code: CronitorLinkCause
@@ -165,7 +167,47 @@ export async function cronitorIpv4Fetch(
   const url = pingUrl(input)
   const lookup = deps.lookup ?? ((host, inner) => lookupPublicIpv4(host, fetch, inner))
   const ips = (await lookup(url.hostname, signal)).filter((ip) => isPublicIpv4(ip))
-  const tls = await dial(url.hostname, ips, signal, deps.connect)
+  if (ips.length === 0) {
+    throw new CronitorLinkError('dns')
+  }
+  // IPv4 first. A later read failure still counts, so the hostname attempt runs.
+  // On the production edge, startTls does not copy expectedServerHostname into SNI.
+  const targets = [...ips, url.hostname]
+  let last: unknown
+  for (const dialHost of targets) {
+    try {
+      return await exchange(url, dialHost, signal, deps.connect)
+    } catch (error) {
+      if (isCronitorTimeout(error)) {
+        throw linkError('connect', error)
+      }
+      last = error
+    }
+  }
+  throw linkError('connect', last)
+}
+
+function pingUrl(input: RequestInfo | URL): URL {
+  const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+  let url: URL
+  try {
+    url = new URL(href)
+  } catch (error) {
+    throw linkError('http', error)
+  }
+  if (url.protocol !== 'https:' || !ALLOWED_HOSTS.has(url.hostname)) {
+    throw new CronitorLinkError('connect')
+  }
+  return url
+}
+
+async function exchange(
+  url: URL,
+  dialHost: string,
+  signal: AbortSignal,
+  connect: CronitorConnect,
+): Promise<Response> {
+  const tls = await openTls(dialHost, url.hostname, signal, connect)
   try {
     const writer = tls.writable.getWriter()
     try {
@@ -184,55 +226,13 @@ export async function cronitorIpv4Fetch(
       headers.delete('content-length')
       headers.set(CRONITOR_IPV4_HEADER, CRONITOR_IPV4_TRANSPORT)
       return new Response(message.body, { status: message.status, headers })
+    } catch (error) {
+      throw linkError('connect', error)
     } finally {
       await reader.cancel().catch(() => undefined)
     }
   } finally {
     await closeQuiet(tls)
-  }
-}
-
-function pingUrl(input: RequestInfo | URL): URL {
-  const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-  let url: URL
-  try {
-    url = new URL(href)
-  } catch (error) {
-    throw linkError('http', error)
-  }
-  if (url.protocol !== 'https:' || !ALLOWED_HOSTS.has(url.hostname)) {
-    throw new CronitorLinkError('connect')
-  }
-  return url
-}
-
-async function dial(
-  host: string,
-  ips: readonly string[],
-  signal: AbortSignal,
-  connect: CronitorConnect,
-): Promise<TlsSocket> {
-  if (ips.length === 0) {
-    throw new CronitorLinkError('dns')
-  }
-  let last: unknown
-  for (const ip of ips) {
-    try {
-      return await openTls(ip, host, signal, connect)
-    } catch (error) {
-      if (isCronitorTimeout(error)) {
-        throw linkError('connect', error)
-      }
-      last = error
-    }
-  }
-  try {
-    return await openTls(host, host, signal, connect)
-  } catch (error) {
-    if (isCronitorTimeout(error)) {
-      throw linkError('connect', error)
-    }
-    throw linkError('connect', last ?? error)
   }
 }
 
@@ -253,7 +253,10 @@ async function openTls(
   }
   try {
     await raceSignal(socket.opened, signal)
-    const tls = socket.startTls({ expectedServerHostname: sni })
+    // The edge uses the connect hostname for SNI and ignores expectedServerHostname.
+    // Pass the name only when the dial target is an address, not the hostname itself.
+    const tls =
+      dialHost === sni ? socket.startTls() : socket.startTls({ expectedServerHostname: sni })
     await raceSignal(tls.opened, signal)
     return tls
   } catch (error) {

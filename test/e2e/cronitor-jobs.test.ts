@@ -3,19 +3,20 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import worker from '../../src/index'
-import { CLIP_QUEUE_NAME } from '../../src/queue/clip'
+import { clipPipeline } from '../../src/pipeline/clip'
+import { CLIP_QUEUE_NAME, createClipQueueHandler } from '../../src/queue/clip'
+import { createD1CandidateStore } from '../../src/store/d1-candidates'
 import { handleScheduled } from '../../src/schedule'
 import { createR2Store } from '../../src/store/r2'
 import { createMemoryFeedSourceStore } from '../../src/store/memory-sources'
 import {
   CRONITOR_API_KEY_BINDING,
-  CRONITOR_CLIP_FAIL_MESSAGE,
   CRONITOR_CLIP_MONITOR_KEY_BINDING,
   CRONITOR_FEED_COLLECT_FAIL_MESSAGE,
   CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING,
   CRONITOR_TELEMETRY_ORIGIN,
 } from '../../src/telemetry/cronitor'
-import { cronitorIpv4Fetch } from '../../src/telemetry/cronitor-ipv4'
+import { cronitorIpv4Fetch, resetCronitorDnsCache } from '../../src/telemetry/cronitor-ipv4'
 import {
   asClipJobId,
   asClipRunId,
@@ -30,7 +31,6 @@ import { TEST_BINDINGS } from '../bindings'
 import {
   createCronitorFetch,
   createThrowingCronitorFetch,
-  readCronitorPing,
   type RecordedCronitorPing,
 } from '../cronitor-fetch'
 import { createScriptedCronitorConnect, httpResponse } from '../cronitor-ipv4-harness'
@@ -47,6 +47,7 @@ const EMPTY_URL = 'https://example.com/empty'
 const SECRET = 'telemetry-secret-must-not-leak'
 
 afterEach(() => {
+  resetCronitorDnsCache()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -161,28 +162,28 @@ function clipBatch(url: string, jobId: string, runId: string): MessageBatch<Clip
   }
 }
 
-function installWorkerFetch(options: {
-  readonly throwCronitor?: boolean
-  readonly cronitorStatus?: number
-  readonly cronitorBody?: string
-} = {}): { readonly pings: RecordedCronitorPing[] } {
+function installWorkerFetch(): { readonly cronitorFetches: string[] } {
   const pages: Record<string, string> = {
     [PAGE_URL]: fixture('ja-tech.html'),
     [EMPTY_URL]: fixture('empty.html'),
   }
-  const pings: RecordedCronitorPing[] = []
+  const cronitorFetches: string[] = []
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-      if (new URL(url).origin === CRONITOR_TELEMETRY_ORIGIN) {
-        pings.push(readCronitorPing(input, init))
-        if (options.throwCronitor === true) {
-          throw new Error(`cronitor ${SECRET}`)
-        }
-        return new Response(options.cronitorBody ?? 'ok', { status: options.cronitorStatus ?? 200 })
+    vi.fn(async (input: RequestInfo | URL) => {
+      const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      const url = new URL(href)
+      if (url.origin === CRONITOR_TELEMETRY_ORIGIN || url.hostname === 'eu.cronitor.link') {
+        cronitorFetches.push(href)
+        throw new Error('plain fetch must not call cronitor')
       }
-      const html = pages[url]
+      if (url.origin === 'https://cloudflare-dns.com') {
+        return new Response(JSON.stringify({ Answer: [{ type: 1, TTL: 60, data: '1.2.3.4' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/dns-json' },
+        })
+      }
+      const html = pages[href]
       if (html === undefined) {
         throw new Error(`unexpected network fetch: ${url}`)
       }
@@ -192,7 +193,7 @@ function installWorkerFetch(options: {
       })
     }),
   )
-  return { pings }
+  return { cronitorFetches }
 }
 
 describe('Cronitor job telemetry e2e', () => {
@@ -264,52 +265,58 @@ describe('Cronitor job telemetry e2e', () => {
     expectNoTelemetrySecrets(logs, [SECRET, API_KEY, FEED_MONITOR, PAGE_URL])
   })
 
-  it('pings run then complete from the clip queue export', async () => {
+  it('uses the ipv4 socket path from the clip queue export and still marks the job ready', async () => {
     const bucket = createFakeR2Bucket()
     const env = envWithCronitor({ ARTICLES: bucket })
-    const { pings } = installWorkerFetch()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { cronitorFetches } = installWorkerFetch()
     const jobId = `job_${'a'.repeat(32)}`
     await worker.queue(clipBatch(PAGE_URL, jobId, `run_${'b'.repeat(32)}`), env)
 
     const job = await createR2Store(env).getJob(asClipJobId(jobId))
     expect(job?.status).toBe('ready')
-    expectRunThen(pings, 'complete', CLIP_MONITOR)
-    expect(pings[1]?.metrics.get('count')).toBe('1')
-    expect(pings[1]?.metrics.get('error_count')).toBe('0')
-    expect(pings[1]?.message).toBeNull()
+    expect(cronitorFetches).toEqual([])
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(logs[0]).toMatchObject({ outcome: 'network', pingState: 'run', transport: 'ipv4', cause: 'connect' })
+    expect(logs[1]).toMatchObject({ outcome: 'network', pingState: 'complete', transport: 'ipv4', cause: 'connect' })
+    expectNoTelemetrySecrets(logs, [API_KEY, CLIP_MONITOR, PAGE_URL, '1.2.3.4', 'cloudflare-sockets-stub'])
   })
 
   it('pings fail when the clip export cannot extract, without putting the page URL in telemetry', async () => {
     const bucket = createFakeR2Bucket()
     const env = envWithCronitor({ ARTICLES: bucket })
-    const { pings } = installWorkerFetch()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const { cronitorFetches } = installWorkerFetch()
     const jobId = `job_${'d'.repeat(32)}`
     await worker.queue(clipBatch(EMPTY_URL, jobId, `run_${'e'.repeat(32)}`), env)
 
     const job = await createR2Store(env).getJob(asClipJobId(jobId))
     expect(job?.status).toBe('failed')
     expect(job?.error?.code).toBe('extract_failed')
-    expectRunThen(pings, 'fail', CLIP_MONITOR)
-    expect(pings[1]?.message).toBe(CRONITOR_CLIP_FAIL_MESSAGE)
-    expect(pings[1]?.metrics.get('count')).toBe('1')
-    expect(pings[1]?.metrics.get('error_count')).toBe('1')
+    expect(cronitorFetches).toEqual([])
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.pingState)).toEqual(['run', 'fail'])
+    expect(logs[0]).toMatchObject({ transport: 'ipv4', cause: 'connect' })
+    expect(logs[1]).toMatchObject({ outcome: 'network', pingState: 'fail', transport: 'ipv4', cause: 'connect' })
+    expectNoTelemetrySecrets(logs, [API_KEY, CLIP_MONITOR, PAGE_URL, EMPTY_URL, '1.2.3.4', 'cloudflare-sockets-stub'])
   })
 
-  it('still finishes the clip export when Cronitor throws', async () => {
+  it('still finishes the clip export when the socket dial throws', async () => {
     const bucket = createFakeR2Bucket()
     const env = envWithCronitor({ ARTICLES: bucket })
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    const { pings } = installWorkerFetch({ throwCronitor: true })
+    const { cronitorFetches } = installWorkerFetch()
     const jobId = `job_${'f'.repeat(32)}`
     await worker.queue(clipBatch(PAGE_URL, jobId, `run_${'1'.repeat(32)}`), env)
 
     const job = await createR2Store(env).getJob(asClipJobId(jobId))
     expect(job?.status).toBe('ready')
-    expect(pings).toHaveLength(2)
-    expect(pings.map((ping) => ping.state)).toEqual(['run', 'complete'])
+    expect(cronitorFetches).toEqual([])
     const logs = cronitorLogLines()
     expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
-    expectNoTelemetrySecrets(logs, [SECRET, API_KEY, CLIP_MONITOR, PAGE_URL])
+    expect(logs[0]).toMatchObject({ transport: 'ipv4', cause: 'connect' })
+    expectNoTelemetrySecrets(logs, [SECRET, API_KEY, CLIP_MONITOR, PAGE_URL, 'cloudflare-sockets-stub'])
   })
 
   it('collects the feed when the ipv4 socket sends, and when the dial fails', async () => {
@@ -370,15 +377,22 @@ describe('Cronitor job telemetry e2e', () => {
     const bucket = createFakeR2Bucket()
     const env = envWithCronitor({ ARTICLES: bucket })
     const body = 'secret-body-must-not-leak'
+    const cronitor = createCronitorFetch(() => new Response(body, { status: 500 }))
     vi.spyOn(console, 'log').mockImplementation(() => {})
-    const { pings } = installWorkerFetch({ cronitorStatus: 500, cronitorBody: body })
+    installWorkerFetch()
+    const handler = createClipQueueHandler({
+      clipPipeline,
+      createStore: createR2Store,
+      createCandidateStore: createD1CandidateStore,
+      cronitorFetch: cronitor.fetch,
+    })
     const jobId = `job_${'2'.repeat(32)}`
-    await worker.queue(clipBatch(PAGE_URL, jobId, `run_${'3'.repeat(32)}`), env)
+    await handler(clipBatch(PAGE_URL, jobId, `run_${'3'.repeat(32)}`), env)
 
     const job = await createR2Store(env).getJob(asClipJobId(jobId))
     expect(job?.status).toBe('ready')
-    expect(pings).toHaveLength(2)
-    expect(pings[0]?.cache).toBe('no-store')
+    expect(cronitor.pings).toHaveLength(2)
+    expect(cronitor.pings[0]?.cache).toBe('no-store')
     const logs = cronitorLogLines()
     expect(logs.map((entry) => entry.message)).toEqual(['cronitor http_error run', 'cronitor http_error complete'])
     expect(logs[0]).toMatchObject({ outcome: 'http_error', pingState: 'run', httpStatus: 500 })

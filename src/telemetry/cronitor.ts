@@ -1,4 +1,5 @@
 import { logCronitor, type CronitorLog, type CronitorLogOutcome } from '../log'
+import { cronitorConnect } from './cronitor-sockets'
 import {
   CRONITOR_IPV4_HEADER,
   CRONITOR_IPV4_TRANSPORT,
@@ -280,22 +281,12 @@ function failureFields(error: unknown): Pick<CronitorLog, 'outcome' | 'transport
   return { outcome }
 }
 
-let socketConnect: Promise<CronitorConnect | null> | undefined
-
 function loadSocketConnect(): Promise<CronitorConnect | null> {
-  socketConnect ??= importSocketConnect()
-  return socketConnect
+  return Promise.resolve(typeof cronitorConnect === 'function' ? cronitorConnect : null)
 }
 
-async function importSocketConnect(): Promise<CronitorConnect | null> {
-  try {
-    // Literal path: the bundler includes cronitor-sockets.ts and its static
-    // cloudflare:sockets import. Node tests cannot resolve that module.
-    const loaded = await import('./cronitor-sockets')
-    return loaded.cronitorConnect
-  } catch {
-    return null
-  }
+function socketsUnavailableFetch(): Promise<Response> {
+  return Promise.reject(new CronitorLinkError('sockets'))
 }
 
 export async function selectCronitorFetch(
@@ -305,11 +296,15 @@ export async function selectCronitorFetch(
   if (injected !== undefined) {
     return injected
   }
-  const connect = await load()
-  if (connect === null) {
-    return fetch
+  try {
+    const connect = await load()
+    if (connect === null) {
+      return socketsUnavailableFetch
+    }
+    return (input, init) => cronitorIpv4Fetch(input, init, { connect })
+  } catch {
+    return socketsUnavailableFetch
   }
-  return (input, init) => cronitorIpv4Fetch(input, init, { connect })
 }
 
 export async function traceCronitorJob<T>(options: TraceCronitorJobOptions<T>): Promise<T> {

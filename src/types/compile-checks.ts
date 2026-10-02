@@ -454,7 +454,9 @@ type _cronitorLogHasNoBody = Assert<'body' extends keyof CronitorLog ? false : t
 
 type _cronitorLogHttpStatusIsNumber = Assert<Equals<NonNullable<CronitorLog['httpStatus']>, number>>
 type _cronitorTransportIsIpv4 = Assert<Equals<NonNullable<CronitorLog['transport']>, 'ipv4'>>
-type _cronitorCauseIsClosed = Assert<Equals<NonNullable<CronitorLog['cause']>, 'dns' | 'connect' | 'http'>>
+type _cronitorCauseIsClosed = Assert<
+  Equals<NonNullable<CronitorLog['cause']>, 'dns' | 'connect' | 'http' | 'sockets'>
+>
 type _dailyDigestCronIsUtc1900 = Assert<Equals<typeof DAILY_DIGEST_CRON, '0 19 * * *'>>
 type _dailyDigestTimezoneIsTokyo = Assert<Equals<typeof DAILY_DIGEST_TIMEZONE, 'Asia/Tokyo'>>
 type _digestScheduleLogHasNoUrl = Assert<'url' extends keyof DigestScheduleLog ? false : true>
