@@ -96,6 +96,8 @@ $metadata.service = "xteink-read-later" AND event = "cronitor"
 
 `outcome` は `sent` / `http_error` / `timeout` / `network` / `redirect_blocked` / `invalid_ping` / `metrics_failed`、または secret が使えないときの `missing_api_key` / `blank_api_key` / `api_key_not_string` / `missing_monitor_key` / `blank_monitor_key` / `monitor_key_not_string`。`pingState` は `run` / `complete` / `fail`。`httpStatus` は数値だけ。ソケット経路では `transport` が `ipv4`。失敗時の `cause` は `dns` / `connect` / `http` / `sockets`。`sockets` はソケットを読めず、`fetch` には戻していない。API key、モニターキー、URL、IP、記事 URL、レスポンス本文、例外メッセージは出さない。`sent` は HTTP 2xx のステータスを読んだ印である。本文が空でも chunked でも `network` / `http` にはしない。Cronitor は資格情報が違っても 200 を返すことがあるので、ダッシュボードとこのログの両方を見る。
 
+クリップの `complete` / `fail` には OpenAI のカスタムメトリクス（`prompt_tokens`、`completion_tokens`、`estimated_usd`）が載る。`run` には付けない。`estimated_usd` は観測用の概算であり、OpenAI の請求額ではない。日本語スキップは 0。名前と断言の例は [health-checks.md](health-checks.md) に書く。このログ行にはメトリクスの値を出さない。
+
 ## 工程
 
 失敗の軸と所要は、たとえば次で絞る。`durationMs` は数値。

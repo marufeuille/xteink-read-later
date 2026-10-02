@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { htmlToMarkdown } from '../extract/sanitize-html'
 import { parseHttpUrl, type HttpUrl } from '../types'
 import { loadBakeoffKeys } from './bakeoff-env'
+import { estimateOpenAiUsd } from './openai-usage'
 import { BAKEOFF_ARTICLES, type BakeoffArticle } from './bakeoff-corpus'
 import {
   OPENAI_CHAT_URL,
@@ -238,12 +239,9 @@ function estimateCost(
   if (promptTokens === undefined || completionTokens === undefined) {
     return {}
   }
-  if (model.inputUsdPerMillion !== undefined && model.outputUsdPerMillion !== undefined) {
-    return {
-      estimatedUsd:
-        (promptTokens / 1_000_000) * model.inputUsdPerMillion +
-        (completionTokens / 1_000_000) * model.outputUsdPerMillion,
-    }
+  if (model.provider === 'openai') {
+    const estimatedUsd = estimateOpenAiUsd(model.id, promptTokens, completionTokens)
+    return estimatedUsd === null ? {} : { estimatedUsd }
   }
   if (model.inputJpyPerMillion !== undefined && model.outputJpyPerMillion !== undefined) {
     return {

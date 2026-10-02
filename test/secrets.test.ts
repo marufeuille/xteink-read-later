@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
 import { createExtractPipeline } from '../src/extract/pipeline'
 import { createClipPipeline } from '../src/pipeline/clip'
+import { withOpenAiUsage } from '../src/translate/openai-usage'
 import { createMemoryStore } from '../src/store/memory'
 import { err, ok, type FetchPage } from '../src/types'
 import { createFakeQueue } from './fake-queue'
@@ -30,7 +31,7 @@ describe('secret handling', () => {
     const clipPipeline = createClipPipeline({
       extractPipeline: createExtractPipeline({ fetchPage }),
       translateArticle: async (article) =>
-        err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 401' }),
+        withOpenAiUsage(err({ kind: 'translate_failed', extracted: article, reason: 'OpenAI HTTP 401' })),
     })
     const app = createApp({ store, queue })
     const env = { ...TEST_BINDINGS, OPENAI_API_KEY: SECRET, OPENROUTER_API_KEY: 'or-secret-must-not-leak-456', CLIP_QUEUE: queue } as Cloudflare.Env

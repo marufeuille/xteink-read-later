@@ -3,6 +3,7 @@ import { buildEpub } from '../epub/build-epub'
 import { embedX3Images } from '../epub/x3-image'
 import { logPipeline } from '../log'
 import { translateArticle as defaultTranslateArticle } from '../translate/openai'
+import { withOpenAiUsage } from '../translate/openai-usage'
 import type {
   ArticleId,
   BuildEpub,
@@ -31,12 +32,15 @@ export function createClipPipeline(
 
   return async (url, translateDeps, log, hooks) => {
     if (hooks?.resume !== undefined) {
-      return finishEpub(url, hooks.resume.id, hooks.resume.article, { fetch: 0, extract: 0, translate: 0 }, build, log)
+      // The checkpoint already has a translation, so this attempt does not call OpenAI.
+      return withOpenAiUsage(
+        await finishEpub(url, hooks.resume.id, hooks.resume.article, { fetch: 0, extract: 0, translate: 0 }, build, log),
+      )
     }
 
     const extracted = await extractPipeline(url, log)
     if (!extracted.ok) {
-      return extracted
+      return withOpenAiUsage(extracted)
     }
 
     const articleId = extracted.value.id
@@ -52,13 +56,16 @@ export function createClipPipeline(
     }
     logPipeline({ articleId, stage: 'translate', durationMs: translateMs }, log)
     await hooks?.onTranslated?.({ id: articleId, article: translated.value })
-    return finishEpub(
-      url,
-      articleId,
-      translated.value,
-      { ...extracted.value.timingsMs, translate: translateMs },
-      build,
-      log,
+    return withOpenAiUsage(
+      await finishEpub(
+        url,
+        articleId,
+        translated.value,
+        { ...extracted.value.timingsMs, translate: translateMs },
+        build,
+        log,
+      ),
+      translated.usage,
     )
   }
 }

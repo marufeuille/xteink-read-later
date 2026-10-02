@@ -18,6 +18,12 @@ import type { ArticleId, EpubBytes, HttpUrl } from './id'
 import type { PipelineLogContext } from './job'
 import type { Result } from './result'
 
+/** OpenAI Chat Completions counts. Zeros mean the call was not made or usage was unusable. */
+export type OpenAiTokenUsage = {
+  readonly promptTokens: number
+  readonly completionTokens: number
+}
+
 export type TranslateDeps = Pick<Cloudflare.Env, 'OPENAI_API_KEY'>
 
 export type ExtractResult = {
@@ -54,7 +60,7 @@ export type AssignLanguage = (
 export type TranslateArticle = (
   article: ExtractedArticle,
   deps: TranslateDeps,
-) => Promise<Result<TranslatedArticle, TranslateFailedError>>
+) => Promise<Result<TranslatedArticle, TranslateFailedError> & { readonly usage: OpenAiTokenUsage }>
 
 export type BuildEpub = (
   article: TranslatedArticle,
@@ -92,4 +98,4 @@ export type ClipPipeline = (
   deps: TranslateDeps,
   log?: PipelineLogContext,
   hooks?: ClipPipelineHooks,
-) => Promise<Result<ClipResult, PipelineError>>
+) => Promise<Result<ClipResult, PipelineError> & { readonly usage: OpenAiTokenUsage }>
