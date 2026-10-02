@@ -19,7 +19,7 @@ export function httpResponse(
 }
 
 export function createScriptedCronitorConnect(
-  respond: (dial: { readonly hostname: string }) => Uint8Array | 'hang' | Error,
+  respond: (dial: { readonly hostname: string }) => Uint8Array | 'hang' | 'read-error' | Error,
 ): {
   readonly connect: CronitorConnect
   readonly dials: readonly ScriptedDial[]
@@ -41,7 +41,7 @@ export function createScriptedCronitorConnect(
     const readable = new ReadableStream<Uint8Array>({
       start(next) {
         controller = next
-        if (planned === 'hang') {
+        if (planned === 'hang' || planned === 'read-error') {
           return
         }
         const midpoint = Math.floor(planned.byteLength / 2)
@@ -51,6 +51,11 @@ export function createScriptedCronitorConnect(
           return
         }
         next.enqueue(planned)
+      },
+      pull(next) {
+        if (planned === 'read-error') {
+          next.error(new TypeError('read-failed-token'))
+        }
       },
     })
     const writable = new WritableStream<Uint8Array>({
@@ -70,7 +75,7 @@ export function createScriptedCronitorConnect(
         }
       },
       startTls(options) {
-        dial.sni = options?.expectedServerHostname
+        dial.sni = options?.expectedServerHostname ?? address.hostname
         return tls
       },
     }
