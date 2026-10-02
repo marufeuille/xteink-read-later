@@ -4,6 +4,11 @@ export const OPENAI_MAX_INPUT_CHARS = 80_000
 export const OPENAI_MAX_COMPLETION_TOKENS = 16_000
 export const OPENAI_REASONING_EFFORT = 'none'
 export const TRANSLATE_TIMEOUT_MS = 60_000
+// One completion of a long article blows this timeout and the completion-token cap.
+// Each OpenAI call stays at or under this many source characters; the queue consumer
+// can run several calls. Unsplittable blocks (a code fence, table, or image line)
+// may be longer and still go out as one call.
+export const TRANSLATE_CHUNK_MAX_CHARS = 6_000
 
 export const TRANSLATE_SYSTEM_PROMPT = `You convert web articles into Japanese Markdown for later EPUB conversion.
 
@@ -20,3 +25,6 @@ Rules:
 - Return a JSON object with keys "title" and "content" only.
 - "content" must be Markdown, not HTML, and not an EPUB/XHTML document.
 - Do not wrap the JSON object in markdown fences.`
+
+export const TRANSLATE_SECTION_RULE =
+  'If the user JSON includes "part", content is one section of a longer article. Translate that section only, in full. Do not summarize it, do not add a preamble or closing, and do not repeat the article title unless that heading is already in the section.'

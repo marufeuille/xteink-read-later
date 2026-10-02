@@ -9,7 +9,7 @@ import { MAX_HTML_BYTES } from '../../src/extract/constants'
 import { buildEpub } from '../../src/epub/build-epub'
 import { createClipPipeline } from '../../src/pipeline/clip'
 import { createMemoryStore } from '../../src/store/memory'
-import { OPENAI_CHAT_URL } from '../../src/translate/constants'
+import { OPENAI_CHAT_URL, TRANSLATE_CHUNK_MAX_CHARS } from '../../src/translate/constants'
 import { opdsClipCalendarDate } from '../../src/opds/catalog'
 import { articleIdFromCanonicalUrl, asClipJobId, parseHttpUrl, type BuildEpub } from '../../src/types'
 import { basicAuthorization, bearerAuthorization, TEST_BINDINGS } from '../bindings'
@@ -771,5 +771,52 @@ describe('clip pipeline E2E (fixture network)', () => {
       true,
     )
     expect(fetchedUrls).toEqual([pageUrl])
+  })
+
+  it('translates a long English article across more than one OpenAI call', async () => {
+    const pageUrl = 'https://example.com/en/the-code-nobody-reads'
+    const sentence = 'Review every generated line before it ships. '
+    const paragraph = `<p>${sentence.repeat(80)}</p>`
+    const html = `<!DOCTYPE html><html lang="en"><head><title>The code nobody reads</title></head><body><main><article><h1>The code nobody reads</h1>${paragraph.repeat(3)}<pre><code>KEEP_FENCE_TOKEN</code></pre>${paragraph.repeat(3)}</article></main></body></html>`
+    const sections: string[] = []
+    const { fetchedUrls } = installNetworkMock({
+      pages: { [pageUrl]: { html } },
+      openai: async (request) => {
+        const body = (await request.json()) as { messages: Array<{ content: string }> }
+        const user = JSON.parse(body.messages[1]?.content ?? '{}') as {
+          content?: string
+          part?: { index: number; total: number }
+        }
+        const content = user.content ?? ''
+        sections.push(content)
+        expect(content.length).toBeLessThanOrEqual(TRANSLATE_CHUNK_MAX_CHARS)
+        expect(user.part?.index).toBe(sections.length)
+        expect(user.part?.total).toBeGreaterThan(1)
+        return openaiMessageResponse('ignored', `区間${user.part?.index ?? 0}の訳。`)
+      },
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(job.error).toBeUndefined()
+    expect(sections.length).toBeGreaterThan(1)
+    expect(fetchedUrls.filter((url) => url === OPENAI_CHAT_URL)).toHaveLength(sections.length)
+    expect(sections.filter((content) => content.includes('KEEP_FENCE_TOKEN'))).toHaveLength(1)
+
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(epubResponse.status).toBe(200)
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    const first = chapter.indexOf('区間1の訳')
+    const second = chapter.indexOf('区間2の訳')
+    expect(first).toBeGreaterThanOrEqual(0)
+    expect(second).toBeGreaterThan(first)
   })
 })

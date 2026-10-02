@@ -8,17 +8,20 @@ import type {
 } from '../types'
 import { err, ok } from '../types'
 import { htmlToMarkdown, markdownToHtml } from '../extract/sanitize-html'
+import { splitMarkdownForTranslation } from './chunks'
 import {
   OPENAI_CHAT_URL,
   OPENAI_MAX_COMPLETION_TOKENS,
   OPENAI_MAX_INPUT_CHARS,
   OPENAI_MODEL,
   OPENAI_REASONING_EFFORT,
+  TRANSLATE_CHUNK_MAX_CHARS,
+  TRANSLATE_SECTION_RULE,
   TRANSLATE_SYSTEM_PROMPT,
   TRANSLATE_TIMEOUT_MS,
 } from './constants'
 
-function fail(article: ExtractedArticle, reason: string): Result<TranslatedArticle, TranslateFailedError> {
+function fail<T>(article: ExtractedArticle, reason: string): Result<T, TranslateFailedError> {
   return err({ kind: 'translate_failed', extracted: article, reason })
 }
 
@@ -116,6 +119,87 @@ function choiceContent(payload: unknown): string | null {
   return first.message.content
 }
 
+type TranslateSection = {
+  readonly index: number
+  readonly total: number
+}
+
+function sectionSuffix(section: TranslateSection | undefined): string {
+  return section === undefined ? '' : ` (section ${section.index} of ${section.total})`
+}
+
+function systemPrompt(section: TranslateSection | undefined): string {
+  return section === undefined
+    ? TRANSLATE_SYSTEM_PROMPT
+    : `${TRANSLATE_SYSTEM_PROMPT}\n- ${TRANSLATE_SECTION_RULE}`
+}
+
+async function requestTranslatedMarkdown(
+  article: ExtractedArticle,
+  source: string,
+  apiKey: string,
+  section: TranslateSection | undefined,
+): Promise<Result<string, TranslateFailedError>> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), TRANSLATE_TIMEOUT_MS)
+  const suffix = sectionSuffix(section)
+  try {
+    const response = await raceAbort(
+      fetch(OPENAI_CHAT_URL, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: OPENAI_MODEL,
+          reasoning_effort: OPENAI_REASONING_EFFORT,
+          max_completion_tokens: OPENAI_MAX_COMPLETION_TOKENS,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt(section) },
+            {
+              role: 'user',
+              content: JSON.stringify({
+                mode: 'translate',
+                sourceLanguage: article.language,
+                title: article.title,
+                content: source,
+                ...(section === undefined ? {} : { part: section }),
+              }),
+            },
+          ],
+        }),
+      }),
+      controller.signal,
+    )
+
+    if (!response.ok) {
+      return fail(article, `OpenAI HTTP ${response.status}${suffix}`)
+    }
+
+    const payload: unknown = await raceAbort(response.json(), controller.signal)
+    const content = choiceContent(payload)
+    if (content === null) {
+      return fail(article, `OpenAI response did not include message content${suffix}`)
+    }
+    const parsed = parseModelJson(content)
+    if (parsed === null) {
+      return fail(article, `OpenAI response was not valid title/content JSON${suffix}`)
+    }
+    return ok(parsed.markdown)
+  } catch (cause) {
+    if (controller.signal.aborted || isAbortError(cause)) {
+      return fail(article, `OpenAI request timed out${suffix}`)
+    }
+    const reason = cause instanceof Error ? cause.message : String(cause)
+    return fail(article, `${reason}${suffix}`)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function articleFromMarkdown(
   article: ExtractedArticle,
   title: string,
@@ -159,61 +243,22 @@ export const translateArticle: TranslateArticle = async (
     return fail(article, 'Extracted HTML exceeds the translation size limit')
   }
 
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), TRANSLATE_TIMEOUT_MS)
-  try {
-    const response = await raceAbort(
-      fetch(OPENAI_CHAT_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: OPENAI_MODEL,
-          reasoning_effort: OPENAI_REASONING_EFFORT,
-          max_completion_tokens: OPENAI_MAX_COMPLETION_TOKENS,
-          response_format: { type: 'json_object' },
-          messages: [
-            { role: 'system', content: TRANSLATE_SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content: JSON.stringify({
-                mode: 'translate',
-                sourceLanguage: article.language,
-                title: article.title,
-                content: source,
-              }),
-            },
-          ],
-        }),
-      }),
-      controller.signal,
-    )
-
-    if (!response.ok) {
-      return fail(article, `OpenAI HTTP ${response.status}`)
+  const chunks = splitMarkdownForTranslation(source, TRANSLATE_CHUNK_MAX_CHARS)
+  const translated: string[] = []
+  for (let index = 0; index < chunks.length; index += 1) {
+    const chunk = chunks[index]
+    if (chunk === undefined || chunk.length === 0) {
+      continue
     }
-
-    const payload: unknown = await raceAbort(response.json(), controller.signal)
-    const content = choiceContent(payload)
-    if (content === null) {
-      return fail(article, 'OpenAI response did not include message content')
+    const section = chunks.length === 1 ? undefined : { index: index + 1, total: chunks.length }
+    const result = await requestTranslatedMarkdown(article, chunk, apiKey, section)
+    if (!result.ok) {
+      return result
     }
-    const parsed = parseModelJson(content)
-    if (parsed === null) {
-      return fail(article, 'OpenAI response was not valid title/content JSON')
-    }
-
-    return articleFromMarkdown(article, article.title, parsed.markdown, true)
-  } catch (cause) {
-    if (controller.signal.aborted || isAbortError(cause)) {
-      return fail(article, 'OpenAI request timed out')
-    }
-    const reason = cause instanceof Error ? cause.message : String(cause)
-    return fail(article, reason)
-  } finally {
-    clearTimeout(timer)
+    translated.push(result.value)
   }
+  if (translated.length === 0) {
+    return fail(article, 'Sanitized article was empty')
+  }
+  return articleFromMarkdown(article, article.title, translated.join('\n\n'), true)
 }
