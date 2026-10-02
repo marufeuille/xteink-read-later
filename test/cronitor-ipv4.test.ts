@@ -19,7 +19,7 @@ import {
 } from '../src/telemetry/cronitor-ipv4'
 import { TEST_BINDINGS } from './bindings'
 import { createCronitorFetch } from './cronitor-fetch'
-import { createScriptedCronitorConnect, httpResponse } from './cronitor-ipv4-harness'
+import { bytesThenEof, createScriptedCronitorConnect, httpResponse } from './cronitor-ipv4-harness'
 
 const API_KEY = 'cronitor-test-api'
 const CLIP_MONITOR = 'xteink-clip'
@@ -172,6 +172,95 @@ describe('Cronitor IPv4 transport', () => {
       signal: AbortSignal.timeout(1_000),
     }, { connect: scripted.connect, lookup: async () => [IPV4] })
     await expect(pending).resolves.toMatchObject({ status: 200 })
+  })
+
+  it('treats a chunked 200 without content-length as sent', async () => {
+    const chunked = httpResponse(
+      200,
+      { 'Content-Type': 'text/plain', 'Transfer-Encoding': 'chunked', Connection: 'close' },
+      '2\r\nOK\r\n0\r\n\r\n',
+    )
+    const scripted = createScriptedCronitorConnect(() => chunked)
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const response = await cronitorIpv4Fetch('https://cronitor.link/p/k/m?state=run', {
+      signal: AbortSignal.timeout(1_000),
+    }, { connect: scripted.connect, lookup: async () => [IPV4] })
+    expect(response.status).toBe(200)
+    expect(response.headers.get(CRONITOR_IPV4_HEADER)).toBe('ipv4')
+    expect(new TextDecoder().decode(await response.arrayBuffer())).toBe('OK')
+
+    const kept = await traceCronitorJob({
+      env: clipEnv(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: ipv4Fetch(scripted.connect),
+      job: async () => 'kept',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    expect(kept).toBe('kept')
+    const logs = cronitorLogs()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
+    expect(logs[0]).toMatchObject({ outcome: 'sent', pingState: 'run', transport: 'ipv4' })
+    expect(logs[1]).toMatchObject({ outcome: 'sent', pingState: 'complete', transport: 'ipv4' })
+    expect(JSON.stringify(logs)).not.toContain(API_KEY)
+    expect(JSON.stringify(logs)).not.toContain('OK')
+  })
+
+  it('keeps sent when a chunked 200 ends before the chunk framing is complete', async () => {
+    const partial = bytesThenEof(
+      httpResponse(200, { 'Transfer-Encoding': 'chunked' }, '5\r\nhel'),
+    )
+    const scripted = createScriptedCronitorConnect(() => partial)
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    await traceCronitorJob({
+      env: clipEnv(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: ipv4Fetch(scripted.connect),
+      job: async () => 'kept',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    const logs = cronitorLogs()
+    expect(logs.map((entry) => entry.outcome)).toEqual(['sent', 'sent'])
+    expect(logs[0]).toMatchObject({ transport: 'ipv4', pingState: 'run' })
+    expect(JSON.stringify(logs)).not.toContain('hel')
+    expect(JSON.stringify(logs)).not.toContain(API_KEY)
+  })
+
+  it('classifies a dropped response as connect and a broken status line as http', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const dropped = createScriptedCronitorConnect(() => 'eof')
+    await traceCronitorJob({
+      env: clipEnv(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: ipv4Fetch(dropped.connect),
+      job: async () => 'kept',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    const droppedLogs = cronitorLogs()
+    expect(droppedLogs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(droppedLogs[0]).toMatchObject({ outcome: 'network', pingState: 'run', transport: 'ipv4', cause: 'connect' })
+    expect(droppedLogs[1]).toMatchObject({ outcome: 'network', pingState: 'complete', transport: 'ipv4', cause: 'connect' })
+    expect(dropped.dials.map((dial) => dial.hostname)).toEqual([IPV4, 'cronitor.link', IPV4, 'cronitor.link'])
+
+    const broken = createScriptedCronitorConnect(() => new TextEncoder().encode('HTTP/2 200\r\nContent-Length: 0\r\n\r\n'))
+    await traceCronitorJob({
+      env: clipEnv(),
+      monitorKeyBinding: CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      failMessage: CRONITOR_CLIP_FAIL_MESSAGE,
+      fetch: ipv4Fetch(broken.connect),
+      job: async () => 'kept',
+      metrics: () => ({ count: 1, error_count: 0 }),
+    })
+    const brokenLogs = cronitorLogs().slice(droppedLogs.length)
+    expect(brokenLogs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(brokenLogs[0]).toMatchObject({ outcome: 'network', pingState: 'run', transport: 'ipv4', cause: 'http' })
+    expect(brokenLogs[1]).toMatchObject({ outcome: 'network', pingState: 'complete', transport: 'ipv4', cause: 'http' })
+    const text = JSON.stringify([...droppedLogs, ...brokenLogs])
+    expect(text).not.toContain(API_KEY)
+    expect(text).not.toContain(IPV4)
+    expect(text).not.toContain('HTTP/2')
   })
 
   it('keeps transport and cause when every socket read fails, and still returns the job', async () => {

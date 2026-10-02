@@ -94,7 +94,7 @@ Save で `xteink-read-later exceededCpu` として保存する。
 $metadata.service = "xteink-read-later" AND event = "cronitor"
 ```
 
-`outcome` は `sent` / `http_error` / `timeout` / `network` / `redirect_blocked` / `invalid_ping` / `metrics_failed`、または secret が使えないときの `missing_api_key` / `blank_api_key` / `api_key_not_string` / `missing_monitor_key` / `blank_monitor_key` / `monitor_key_not_string`。`pingState` は `run` / `complete` / `fail`。`httpStatus` は数値だけ。ソケット経路では `transport` が `ipv4`。失敗時の `cause` は `dns` / `connect` / `http` / `sockets`。`sockets` はソケットを読めず、`fetch` には戻していない。API key、モニターキー、URL、IP、記事 URL、レスポンス本文、例外メッセージは出さない。`sent` は HTTP 2xx を読み切った印である。Cronitor は資格情報が違っても 200 を返すことがあるので、ダッシュボードとこのログの両方を見る。
+`outcome` は `sent` / `http_error` / `timeout` / `network` / `redirect_blocked` / `invalid_ping` / `metrics_failed`、または secret が使えないときの `missing_api_key` / `blank_api_key` / `api_key_not_string` / `missing_monitor_key` / `blank_monitor_key` / `monitor_key_not_string`。`pingState` は `run` / `complete` / `fail`。`httpStatus` は数値だけ。ソケット経路では `transport` が `ipv4`。失敗時の `cause` は `dns` / `connect` / `http` / `sockets`。`sockets` はソケットを読めず、`fetch` には戻していない。API key、モニターキー、URL、IP、記事 URL、レスポンス本文、例外メッセージは出さない。`sent` は HTTP 2xx のステータスを読んだ印である。本文が空でも chunked でも `network` / `http` にはしない。Cronitor は資格情報が違っても 200 を返すことがあるので、ダッシュボードとこのログの両方を見る。
 
 ## 工程
 
