@@ -5,6 +5,9 @@
  * The production edge does not apply startTls({ expectedServerHostname }) to SNI.
  * A dial to an IPv4 literal can open and then fail while the HTTP response is read.
  * That failure is retried, and the last attempt dials the hostname so SNI is that name.
+ * The write side stays open until the status line is read. Closing it first sends
+ * TLS close_notify; nginx then yields no bytes, and the ping is logged cause=http
+ * even though Cronitor has already stored the event.
  * The API key stays on cronitor.link / eu.cronitor.link only.
  */
 
@@ -208,11 +211,11 @@ async function exchange(
   connect: CronitorConnect,
 ): Promise<Response> {
   const tls = await openTls(dialHost, url.hostname, signal, connect)
+  let writer: WritableStreamDefaultWriter<Uint8Array> | undefined
   try {
-    const writer = tls.writable.getWriter()
+    writer = tls.writable.getWriter()
     try {
       await raceSignal(writer.write(requestBytes(url)), signal)
-      await raceSignal(writer.close(), signal)
     } catch (error) {
       throw linkError('connect', error)
     }
@@ -232,6 +235,13 @@ async function exchange(
       await reader.cancel().catch(() => undefined)
     }
   } finally {
+    // Do not writer.close() before the status is read: that sends TLS close_notify
+    // and nginx returns no bytes. Drop the socket only after readHttp has returned.
+    try {
+      writer?.releaseLock()
+    } catch {
+      // The writer may already be closed or released.
+    }
     await closeQuiet(tls)
   }
 }
@@ -305,7 +315,7 @@ async function readHttp(
       return inspected
     }
     if (inspected === 'invalid') {
-      throw new CronitorLinkError('http')
+      throw new CronitorLinkError(responseCause(concat(chunks, size)))
     }
     const more = await pull()
     if (more) {
@@ -313,10 +323,19 @@ async function readHttp(
     }
     const finished = inspectHttp(concat(chunks, size), true)
     if (typeof finished === 'string') {
-      throw new CronitorLinkError('http')
+      throw new CronitorLinkError(responseCause(concat(chunks, size)))
     }
     return finished
   }
+}
+
+function responseCause(bytes: Uint8Array): CronitorLinkCause {
+  // No complete header block yet: the peer closed or never wrote a status line.
+  // A parsed header block that is not HTTP is an HTTP failure.
+  if (findHeaderEnd(bytes) === null && bytes.length <= MAX_HEADER_BYTES) {
+    return 'connect'
+  }
+  return 'http'
 }
 
 function inspectHttp(bytes: Uint8Array, eof: boolean): HttpMessage | 'need-more' | 'need-close' | 'invalid' {
@@ -335,20 +354,35 @@ function inspectHttp(bytes: Uint8Array, eof: boolean): HttpMessage | 'need-more'
     return 'invalid'
   }
   const bodyStart = headerEnd + 4
-  if (parsed.contentLength !== null) {
-    const total = bodyStart + parsed.contentLength
-    if (bytes.length < total) {
-      return eof ? 'invalid' : 'need-more'
+  const message = (body: Uint8Array): HttpMessage => ({
+    status: parsed.status,
+    headers: parsed.headers,
+    body,
+  })
+  if (parsed.chunked) {
+    const decoded = decodeChunked(bytes.subarray(bodyStart), eof)
+    if (decoded === 'need-more') {
+      return 'need-more'
     }
-    return { status: parsed.status, headers: parsed.headers, body: bytes.slice(bodyStart, total) }
+    return message(decoded)
+  }
+  if (parsed.contentLength !== null) {
+    const want = Math.min(parsed.contentLength, MAX_HTTP_BYTES)
+    if (bytes.length < bodyStart + want) {
+      // Status is already known. A short body must not hide a 2xx.
+      return eof ? message(bytes.slice(bodyStart)) : 'need-more'
+    }
+    return message(bytes.slice(bodyStart, bodyStart + want))
   }
   if (!eof) {
     return 'need-close'
   }
-  return { status: parsed.status, headers: parsed.headers, body: bytes.slice(bodyStart) }
+  return message(bytes.slice(bodyStart))
 }
 
-function parseHead(head: string): { status: number; headers: Headers; contentLength: number | null } | null {
+function parseHead(
+  head: string,
+): { status: number; headers: Headers; contentLength: number | null; chunked: boolean } | null {
   const lines = head.split('\r\n')
   const first = lines[0]
   if (first === undefined) {
@@ -392,13 +426,65 @@ function parseHead(head: string): { status: number; headers: Headers; contentLen
     return null
   }
   const contentLength = lengths[0]
-  if (chunked && contentLength === undefined) {
-    return null
+  // Chunked framing wins. A missing or oversized Content-Length must not drop the status.
+  if (chunked) {
+    return { status, headers, contentLength: null, chunked: true }
   }
-  if (contentLength !== undefined && contentLength > MAX_HTTP_BYTES) {
-    return null
+  return { status, headers, contentLength: contentLength ?? null, chunked: false }
+}
+
+function decodeChunked(body: Uint8Array, eof: boolean): Uint8Array | 'need-more' {
+  const parts: Uint8Array[] = []
+  let offset = 0
+  let total = 0
+  while (offset <= body.length) {
+    const lineEnd = findCrlf(body, offset)
+    if (lineEnd === null) {
+      return eof ? concatParts(parts, total) : 'need-more'
+    }
+    const sizeToken = new TextDecoder().decode(body.subarray(offset, lineEnd)).split(';')[0]?.trim() ?? ''
+    if (!/^[0-9a-fA-F]+$/.test(sizeToken)) {
+      return concatParts(parts, total)
+    }
+    const size = Number.parseInt(sizeToken, 16)
+    if (!Number.isSafeInteger(size)) {
+      return concatParts(parts, total)
+    }
+    const dataStart = lineEnd + 2
+    if (size === 0) {
+      return concatParts(parts, total)
+    }
+    if (total >= MAX_HTTP_BYTES) {
+      return concatParts(parts, total)
+    }
+    const take = Math.min(size, MAX_HTTP_BYTES - total)
+    const dataEnd = dataStart + size
+    if (body.length < dataEnd + 2) {
+      if (!eof) {
+        return 'need-more'
+      }
+      const partialEnd = Math.min(body.length, dataStart + take)
+      if (partialEnd > dataStart) {
+        parts.push(body.subarray(dataStart, partialEnd))
+        total += partialEnd - dataStart
+      }
+      return concatParts(parts, total)
+    }
+    if (body[dataEnd] !== 13 || body[dataEnd + 1] !== 10) {
+      return concatParts(parts, total)
+    }
+    parts.push(body.subarray(dataStart, dataStart + take))
+    total += take
+    offset = dataEnd + 2
+    if (take < size) {
+      return concatParts(parts, total)
+    }
   }
-  return { status, headers, contentLength: contentLength ?? null }
+  return concatParts(parts, total)
+}
+
+function concatParts(parts: readonly Uint8Array[], total: number): Uint8Array {
+  return concat(parts, total)
 }
 
 function publicAnswers(payload: unknown): { ips: readonly string[]; ttlMs: number } {
@@ -445,6 +531,15 @@ function ipv4Octets(value: string): readonly [number, number, number, number] | 
     return null
   }
   return [first, second, third, fourth]
+}
+
+function findCrlf(bytes: Uint8Array, from: number): number | null {
+  for (let index = from; index + 1 < bytes.length; index += 1) {
+    if (bytes[index] === 13 && bytes[index + 1] === 10) {
+      return index
+    }
+  }
+  return null
 }
 
 function findHeaderEnd(bytes: Uint8Array): number | null {
