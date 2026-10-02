@@ -66,8 +66,17 @@ export type DailyPublishResult = {
   readonly removedIds: readonly ArticleId[]
 }
 
+export type DigestQueueStep = 'start' | 'plan' | 'evaluate' | 'summarize' | 'publish' | 'watchdog'
+
+/**
+ * `{ date }` starts a run. Later steps carry `runId` so a rerun can ignore stale messages.
+ * `cursor` is the page, evaluation index, or summary index for that step.
+ */
 export type DigestQueueMessage = {
   readonly date: string
+  readonly step?: DigestQueueStep
+  readonly runId?: string
+  readonly cursor?: number
 }
 
 export type DailyDigestQueuedBody = {

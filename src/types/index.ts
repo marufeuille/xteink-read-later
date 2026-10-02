@@ -10,6 +10,7 @@ export type {
   DigestPreparedItem,
   DigestPublishedItem,
   DigestQueueMessage,
+  DigestQueueStep,
   DigestRunResult,
   DigestRunStatus,
   DigestSkipReason,

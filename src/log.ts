@@ -287,24 +287,35 @@ export function logDigestSchedule(entry: Omit<DigestScheduleLog, 'event'>): void
   writeStructuredLog({ event: 'digest_schedule', ...entry } satisfies DigestScheduleLog)
 }
 
+export type DailyDigestStage = 'start' | 'plan' | 'evaluate' | 'summarize' | 'publish' | 'watchdog'
+
+/** `retry_exhausted` is the last queue attempt, including a prior exceededCpu kill. */
+export type DailyDigestErrorKind = 'retry_exhausted' | 'internal_error'
+
 export type DailyDigestLog = {
   readonly event: 'daily_digest'
   readonly date: string
-  readonly status: 'published' | 'empty' | 'failed'
+  readonly status: 'published' | 'empty' | 'failed' | 'running'
+  readonly stage?: DailyDigestStage
   readonly selected: number
   readonly summarized: number
   readonly skipped: number
   readonly durationMs: number
   readonly articleId?: string
   readonly qrCount: number
+  readonly errorKind?: DailyDigestErrorKind
+  readonly attempt?: number
 }
 
 export function logDailyDigest(entry: Omit<DailyDigestLog, 'event'>): void {
-  const { articleId, ...rest } = entry
+  const { articleId, stage, errorKind, attempt, ...rest } = entry
   writeStructuredLog({
     event: 'daily_digest',
     ...rest,
     ...(articleId === null || articleId === undefined ? {} : { articleId }),
+    ...(stage === undefined ? {} : { stage }),
+    ...(errorKind === undefined ? {} : { errorKind }),
+    ...(attempt === undefined ? {} : { attempt }),
   } satisfies DailyDigestLog)
 }
 
