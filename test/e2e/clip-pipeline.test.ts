@@ -139,6 +139,48 @@ describe('clip pipeline E2E (fixture network)', () => {
     expect(stored.classification.status).toBe('skipped')
   })
 
+  it('keeps a whitespace-prefixed HTML table in the Japanese EPUB chapter', async () => {
+    const pageUrl = 'https://example.com/ja/comparison-table'
+    const { fetchedUrls } = installNetworkMock({
+      pages: { [pageUrl]: { html: fixtureHtml('ja-table.html') } },
+    })
+    const ctx = app()
+    const response = await clipAndDrain(ctx, pageUrl)
+    expect(response.status).toBe(202)
+    const queued = await readJson(response)
+    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+    expect(job.status).toBe('ready')
+    expect(fetchedUrls).toEqual([pageUrl])
+    expect(job.stages?.map((stage) => stage.stage)).toContain('translate')
+
+    const meta = await ctx.hono.request(
+      `/articles/${job.id}`,
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(meta.status).toBe(200)
+    const stored = (await meta.json()) as { language: string; translated: boolean }
+    expect(stored.language).toBe('ja')
+    expect(stored.translated).toBe(false)
+
+    const epubResponse = await ctx.hono.request(
+      job.epubPath ?? '',
+      { headers: { authorization: basicAuthorization() } },
+      ctx.env,
+    )
+    expect(epubResponse.status).toBe(200)
+    const files = unzipSync(new Uint8Array(await epubResponse.arrayBuffer()))
+    const chapter = strFromU8(files['OEBPS/chapter.xhtml'] ?? new Uint8Array())
+    expect(chapter).toContain('<table>')
+    expect(chapter).toContain('<th>項目</th>')
+    expect(chapter).toContain('<td>会話分析</td>')
+    expect(chapter).toContain('<td>日本語の質問</td>')
+    expect(chapter).not.toContain('&lt;table')
+    expect(chapter).not.toContain('&lt;thead')
+    expect(chapter).not.toContain('&lt;th')
+    expect(chapter).not.toContain('&lt;td')
+  })
+
   it('keeps nested emphasis readable instead of leaking *?0?* slot markers', async () => {
     const pageUrl = 'https://example.com/ja/self-repair-loop'
     const { fetchedUrls } = installNetworkMock({

@@ -827,11 +827,16 @@ function isPipeTableStart(lines: readonly string[], index: number): boolean {
   return isPipeTableRow(line) && isPipeTableDelimiter(next)
 }
 
+function isHtmlTableLine(line: string): boolean {
+  // htmlToMarkdown keeps whitespace text nodes, so the line can be " <table> <thead>…".
+  return line.trimStart().startsWith('<table')
+}
+
 function isTableContinueRow(line: string): boolean {
   if (line.trim() === '' || isFenceOpen(line) !== null || x3ImageFromLine(line) !== null) {
     return false
   }
-  if (/^(#{1,6})\s+\S/.test(line) || /^---+$/.test(line.trim()) || line.startsWith('<table')) {
+  if (/^(#{1,6})\s+\S/.test(line) || /^---+$/.test(line.trim()) || isHtmlTableLine(line)) {
     return false
   }
   if (/^>\s?/.test(line) || /^\s{0,3}[-*]\s+\S/.test(line) || /^\s{0,3}\d+\.\s+\S/.test(line)) {
@@ -863,7 +868,7 @@ function startsBlock(lines: readonly string[], index: number): boolean {
     isFenceOpen(line) !== null ||
     /^(#{1,6})\s+\S/.test(line) ||
     /^---+$/.test(line.trim()) ||
-    line.startsWith('<table') ||
+    isHtmlTableLine(line) ||
     isPipeTableStart(lines, index) ||
     /^>\s?/.test(line) ||
     /^\s{0,3}[-*]\s+\S/.test(line) ||
@@ -925,14 +930,14 @@ export function markdownToHtml(markdown: string, base: HttpUrl): string {
       continue
     }
 
-    if (line.startsWith('<table')) {
+    if (isHtmlTableLine(line)) {
       const raw = [line]
       index += 1
       while (index < lines.length && !raw.join('\n').includes('</table>')) {
         raw.push(lines[index] ?? '')
         index += 1
       }
-      const table = sanitizeFragmentHtml(raw.join('\n'), base)
+      const table = sanitizeFragmentHtml(raw.join('\n').trim(), base)
       if (table.length > 0) {
         blocks.push(table)
       }
