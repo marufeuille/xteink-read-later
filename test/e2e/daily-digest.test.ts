@@ -484,10 +484,20 @@ describe('daily digest fixture e2e', () => {
       url: 'https://notes.example/ontology',
       title: 'データ基盤のオントロジー',
     }
+    const partial = {
+      id: 'cand_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      url: 'https://notes.example/platform',
+      title: 'データ基盤の監視',
+    }
     const vendor = {
       id: 'cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       url: 'https://vendor.example/weekly',
       title: 'ベンダーの週次リリース',
+    }
+    const practice = {
+      id: 'cand_ffffffffffffffffffffffffffffffff',
+      url: 'https://practice.example/pipeline',
+      title: 'パイプラインの品質と運用',
     }
     const release = {
       id: 'cand_cccccccccccccccccccccccccccccccc',
@@ -496,12 +506,15 @@ describe('daily digest fixture e2e', () => {
     }
     const general = {
       id: 'cand_dddddddddddddddddddddddddddddddd',
-      url: 'https://notes.example/aside',
+      url: 'https://aside.example/note',
       title: 'データ基盤のオントロジー雑記',
     }
     installNetworkMock({
       pages: Object.fromEntries(
-        [close, vendor, release, general].map((item) => [item.url, { html: articleHtml(item.url, item.title) }]),
+        [close, partial, vendor, practice, release, general].map((item) => [
+          item.url,
+          { html: articleHtml(item.url, item.title) },
+        ]),
       ),
       openai: async () => openaiMessageResponse('unused', '設計と運用の要点です。'),
     })
@@ -521,6 +534,42 @@ describe('daily digest fixture e2e', () => {
           relevant: true,
           concrete: true,
           verification: false,
+          inputTokens: 20,
+          durationMs: 10,
+        }),
+      }),
+    )
+    await candidateStore.put(
+      listed({
+        ...partial,
+        discoveredAt: '2026-09-20T00:00:00.000Z',
+        recommendation: evaluatedRecommendation({
+          grade: 'recommended',
+          confidence: 0.99,
+          model: 'test-model',
+          excerptHash: 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          evaluatedAt: NOW.toISOString(),
+          relevant: true,
+          concrete: true,
+          verification: true,
+          inputTokens: 20,
+          durationMs: 10,
+        }),
+      }),
+    )
+    await candidateStore.put(
+      listed({
+        ...practice,
+        discoveredAt: '2026-09-21T01:00:00.000Z',
+        recommendation: evaluatedRecommendation({
+          grade: 'recommended',
+          confidence: 0.98,
+          model: 'test-model',
+          excerptHash: 'ffffffffffffffffffffffffffffffff',
+          evaluatedAt: NOW.toISOString(),
+          relevant: true,
+          concrete: true,
+          verification: true,
           inputTokens: 20,
           durationMs: 10,
         }),
@@ -602,10 +651,13 @@ describe('daily digest fixture e2e', () => {
     const section1 = strFromU8(files['OEBPS/section-1.xhtml'] ?? new Uint8Array())
     const section2 = strFromU8(files['OEBPS/section-2.xhtml'] ?? new Uint8Array())
     const section3 = strFromU8(files['OEBPS/section-3.xhtml'] ?? new Uint8Array())
+    const section4 = strFromU8(files['OEBPS/section-4.xhtml'] ?? new Uint8Array())
+    const section5 = strFromU8(files['OEBPS/section-5.xhtml'] ?? new Uint8Array())
     expect(section1).toContain(close.title)
-    expect(section1).not.toContain(vendor.title)
-    expect(section2).toContain(vendor.title)
-    expect(section3).toContain(general.title)
+    expect(section2).toContain(partial.title)
+    expect(section3).toContain(vendor.title)
+    expect(section4).toContain(practice.title)
+    expect(section5).toContain(general.title)
     expect(chapter((await store.getEpub(todayMeta!.id)) ?? new Uint8Array())).not.toContain(release.title)
   })
 })

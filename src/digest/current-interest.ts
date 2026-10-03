@@ -11,7 +11,8 @@ function fold(value: string): string {
   return value.normalize('NFKC').toLowerCase()
 }
 
-function interestTokens(memo: string): readonly string[] {
+/** Memo words. Particles, spaces, and punctuation separate them. Tokens shorter than 2 characters are dropped. */
+export function digestMemoWords(memo: string): readonly string[] {
   const seen = new Set<string>()
   const tokens: string[] = []
   for (const part of fold(memo).split(MEMO_SPLIT)) {
@@ -24,16 +25,25 @@ function interestTokens(memo: string): readonly string[] {
   return tokens
 }
 
-function interestHaystack(title: string): string {
-  return fold(title).replace(/[\s　]+/gu, '')
+function interestHaystack(title: string, excerpt: string): string {
+  return fold(`${title}\n${excerpt}`).replace(/[\s　]+/gu, '')
 }
 
-/** 1 when every content word of the memo appears in the title. An empty memo is 0. */
-export function digestCurrentInterestRank(title: string, memo: string): 0 | 1 {
-  const tokens = interestTokens(memo)
+/**
+ * How many distinct memo words appear in the title or the excerpt.
+ * A judged candidate does not store excerpt text, only `recommend_excerpt_hash`, so selection passes ''.
+ */
+export function digestMemoWordOverlap(title: string, excerpt: string, memo: string): number {
+  const tokens = digestMemoWords(memo)
   if (tokens.length === 0) {
     return 0
   }
-  const haystack = interestHaystack(title)
-  return tokens.every((token) => haystack.includes(token)) ? 1 : 0
+  const haystack = interestHaystack(title, excerpt)
+  let count = 0
+  for (const token of tokens) {
+    if (haystack.includes(token)) {
+      count += 1
+    }
+  }
+  return count
 }

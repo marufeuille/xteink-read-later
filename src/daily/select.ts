@@ -1,4 +1,4 @@
-import { DIGEST_CURRENT_INTEREST_MEMO, digestCurrentInterestRank } from '../digest/current-interest'
+import { DIGEST_CURRENT_INTEREST_MEMO, digestMemoWordOverlap } from '../digest/current-interest'
 import type { DigestSourceInterest } from '../digest/interest'
 import type { CandidateArticle, DigestBucket, DigestBucketQuota, RecommendGrade } from '../types'
 import { DIGEST_BUCKET_QUOTAS, DIGEST_BUCKETS, DIGEST_MAX_PER_SOURCE } from '../types'
@@ -116,8 +116,8 @@ function compareWithCurrentInterest(
   currentInterest: string,
 ): number {
   const byMemo =
-    digestCurrentInterestRank(right.title, currentInterest) -
-    digestCurrentInterestRank(left.title, currentInterest)
+    digestMemoWordOverlap(right.title, '', currentInterest) -
+    digestMemoWordOverlap(left.title, '', currentInterest)
   if (byMemo !== 0) {
     return byMemo
   }
@@ -229,7 +229,8 @@ export function selectDigestCandidates(
     readonly sourceInterest?: ReadonlyMap<string, DigestSourceInterest>
     /**
      * Omitted uses DIGEST_CURRENT_INTEREST_MEMO. '' leaves the order unchanged.
-     * A close title moves ahead of other titles this bucket already kept.
+     * More memo words in the title rank higher among titles this bucket already kept.
+     * A partial overlap counts. Zero overlap stays. Excerpt text is not stored on the candidate.
      */
     readonly currentInterest?: string
   },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DIGEST_CURRENT_INTEREST_MEMO, digestCurrentInterestRank } from '../src/digest/current-interest'
+import { DIGEST_CURRENT_INTEREST_MEMO, digestMemoWordOverlap, digestMemoWords } from '../src/digest/current-interest'
 import type { DigestSourceInterest } from '../src/digest/interest'
 import { digestBucketOf, selectDigestCandidates } from '../src/daily/select'
 import { RECOMMEND_QUESTIONS } from '../src/recommend/questions'
@@ -68,17 +68,20 @@ function titlesOf(candidates: readonly CandidateArticle[], currentInterest?: str
 }
 
 describe('digest current interest memo', () => {
-  it('ships 「データ基盤のオントロジー」 as a replaceable note', () => {
+  it('counts memo words in the title or the excerpt, and treats an empty memo as zero', () => {
     expect(DIGEST_CURRENT_INTEREST_MEMO).toBe(MEMO)
-    expect(digestCurrentInterestRank('データ基盤のオントロジー入門', DIGEST_CURRENT_INTEREST_MEMO)).toBe(1)
-    expect(digestCurrentInterestRank('オントロジーで整理するデータ基盤', MEMO)).toBe(1)
-    expect(digestCurrentInterestRank('データ基盤の監視', MEMO)).toBe(0)
-    expect(digestCurrentInterestRank('オントロジー入門', MEMO)).toBe(0)
-    expect(digestCurrentInterestRank('Redpanda の週次', MEMO)).toBe(0)
-    expect(digestCurrentInterestRank('データ基盤のオントロジー', '')).toBe(0)
-    expect(digestCurrentInterestRank('データ基盤のオントロジー', '   ')).toBe(0)
-    expect(digestCurrentInterestRank('データ基盤のオントロジー', 'の')).toBe(0)
-    expect(digestCurrentInterestRank('Data Ontology Weekly', 'data ontology')).toBe(1)
+    expect(digestMemoWords(MEMO)).toEqual(['データ基盤', 'オントロジー'])
+    expect(digestMemoWordOverlap('データ基盤のオントロジー入門', '', MEMO)).toBe(2)
+    expect(digestMemoWordOverlap('オントロジーで整理するデータ基盤', '', MEMO)).toBe(2)
+    expect(digestMemoWordOverlap('データ基盤の監視', '', MEMO)).toBe(1)
+    expect(digestMemoWordOverlap('オントロジー入門', '', MEMO)).toBe(1)
+    expect(digestMemoWordOverlap('パイプラインの品質と運用', '', MEMO)).toBe(0)
+    expect(digestMemoWordOverlap('週次リリース', 'オントロジーの話', MEMO)).toBe(1)
+    expect(digestMemoWordOverlap('週次リリース', 'データ基盤とオントロジー', MEMO)).toBe(2)
+    expect(digestMemoWordOverlap('データ基盤のオントロジー', '', '')).toBe(0)
+    expect(digestMemoWordOverlap('データ基盤のオントロジー', '', '   ')).toBe(0)
+    expect(digestMemoWordOverlap('データ基盤のオントロジー', '', 'の')).toBe(0)
+    expect(digestMemoWordOverlap('Data Ontology Weekly', '', 'data ontology')).toBe(2)
   })
 
   it('moves a close title ahead of a higher-confidence article in the same bucket', () => {
@@ -101,33 +104,40 @@ describe('digest current interest memo', () => {
     expect(titlesOf([other, close], ' \n ')).toEqual(['ベンダーの週次リリース', 'データ基盤のオントロジー'])
   })
 
-  it('keeps a non-matching article in the bucket', () => {
-    const close = listed({
+  it('ranks a partial word overlap above zero overlap and keeps the data-engineering article', () => {
+    const both = listed({
       id: asCandidateId('cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
       canonicalUrl: mustUrl('https://notes.example/ontology'),
       title: 'データ基盤のオントロジー',
+      discoveredAt: '2026-09-18T00:00:00.000Z',
+      recommendation: judged('recommended', { confidence: 0.7, verification: false }),
     })
     const partial = listed({
       id: asCandidateId('cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
       canonicalUrl: mustUrl('https://www.redpanda.com/blog/release'),
       title: 'データ基盤の監視',
-      discoveredAt: '2026-09-20T00:00:00.000Z',
+      discoveredAt: '2026-09-19T00:00:00.000Z',
+      recommendation: judged('recommended', { confidence: 0.85 }),
     })
-    const vendor = listed({
+    const practice = listed({
       id: asCandidateId('cand_cccccccccccccccccccccccccccccccc'),
       canonicalUrl: mustUrl('https://blogs.oracle.com/data/weekly'),
-      title: 'Oracle の週次',
+      title: 'パイプラインの品質と運用',
       discoveredAt: '2026-09-21T02:00:00.000Z',
+      recommendation: judged('recommended', { confidence: 0.99 }),
     })
-    const selected = selectDigestCandidates([vendor, partial, close], { usedCanonicalUrls: new Set() })
+    const selected = selectDigestCandidates([practice, partial, both], { usedCanonicalUrls: new Set() })
     expect(selected.map((item) => item.title)).toEqual([
       'データ基盤のオントロジー',
-      'Oracle の週次',
       'データ基盤の監視',
+      'パイプラインの品質と運用',
     ])
-    expect(selected.map((item) => item.id)).toEqual(
-      expect.arrayContaining([close.id, partial.id, vendor.id]),
-    )
+    expect(titlesOf([practice, partial, both], '')).toEqual([
+      'パイプラインの品質と運用',
+      'データ基盤の監視',
+      'データ基盤のオントロジー',
+    ])
+    expect(selected.map((item) => item.id)).toEqual([both.id, partial.id, practice.id])
     expect(new Set(selected.map((item) => digestBucketOf(item)))).toEqual(new Set(['deep']))
   })
 
