@@ -1,3 +1,4 @@
+import { DIGEST_CURRENT_INTEREST_MEMO, digestCurrentInterestRank } from '../digest/current-interest'
 import type { DigestSourceInterest } from '../digest/interest'
 import type { CandidateArticle, DigestBucket, DigestBucketQuota, RecommendGrade } from '../types'
 import { DIGEST_BUCKET_QUOTAS, DIGEST_BUCKETS, DIGEST_MAX_PER_SOURCE } from '../types'
@@ -108,6 +109,21 @@ function compareDigestCandidates(
   return reverseCompare(left.id, right.id)
 }
 
+function compareWithCurrentInterest(
+  left: CandidateArticle,
+  right: CandidateArticle,
+  sourceInterest: ReadonlyMap<string, DigestSourceInterest> | undefined,
+  currentInterest: string,
+): number {
+  const byMemo =
+    digestCurrentInterestRank(right.title, currentInterest) -
+    digestCurrentInterestRank(left.title, currentInterest)
+  if (byMemo !== 0) {
+    return byMemo
+  }
+  return compareDigestCandidates(left, right, sourceInterest)
+}
+
 function compareNewest(
   left: Pick<CandidateArticle, 'discoveredAt' | 'id'>,
   right: Pick<CandidateArticle, 'discoveredAt' | 'id'>,
@@ -211,9 +227,15 @@ export function selectDigestCandidates(
     readonly quotas?: Readonly<Record<DigestBucket, DigestBucketQuota>>
     /** Weak tie-break after confidence. Missing keys are 0. This does not drop a site. */
     readonly sourceInterest?: ReadonlyMap<string, DigestSourceInterest>
+    /**
+     * Omitted uses DIGEST_CURRENT_INTEREST_MEMO. '' leaves the order unchanged.
+     * A close title moves ahead of other titles this bucket already kept.
+     */
+    readonly currentInterest?: string
   },
 ): CandidateArticle[] {
   const quotas = input.quotas ?? DIGEST_BUCKET_QUOTAS
+  const currentInterest = input.currentInterest ?? DIGEST_CURRENT_INTEREST_MEMO
   const buckets: Record<DigestBucket, CandidateArticle[]> = { deep: [], tech: [], general: [] }
   for (const candidate of candidates) {
     if (
@@ -234,6 +256,7 @@ export function selectDigestCandidates(
     const ranked = [...buckets[bucket]].sort((left, right) =>
       compareDigestCandidates(left, right, input.sourceInterest),
     )
+    const chosen: CandidateArticle[] = []
     let taken = 0
     for (const candidate of ranked) {
       if (taken >= quotas[bucket].max) {
@@ -244,10 +267,15 @@ export function selectDigestCandidates(
       if (usedBySource >= DIGEST_MAX_PER_SOURCE) {
         continue
       }
-      selected.push(candidate)
+      chosen.push(candidate)
       sourceCounts.set(key, usedBySource + 1)
       taken += 1
     }
+    // The memo reorders articles this bucket already kept. It does not change the cut.
+    chosen.sort((left, right) =>
+      compareWithCurrentInterest(left, right, input.sourceInterest, currentInterest),
+    )
+    selected.push(...chosen)
   }
   return selected
 }

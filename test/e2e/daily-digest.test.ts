@@ -70,6 +70,7 @@ function listed(input: {
   readonly url: string
   readonly title: string
   readonly outlet?: string
+  readonly discoveredAt?: string
   readonly recommendation?: CandidateArticle['recommendation']
 }): CandidateArticle {
   const canonicalUrl = mustUrl(input.url)
@@ -81,7 +82,7 @@ function listed(input: {
     title: input.title,
     outlet: input.outlet ?? 'example.com',
     publishedAt: '2026-09-20T00:00:00.000Z',
-    discoveredAt: now,
+    discoveredAt: input.discoveredAt ?? now,
     fetchStatus: 'fetched',
     listingState: 'listed',
     exclusionReason: null,
@@ -475,5 +476,136 @@ describe('daily digest fixture e2e', () => {
     expect(sakana.filter((item) => body.includes(item.title))).toHaveLength(2)
     expect(body).not.toContain('新モデルを発表')
     expect(body.match(/<h2 /g)).toHaveLength(12)
+  })
+
+  it('puts a title close to the current interest memo ahead of another article in the same bucket', async () => {
+    const close = {
+      id: 'cand_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      url: 'https://notes.example/ontology',
+      title: 'データ基盤のオントロジー',
+    }
+    const vendor = {
+      id: 'cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      url: 'https://vendor.example/weekly',
+      title: 'ベンダーの週次リリース',
+    }
+    const release = {
+      id: 'cand_cccccccccccccccccccccccccccccccc',
+      url: 'https://vendor.example/press',
+      title: 'データ基盤のオントロジーを発表',
+    }
+    const general = {
+      id: 'cand_dddddddddddddddddddddddddddddddd',
+      url: 'https://notes.example/aside',
+      title: 'データ基盤のオントロジー雑記',
+    }
+    installNetworkMock({
+      pages: Object.fromEntries(
+        [close, vendor, release, general].map((item) => [item.url, { html: articleHtml(item.url, item.title) }]),
+      ),
+      openai: async () => openaiMessageResponse('unused', '設計と運用の要点です。'),
+    })
+    const store = createMemoryStore()
+    const candidateStore = createMemoryCandidateStore()
+    const digestStore = createMemoryDigestStore()
+    await candidateStore.put(
+      listed({
+        ...close,
+        discoveredAt: '2026-09-19T00:00:00.000Z',
+        recommendation: evaluatedRecommendation({
+          grade: 'recommended',
+          confidence: 0.75,
+          model: 'test-model',
+          excerptHash: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          evaluatedAt: NOW.toISOString(),
+          relevant: true,
+          concrete: true,
+          verification: false,
+          inputTokens: 20,
+          durationMs: 10,
+        }),
+      }),
+    )
+    await candidateStore.put(
+      listed({
+        ...vendor,
+        discoveredAt: '2026-09-21T02:00:00.000Z',
+        recommendation: evaluatedRecommendation({
+          grade: 'recommended',
+          confidence: 0.99,
+          model: 'test-model',
+          excerptHash: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          evaluatedAt: NOW.toISOString(),
+          relevant: true,
+          concrete: true,
+          verification: true,
+          inputTokens: 20,
+          durationMs: 10,
+        }),
+      }),
+    )
+    await candidateStore.put(
+      listed({
+        ...release,
+        recommendation: evaluatedRecommendation({
+          grade: 'recommended',
+          confidence: 0.99,
+          model: 'test-model',
+          excerptHash: 'cccccccccccccccccccccccccccccccc',
+          evaluatedAt: NOW.toISOString(),
+          relevant: true,
+          concrete: false,
+          verification: false,
+          inputTokens: 20,
+          durationMs: 10,
+        }),
+      }),
+    )
+    await candidateStore.put(
+      listed({
+        ...general,
+        recommendation: evaluatedRecommendation({
+          grade: 'low_priority',
+          confidence: 0.99,
+          model: 'test-model',
+          excerptHash: 'dddddddddddddddddddddddddddddddd',
+          evaluatedAt: NOW.toISOString(),
+          relevant: false,
+          concrete: true,
+          verification: false,
+          inputTokens: 20,
+          durationMs: 10,
+        }),
+      }),
+    )
+    const { clip, feed, digest } = queues()
+    const env = {
+      ...envWithQueues({ clip, feed, digest }),
+      PUBLIC_ORIGIN: 'https://read.example.com',
+    }
+    await handleScheduled({ cron: DAILY_DIGEST_CRON }, env, {
+      sourceStore: createMemoryFeedSourceStore(),
+      feedQueue: feed,
+      digestQueue: digest,
+      now: () => NOW,
+    })
+    await digest.drain(env, {
+      store,
+      candidateStore,
+      digestStore,
+      runStore: createMemoryDigestRunStore(),
+      now: () => NOW,
+    })
+    const todayMeta = (await store.listMeta()).find((item) => item.title === `まとめ ${TODAY}`)
+    expect(todayMeta).toBeDefined()
+    const files = epubFiles((await store.getEpub(todayMeta!.id)) ?? new Uint8Array())
+    const section1 = strFromU8(files['OEBPS/section-1.xhtml'] ?? new Uint8Array())
+    const section2 = strFromU8(files['OEBPS/section-2.xhtml'] ?? new Uint8Array())
+    const section3 = strFromU8(files['OEBPS/section-3.xhtml'] ?? new Uint8Array())
+    expect(section1).toContain(close.title)
+    expect(section1).not.toContain(vendor.title)
+    expect(section2).toContain(vendor.title)
+    expect(section3).toContain(general.title)
+    expect(chapter((await store.getEpub(todayMeta!.id)) ?? new Uint8Array())).not.toContain(release.title)
   })
 })

@@ -133,7 +133,7 @@ ORDER BY label, p.candidate_id;
 npx wrangler d1 execute xteink-read-later-candidates --remote --command "SELECT p.issue_date, p.candidate_id, CASE WHEN q.candidate_id IS NOT NULL THEN 'weak_positive' ELSE 'ordinary_or_below' END AS label FROM digest_published_items AS p LEFT JOIN digest_qr_interest AS q ON q.issue_date = p.issue_date AND q.candidate_id = p.candidate_id WHERE p.issue_date = 'YYYY-MM-DD' ORDER BY label, p.candidate_id;"
 ```
 
-`digest_qr_interest` だけにあって、その号の `digest_published_items` に無い行は上の JOIN に出ない。digest 以外の取得では行を作らない。QR の期限（号の日付から 14 日）が残っている未取得は、次号の順位にはまだ使わない。期限後の未取得は、同じサイトの同点比較で一段だけ下げる。取得済みは一段だけ上げる。サイトは除外しない。
+`digest_qr_interest` だけにあって、その号の `digest_published_items` に無い行は上の JOIN に出ない。digest 以外の取得では行を作らない。QR の期限（号の日付から 14 日）が残っている未取得は、次号の順位にはまだ使わない。期限後の未取得は、同じサイトの同点比較で一段だけ下げる。取得済みは一段だけ上げる。サイトは除外しない。今の興味メモはここには出ない。QR の ±1 とは別で、近い候補を同じ枠の中で前に出す。
 
 ## Cronitor Job telemetry
 
