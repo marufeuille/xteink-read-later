@@ -8,6 +8,7 @@ import { fetchPage as defaultFetchPage } from '../extract/fetch-page'
 import { fetchFeed as defaultFetchFeed } from '../feeds/fetch'
 import type {
   CandidateStore,
+  EvaluateSystemOne,
   FeedCollectionResult,
   FeedQueueMessage,
   FeedRunId,
@@ -30,6 +31,7 @@ export type FeedQueueHandlerDeps = {
   readonly fetchPage?: FetchPage
   readonly parseFeed?: CollectFeedDeps['parseFeed']
   readonly now?: () => Date
+  readonly evaluateRecommend?: EvaluateSystemOne
 }
 
 function nowIso(now: () => Date): string {
@@ -155,6 +157,8 @@ async function processMessage(
       fetchPage: deps.fetchPage ?? defaultFetchPage,
       ...(deps.parseFeed === undefined ? {} : { parseFeed: deps.parseFeed }),
       now,
+      jevDeps: { OPENROUTER_API_KEY: env.OPENROUTER_API_KEY },
+      ...(deps.evaluateRecommend === undefined ? {} : { evaluateRecommend: deps.evaluateRecommend }),
     })
     const latest = await runFeedStage('store', async () => (await sources.getById(source.id)) ?? source)
     if (latest.collectionRunId !== parsed.runId) {

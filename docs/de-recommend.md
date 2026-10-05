@@ -32,7 +32,7 @@ LLM/AI 記事も DE の仕事との関係で評価する。企業ブログであ
 
 | status | Jev | おすすめ度表示 |
 | --- | --- | --- |
-| `unevaluated` | まだ呼ばない（フィード収集の本文ありなど） | 未判定 |
+| `unevaluated` | まだ呼ばない（有料、または Jev を渡さず判定を始めないとき） | 未判定 |
 | `skipped` | キー未設定のため呼ばない | 未判定（キーなし） |
 | `insufficient_material` | 呼ばない。タイトルやフィード抜粋、取得失敗、抽出失敗 | 材料不足 |
 | `evaluated` | Choice が既知ラベルかつ confidence ≥ 0.7 | 3段階の grade |
@@ -46,8 +46,12 @@ LLM/AI 記事も DE の仕事との関係で評価する。企業ブログであ
 - 入力は翻訳前の抽出 HTML を Markdown にした excerpt（HTML 16000 字、excerpt 6000 字）。
 - 1 判定あたり Jev は最大 1 回。通信リトライはしない（タイムアウト 8 秒）。
 - 手動 `POST /candidates` は本文を確認できたとき最大 1 回呼ぶ。
-- フィード収集は時間予算のため Jev を呼ばない（`unevaluated` または材料不足）。一覧の「判定する」で明示評価する。予算切れか Jev 依存が無いために残った `unevaluated` は、`candidate_recommend` を候補ごとに出さない。`evaluated` / `low_confidence` / `insufficient_material` / `skipped` / `failed` は出す。有料記事などで予算スキップ以外の理由で残る `unevaluated` も出す。
-- 同じ `de-recommend-v1` と excerpt ハッシュなら再呼び出ししない。失敗は再試行する。基準バージョンが変われば再評価する。`POST /candidates/:id/recommend` の `force` で明示再評価する。
+- フィード収集も、抽出本文を確認できた候補は手動投入と同じ `de-recommend-v1` で判定する。本文があるのに `unevaluated` のまま残さない。ページ取得の 20 秒枠の中では Jev を待たない。その枠で登録し終えてから、1 候補ずつ判定する。登録できる件数は、判定を足す前と変えない。
+- キーが無ければ呼ばず `skipped`。タイトルのみ・抽出失敗は `insufficient_material` で、Jev は呼ばない。有料記事は判定しない。低確信と失敗は低評価と混ぜず、一覧から隠さない。全文送信も止めない。
+- 一覧の「判定する」は残す。
+- 同じ `de-recommend-v1` と excerpt ハッシュなら再収集でも再呼び出ししない。失敗した判定は、次の収集で再び処理されたときに再試行できる。同じ収集の中では通信リトライをしない。基準バージョンが変われば再評価する。`POST /candidates/:id/recommend` の `force` で明示再評価する。
+- すでに未判定で残っている候補は一括では埋めない。次の収集で再び処理されたものだけ、上の条件で判定する。
+- Jev を渡さず予算スキップのまま残った `unevaluated` は、`candidate_recommend` を候補ごとに出さない。`evaluated` / `low_confidence` / `insufficient_material` / `skipped` / `failed` は出す。有料記事などで予算スキップ以外の理由で残る `unevaluated` も出す。
 - 本文は D1 に置かない。ハッシュだけ保存する。再評価時は再取得して抽出する。
 
 ## 採用基準（人間の期待との比較）

@@ -24,6 +24,11 @@ export const RECOMMEND_MAX_EXCERPT_CHARS = 6_000
 export const RECOMMEND_MAX_HTML_CHARS = 16_000
 export const RECOMMEND_MAX_CALLS_PER_EVALUATION = 1
 export const RECOMMEND_MAX_CALLS_PER_REGISTER = 1
+/**
+ * Jev calls during feed page fetch and registration.
+ * Stays 0 so the 20s page-fetch budget is not spent waiting on Jev.
+ * Extracted text is judged after that loop, one call per candidate.
+ */
 export const RECOMMEND_MAX_CALLS_PER_FEED_ITEM = 0
 
 export const RECOMMEND_GRADE_CRITERIA: Readonly<Record<RecommendGrade, string>> = {

@@ -19,7 +19,7 @@ URL、本文、API token はログに足さない。`message` に載せるのは
 
 `feed_schedule`（`src/log.ts` の `logFeedSchedule`）は別イベントで、`queued` / `failed` / `durationMs` だけである。`errorKind` は無いので、この保存クエリには入れない。
 
-`candidate_recommend` は判定の結果（`evaluated` / `low_confidence` / `insufficient_material` / `skipped` / `failed`）を出す。フィード収集で予算スキップのまま残る `unevaluated` は候補ごとに出さない。有料記事など、呼ぶ前に別の理由で残った `unevaluated` は出す。
+`candidate_recommend` は判定の結果（`evaluated` / `low_confidence` / `insufficient_material` / `skipped` / `failed`）を出す。Jev を渡さず予算スキップのまま残る `unevaluated` は候補ごとに出さない。有料記事など、呼ぶ前に別の理由で残った `unevaluated` は出す。フィード収集はページ取得のあと、本文がある候補の判定結果を出す。
 
 ## 日次（Cron のあと）
 

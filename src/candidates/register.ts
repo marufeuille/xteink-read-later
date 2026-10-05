@@ -20,6 +20,12 @@ import { assertFetchableCandidateUrl } from './fetch-policy'
 import { extractCandidateMetadata } from './metadata'
 import { logResolvedRecommendation, resolveDeRecommendation, type RecommendBudget } from './recommend'
 
+export type RegisteredCandidateMaterial = {
+  readonly candidate: CandidateArticle
+  readonly extractedHtml: string | null
+  readonly paywalled: boolean
+}
+
 export type RegisterCandidateDeps = {
   readonly store: CandidateStore
   readonly fetchPage: FetchPage
@@ -28,6 +34,12 @@ export type RegisterCandidateDeps = {
   readonly jevDeps?: JevDeps
   readonly evaluateRecommend?: EvaluateSystemOne
   readonly maxJevCalls?: number
+  /**
+   * Persist without judging. Feed collection uses this so Jev runs after the
+   * page-fetch loop and cannot shrink how many items get registered.
+   */
+  readonly deferRecommendation?: boolean
+  readonly onRegistered?: (material: RegisteredCandidateMaterial) => void
 }
 
 function isoNow(now: () => Date): string {
@@ -119,6 +131,15 @@ async function persistJudged(
     readonly sourceKind: CandidateSourceKind
   },
 ): Promise<CandidateArticle> {
+  if (input.deps.deferRecommendation === true) {
+    await persist(input.deps.store, input.submittedUrl, input.discoveredAt, saved, input.sourceKind)
+    input.deps.onRegistered?.({
+      candidate: saved,
+      extractedHtml: input.extractedHtml,
+      paywalled: input.paywalled,
+    })
+    return saved
+  }
   const resolved = await resolveDeRecommendation({
     existing: saved.recommendation,
     extractedHtml: input.extractedHtml,
