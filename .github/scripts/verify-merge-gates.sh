@@ -78,7 +78,7 @@ for (const type of ["deletion", "non_fast_forward", "pull_request", "required_st
 }
 const pull = (rs.rules ?? []).find((rule) => rule.type === "pull_request")
 if ((pull?.parameters?.required_approving_review_count ?? 1) !== 0) {
-  fail("pull requests require human approvals; autonomous merge would stop")
+  fail("required approvals would block merges")
 } else ok("pull requests do not require human approvals")
 if (pull?.parameters?.required_review_thread_resolution !== true) {
   fail("unresolved review threads are not required")
