@@ -260,6 +260,23 @@ export async function notifyIfSmokeFailed(
   return true
 }
 
+const CLEANUP_STEPS = new Set(['post-clip', 'poll-job', 'opds-catalog', 'download-epub', 'verify-epub'])
+
+/** True when a clip POST may already have been accepted, even if no id was recorded. */
+export function smokeMayHavePosted(state: SmokeStateFile | null): boolean {
+  if (state === null) {
+    return true
+  }
+  if (state.outcome === 'skipped') {
+    return false
+  }
+  if (state.jobId !== null || state.articleId !== null || state.outcome === 'passed') {
+    return true
+  }
+  const step = state.failedStep ?? state.step
+  return step !== null && CLEANUP_STEPS.has(step)
+}
+
 export function failureFields(state: SmokeStateFile): SmokeFailureFields {
   return {
     githubSha: state.githubSha,
@@ -269,6 +286,9 @@ export function failureFields(state: SmokeStateFile): SmokeFailureFields {
     lastStage: state.lastStage,
     errorKind: state.errorKind,
     runUrl: state.runUrl,
+    ...(state.outcome !== 'passed' && state.cleanupErrorKind !== null
+      ? { cleanupErrorKind: state.cleanupErrorKind }
+      : {}),
   }
 }
 
@@ -608,7 +628,7 @@ export async function cleanupSmokeArticle(input: {
     input.log?.(redactSmokeText(line, hidden, []))
   }
   const state = input.state
-  if (state === null || (state.jobId === null && state.articleId === null)) {
+  if (!smokeMayHavePosted(state)) {
     log('cleanup: nothing to delete')
     return { ok: true }
   }
@@ -617,7 +637,7 @@ export async function cleanupSmokeArticle(input: {
     return { ok: false, errorKind: 'unset' }
   }
   const ids: string[] = []
-  if (state.articleId !== null && isArticleId(state.articleId)) {
+  if (state !== null && state.articleId !== null && isArticleId(state.articleId)) {
     ids.push(state.articleId)
   }
   if (articleUrl !== null) {

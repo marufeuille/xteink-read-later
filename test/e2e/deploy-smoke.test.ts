@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -51,9 +52,8 @@ describe('deploy smoke against a mock worker', () => {
     const app = createApp({ store, queue })
     const env = {
       ...TEST_BINDINGS,
-      SMOKE_CLIP_TOKEN: TOKEN,
-      SMOKE_OPDS_USERNAME: USER,
-      SMOKE_OPDS_PASSWORD: PASS,
+      SMOKE_CLIP_TOKEN_SHA256: createHash('sha256').update(TOKEN, 'utf8').digest('hex'),
+      SMOKE_OPDS_BASIC_SHA256: createHash('sha256').update(`${USER}:${PASS}`, 'utf8').digest('hex'),
       SMOKE_ARTICLE_URL: DEFAULT_SMOKE_ARTICLE_URL,
       CLIP_QUEUE: queue,
     } as Cloudflare.Env

@@ -186,14 +186,19 @@ jobs:
     needs: [deploy]
     if: ${{ always() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # Step timeouts: checkout 1 + setup 1 + install 3 + run 8 + delete 2 + notify 1 = 16.
+    # The job allows 18 so a full wait, delete, and notify can all finish.
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 1
       - uses: actions/setup-node@v4
+        timeout-minutes: 1
         with:
           node-version: 22
           cache: npm
       - name: Install
+        timeout-minutes: 3
         run: npm ci
       - name: Run deploy smoke
         timeout-minutes: 8
@@ -218,8 +223,8 @@ jobs:
           SMOKE_STATE_PATH: smoke-state.json
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts cleanup
       - name: Notify smoke failure
-        if: failure()
-        timeout-minutes: 2
+        if: ${{ failure() || cancelled() }}
+        timeout-minutes: 1
         env:
           SMOKE_SLACK_WEBHOOK_URL: ${{ secrets.SMOKE_SLACK_WEBHOOK_URL }}
           WORKER_VERSION: ${{ needs.deploy.outputs.worker_version }}
