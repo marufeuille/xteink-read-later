@@ -185,4 +185,9 @@ export type PipelineLog = {
   readonly errorKind?: ErrorKind | ClassifyErrorCode
   /** Set only on the log for a clip job that reached ready or failed. Retries omit it. */
   readonly clipOutcome?: 'ready' | 'failed'
+  /**
+   * Article URL hostname. Present only when a clip failure is final (`clipOutcome` is `failed`)
+   * and the host can be read. Scheme, userinfo, port, path, query, and fragment stay off the log.
+   */
+  readonly hostname?: string
 }

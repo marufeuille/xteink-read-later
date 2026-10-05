@@ -54,14 +54,20 @@ describe('clip outcome logs', () => {
         stage: 'queue',
         errorKind: 'internal_error',
         clipOutcome: 'failed',
+        hostname: 'example.com',
         attempt: CLIP_QUEUE_MAX_RETRIES + 1,
         message: 'pipeline queue failed internal_error',
       }),
     ])
-    expect(internal.filter((entry) => entry.clipOutcome === undefined)).toHaveLength(CLIP_QUEUE_MAX_RETRIES)
+    const retries = internal.filter((entry) => entry.clipOutcome === undefined)
+    expect(retries).toHaveLength(CLIP_QUEUE_MAX_RETRIES)
+    for (const entry of retries) {
+      expect(entry).not.toHaveProperty('hostname')
+    }
     const text = JSON.stringify(internal)
     expect(text).not.toContain('boom secret')
     expect(text).not.toContain('https://')
+    expect(text).not.toContain('/boom')
     expect(text).not.toContain(TEST_CLIP_TOKEN)
 
     const url = parseHttpUrl(pageUrl)

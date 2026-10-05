@@ -2,7 +2,7 @@ import { classifyArticle as defaultClassifyArticle } from '../classify/article'
 import { unavailableClassification } from '../classify/taxonomy'
 import { errorMessage } from '../http/error-response'
 import { shouldProcessClipRun } from '../job/clip'
-import { logPipeline } from '../log'
+import { clipLogHostname, logPipeline } from '../log'
 import { clipPipeline as defaultClipPipeline } from '../pipeline/clip'
 import { OPENAI_MODEL } from '../translate/constants'
 import {
@@ -332,12 +332,18 @@ async function processMessage(
       stages.push(...stagesForRun(existing, parsed.runId))
     }
     const log = { jobId: parsed.jobId, runId: parsed.runId, attempt: message.attempts, stages }
+    const hostname = clipLogHostname(parsed.url)
     logPipeline(
       {
         stage: 'queue',
         durationMs: 0,
         errorKind: 'internal_error',
-        ...(shouldRetryClipAttempt(message.attempts) ? {} : { clipOutcome: 'failed' as const }),
+        ...(shouldRetryClipAttempt(message.attempts)
+          ? {}
+          : {
+              clipOutcome: 'failed' as const,
+              ...(hostname === undefined ? {} : { hostname }),
+            }),
       },
       log,
     )
@@ -482,12 +488,14 @@ async function runClipQueueMessage(
     return clipMessageResult('retry', usage)
   }
 
+  const hostname = clipLogHostname(url)
   logPipeline(
     {
       stage: 'queue',
       durationMs: Date.now() - started,
       errorKind: result.error.kind,
       clipOutcome: 'failed',
+      ...(hostname === undefined ? {} : { hostname }),
     },
     log,
   )

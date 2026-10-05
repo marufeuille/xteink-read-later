@@ -299,7 +299,7 @@ npx wrangler tail --format json | CLIP_TOKEN=… CLIP_BASE_URL="$WORKER" npm run
 - **保存:** 工程は `stage` / `durationMs` / `attempt` / `errorKind` だけ。URL、本文、token は job に残さない。同じ run の再試行は追記する。新しい run は工程を空にして始める。`stages` の無い古い job は空として読む
 - **ライブログ:** `wrangler tail` は接続後の追加分だけ。保存が無い工程は **不明**（未実行や停止ではない）
 - **状態:** job は `queued` / `running` / `ready` / `failed`。再試行待ちは `running` かつ直近の工程に `errorKind` があるとき。工程が無い `running` は **処理中（工程不明）**
-- コンソールログはオブジェクトで出す。載せるのは event / message / stage / durationMs / errorKind / clipOutcome / jobId / runId / attempt / articleId と、候補の選択（candidateId / selectedAt / discoveredAt / publishedAt）および OPDS 取得要求（articleId）。feed の `internal_error` には段階の `failurePoint`（`fetch` / `parse` / `store` / `unknown`）を足す。例外メッセージは出さない。`clipOutcome` は job が `ready` または `failed` になったときだけ。token と記事全文と URL は出さない。日次集計は [docs/workers-logs.md](docs/workers-logs.md)
+- コンソールログはオブジェクトで出す。載せるのは event / message / stage / durationMs / errorKind / clipOutcome / jobId / runId / attempt / articleId と、候補の選択（candidateId / selectedAt / discoveredAt / publishedAt）および OPDS 取得要求（articleId）。feed の `internal_error` には段階の `failurePoint`（`fetch` / `parse` / `store` / `unknown`）を足す。例外メッセージは出さない。`clipOutcome` は job が `ready` または `failed` になったときだけ。失敗が確定したとき（`clipOutcome=failed`）だけ、対象 URL の hostname を足す。path、query、fragment、userinfo、port は出さない。ホスト名が取れなければ付けない。token と記事全文と URL は出さない。日次集計は [docs/workers-logs.md](docs/workers-logs.md)
 
 ```bash
 curl -sS -o clip.json http://localhost:8787/clip \
@@ -311,7 +311,7 @@ curl -sS -H "Authorization: Bearer $CLIP_TOKEN" \
 curl -sS -u "$OPDS_USERNAME:$OPDS_PASSWORD" http://localhost:8787/opds
 ```
 
-ログは stage 別のオブジェクト（`event: pipeline` と `fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。候補の選択は `event: candidate_clip`、OPDS の EPUB 取得要求は `event: opds_download`（読了ではない）。token と記事全文と URL は出さない。英語記事は OpenAI `gpt-5.6-luna` で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。モデル選定のメモは `docs/plan/mar-44-translate-models.md`。
+ログは stage 別のオブジェクト（`event: pipeline` と `fetch` / `extract` / `translate` / `epub` / `store` / `classify` / `queue`）。各工程に同じ `jobId`（任意で `runId` / `attempt`）を付ける。候補の選択は `event: candidate_clip`、OPDS の EPUB 取得要求は `event: opds_download`（読了ではない）。token と記事全文と URL は出さない。失敗が確定した clip ログには hostname だけを足す。英語記事は OpenAI `gpt-5.6-luna` で日本語化し、日本語記事は再翻訳しない。翻訳失敗は job の `failed`（`error.code` / `error.message` のみ。`extracted` は返さない）。分類は Jev（OpenRouter）で話題と種類を `meta.json` に書くだけ。失敗しても掲載は落とさない。分類の詳細は `docs/classification.md`。モデル選定のメモは `docs/plan/mar-44-translate-models.md`。
 
 | 状態 | 意味 |
 | --- | --- |

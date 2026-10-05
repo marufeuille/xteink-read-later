@@ -1,6 +1,6 @@
 import { errorMessage } from '../http/error-response'
 import { isActiveClipJob } from './clip'
-import { logPipeline } from '../log'
+import { clipLogHostname, logPipeline } from '../log'
 import type {
   ArticleStore,
   ClipFailedJob,
@@ -63,8 +63,15 @@ export async function enqueueClipJob(input: {
       kind: 'queue_failed',
       reason: cause instanceof Error ? cause.message : 'queue send failed',
     }
+    const hostname = clipLogHostname(input.url)
     logPipeline(
-      { stage: 'queue', durationMs: Date.now() - started, errorKind: error.kind, clipOutcome: 'failed' },
+      {
+        stage: 'queue',
+        durationMs: Date.now() - started,
+        errorKind: error.kind,
+        clipOutcome: 'failed',
+        ...(hostname === undefined ? {} : { hostname }),
+      },
       queueLog,
     )
     const failed: ClipFailedJob = {

@@ -107,7 +107,15 @@ export function logPipeline(entry: PipelineLog, ctx?: PipelineLogContext): void 
       ...(entry.errorKind === undefined ? {} : { errorKind: entry.errorKind }),
     })
   }
-  writeStructuredLog({ event: 'pipeline', ...pipelineLogFields(ctx), ...entry })
+  // Hostname is indexed only on a terminal clip failure, and only after the same host check as feed logs.
+  const { hostname: rawHostname, ...fields } = entry
+  const hostname = entry.clipOutcome === 'failed' ? indexedLogHostname(rawHostname) : undefined
+  writeStructuredLog({
+    event: 'pipeline',
+    ...pipelineLogFields(ctx),
+    ...fields,
+    ...(hostname === undefined ? {} : { hostname }),
+  })
 }
 
 export type SiteRecoveryLog = {
@@ -251,11 +259,27 @@ function feedIndexHostname(value: string): string | undefined {
   return FEED_HOSTNAME.test(hostname) ? hostname : undefined
 }
 
-export function feedLogHostname(feedUrl: string): string | undefined {
-  if (!URL.canParse(feedUrl)) {
+function indexedLogHostname(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
     return undefined
   }
-  return feedIndexHostname(new URL(feedUrl).hostname)
+  return feedIndexHostname(value)
+}
+
+export function feedLogHostname(feedUrl: string): string | undefined {
+  try {
+    if (typeof feedUrl !== 'string' || !URL.canParse(feedUrl)) {
+      return undefined
+    }
+    return feedIndexHostname(new URL(feedUrl).hostname)
+  } catch {
+    return undefined
+  }
+}
+
+/** Article URL hostname for a terminal clip failure. Same indexed form as `feedLogHostname`. */
+export function clipLogHostname(pageUrl: string): string | undefined {
+  return feedLogHostname(pageUrl)
 }
 
 function finiteByteCount(value: unknown): number | undefined {
