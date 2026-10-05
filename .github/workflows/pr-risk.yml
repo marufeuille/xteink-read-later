@@ -1,4 +1,6 @@
-# Trial: record only. Not a required check and not part of merge-gate.
+# pr-risk-trial records a judgment only. high-risk-review is an optional
+# extra review for high judgments. Neither is a required check and neither
+# is part of merge-gate.
 name: PR risk trial
 
 on:
@@ -95,4 +97,43 @@ jobs:
         with:
           name: pr-risk-replay
           path: pr-risk-replay.jsonl
+          if-no-files-found: ignore
+
+  # Optional. Not a merge-gate need and not a ruleset check.
+  high-risk-review:
+    name: high-risk-review
+    needs: classify
+    if: github.event_name == 'pull_request' && needs.classify.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch PR SHAs
+        run: |
+          git fetch --no-tags origin "${{ github.event.pull_request.base.sha }}"
+          git fetch --no-tags origin "${{ github.event.pull_request.head.sha }}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Download risk judgment
+        uses: actions/download-artifact@v4
+        with:
+          name: pr-risk-judgment
+          path: .
+      - name: Review high-risk changes
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HIGH_RISK_REVIEW: ${{ vars.HIGH_RISK_REVIEW }}
+        run: npm run pr-risk:review
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: high-risk-review
+          path: high-risk-review.json
           if-no-files-found: ignore

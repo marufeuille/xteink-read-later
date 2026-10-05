@@ -288,6 +288,23 @@ export async function listMergedPullNumbers(
     .slice(0, limit)
 }
 
+export async function upsertMatchingComment(
+  api: GitHubIssueCommentApi,
+  owner: string,
+  repo: string,
+  issue: number,
+  body: string,
+  matches: (body: string) => boolean,
+): Promise<'created' | 'updated'> {
+  const existing = (await api.list(owner, repo, issue)).find((comment) => matches(comment.body))
+  if (existing === undefined) {
+    await api.create(owner, repo, issue, body)
+    return 'created'
+  }
+  await api.update(owner, repo, existing.id, body)
+  return 'updated'
+}
+
 export async function upsertPrRiskComment(
   api: GitHubIssueCommentApi,
   owner: string,
@@ -295,12 +312,5 @@ export async function upsertPrRiskComment(
   issue: number,
   judgment: PrRiskJudgment,
 ): Promise<'created' | 'updated'> {
-  const body = formatPrRiskComment(judgment)
-  const existing = (await api.list(owner, repo, issue)).find((comment) => isPrRiskComment(comment.body))
-  if (existing === undefined) {
-    await api.create(owner, repo, issue, body)
-    return 'created'
-  }
-  await api.update(owner, repo, existing.id, body)
-  return 'updated'
+  return upsertMatchingComment(api, owner, repo, issue, formatPrRiskComment(judgment), isPrRiskComment)
 }

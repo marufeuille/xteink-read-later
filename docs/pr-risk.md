@@ -127,7 +127,7 @@ gh workflow run "PR risk trial" -f prs=7,10,13,14,18,21,31,33,34,35,36,39,40
 
 ## 本運用へ移す条件
 
-まだ必須チェックにも追加レビューの自動依頼にもしない。次をすべて満たしたら、別チケットで `high-risk-review` を足す（手順は `docs/github-merge-gates.md`）。
+必須チェックにはまだしない。任意の追加レビュー `high-risk-review` は下の節（[MAR-69](https://linear.app/marufeuille/issue/MAR-69)）。次をすべて満たすのは、それを必須にする前の条件（[MAR-61](https://linear.app/marufeuille/issue/MAR-61)。手順は `docs/github-merge-gates.md`）である。
 
 1. 実 PR を **20 件または 4 週間** 記録した
 2. `hard_rule_misses` が 0 のまま
@@ -146,4 +146,71 @@ GitHub Actions secret に `OPENROUTER_API_KEY` を足す（Worker 用の Cloudfl
 ```bash
 npm run pr-risk:github -- --no-comment
 npm run pr-risk:replay -- --pr 31
+npm run pr-risk:review -- --no-comment
 ```
+
+## 高リスク追加レビュー（MAR-69）
+
+分類の記録とは別に、high と判定した PR だけ OpenRouter の Sol 級モデルで追加レビューする。**必須チェックではない。** `merge-gate` の `needs` にも ruleset にも入っていない。指摘は PR の会話コメントに残すだけで、レビュースレッドは作らない。未解決のレビュースレッドがあるとマージできないため、行コメントにはしない。マージ権限はない。`pull_request_target` は使わない。
+
+ジョブ名は `high-risk-review`（`.github/workflows/pr-risk.yml`）。`pr-risk-trial` が成功した `pull_request` だけで走る。新しいコミットは head SHA が変わるので、同じコメントをその SHA の結果で上書きして再実行する。判定ファイルの head SHA がイベントの head SHA と違うときは、古い結果を無効として API を呼ばない。
+
+### high とみなす条件
+
+既存の判定 JSON の `blockers` だけを見る。`recommendedRoute === additional_review` では呼ばない。
+
+次のどちらかがあるときだけ high。
+
+| blocker | 意味 |
+| --- | --- |
+| `hard_rule` | 固定ルール（auth / secrets / ci_deploy / judgment_rules / data_lifecycle）に当たった |
+| `jev_high` | `change_risk = high` かつ信頼度が 0.85 以上 |
+
+`change_risk = high` でも信頼度が 0.85 未満なら blocker は `low_confidence` であり、`jev_high` ではない。これは対象外。
+
+次だけの `additional_review` は **対象外**。API は呼ばず、コメントと artifact に対象外と書く。文書や CLI が fail-safe で追加レビューになる経路はここ。
+
+- `incomplete_input`（diff が無い、切り詰めた、ファイル数の上限）
+- `jev_skipped`（分類側のキー無し）
+- `jev_failed`（分類 API の失敗や、形の違う応答）
+- `low_confidence`
+- `noul_high`（Noul が 0.4 以上）
+
+低リスク候補（`blockers` が空）も対象外。
+
+### モデル、単価、上限
+
+| 項目 | 内容 |
+| --- | --- |
+| モデル | `openai/gpt-6.1-sol` |
+| 単価の出典 | [GPT-6.1 Sol on OpenRouter](https://openrouter.ai/openai/gpt-6.1-sol)（2026-10-05 確認） |
+| 入力 | US$2.00 / 100万トークン（1トークン US$0.000002） |
+| 出力 | US$10.00 / 100万トークン（1トークン US$0.00001） |
+| 1 head SHA の上限 | US$0.30 |
+| `max_tokens` | 2048 |
+| reasoning | `effort: low`（このモデルは reasoning が必須で、対応する最も低い effort。既定は medium） |
+| 呼び出し | 1 head SHA につき 1 回。通信のリトライはしない |
+
+同じ公開単価（入力 US$2 / 100万、出力 US$10 / 100万）の Sol 級には `openai/gpt-5.6-sol` と `openai/gpt-6-sol` もある。コーディング向けの新しい `openai/gpt-6.1-sol` を選んだ。`openai/gpt-5.6-sol-pro` はトークン単価が同じでも reasoning が増え、上限に当たりやすいので使わない。
+
+呼ぶ前の見積もりは `入力トークン × 0.000002 + max_tokens × 0.00001`。入力トークンは、送る文字列を 1 文字 1 トークンと見なし（日本語の diff でも上限を超えない側に倒す）、メッセージ枠として 32 を足した数。見積もりが US$0.30 を超えるときは diff を短くして再計算する。パスと固定プロンプトだけでも超えるときは呼ばず、理由を残す。
+
+2048 トークンの出力は US$0.02048。残り US$0.27952 が入力に使えるので、この見積もりではおおよそ 14 万文字まで送れる。それを超える diff は打ち切る。
+
+応答後の概算は、API が返した入力・出力トークンに同じ単価を掛けたもの。artifact `high-risk-review.json` と PR コメントに、モデル名、入出力トークン、概算、head SHA を書く。
+
+### 送るもの
+
+変更パスと、切り詰めて伏せ字にした diff だけ。PR 本文、secret の値、環境変数は送らない。`OPENROUTER_API_KEY` は既存の Actions secret を使う。新しい secret は足さない。
+
+### オフ
+
+リポジトリの **Settings → Secrets and variables → Actions → Variables** に `HIGH_RISK_REVIEW` を作り、値を `off` にする。これだけで止まる。ruleset の再適用は要らない。`merge-gate` も触らない。
+
+未設定や空はオン。`off`（大文字小文字は無視し、前後の空白も無視する）はオフ。オフでも、キーが無くても、ジョブは失敗にしない。API は呼ばない。
+
+キーは分類と同じ `OPENROUTER_API_KEY`。無いときはレビュー API を呼ばず成功する。
+
+### 指摘
+
+指摘には箇所（パス）と、diff にある根拠を書く。根拠のある指摘が無ければ、その旨を head SHA 付きで書く。API が失敗してもジョブは成功のままにし、失敗したことと head SHA を残す。

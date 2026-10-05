@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import type { EvaluateSystemOne, JevDeps, PrChangedFile, PrRiskClassifyRequest, PrRiskJudgment } from '../types/index.ts'
+import { openRouterApiKey } from '../jev/client.ts'
 import { classifyPrRisk } from './classify.ts'
 import { judgmentJson } from './comment.ts'
 import { PR_RISK_JUDGMENT_FILENAME } from './constants.ts'
@@ -14,25 +15,40 @@ import {
   listMergedPullNumbers,
   parseRepository,
   pullRequestFromEvent,
+  upsertMatchingComment,
   upsertPrRiskComment,
 } from './github.ts'
 import { classifyRequestFromPull } from './input.ts'
 import { trialSummary } from './replay.ts'
+import {
+  DEFAULT_REVIEW_BUDGET,
+  HIGH_RISK_REVIEW_FILENAME,
+  HIGH_RISK_REVIEW_VARIABLE,
+  executeHighRiskReview,
+  formatHighRiskReviewComment,
+  highRiskReviewJson,
+  isHighRiskReviewComment,
+  reviewJudgmentFromJson,
+  type HighRiskReviewRecord,
+} from './review.ts'
 
 const execFileAsync = promisify(execFile)
 
 export const PR_RISK_USAGE = `使い方:
   npm run pr-risk:github [-- --no-comment] [--output pr-risk-judgment.json]
   npm run pr-risk:replay -- [--limit 20] [--pr 31,35]
+  npm run pr-risk:review [-- --no-comment] [--judgment pr-risk-judgment.json] [--output high-risk-review.json]
 
 github は pull_request の判定を記録するだけ。マージは変えない。
 replay は過去 PR を同じルールで判定し、JSONL と見逃し集計を出す。
+review は high（hard_rule または jev_high）のときだけ追加レビューを 1 回呼ぶ。マージは変えない。
 
 環境変数:
-  OPENROUTER_API_KEY  Jev（OpenRouter）。未設定なら jev_skipped で追加レビュー
-  GITHUB_TOKEN        PR コメント（github）または過去 PR 取得（replay）
-  GITHUB_EVENT_PATH   pull_request イベント JSON
-  GITHUB_REPOSITORY   owner/repo`
+  OPENROUTER_API_KEY   Jev と追加レビュー（OpenRouter）。未設定なら API は呼ばない
+  HIGH_RISK_REVIEW     off なら追加レビューを呼ばない
+  GITHUB_TOKEN         PR コメント（github / review）または過去 PR 取得（replay）
+  GITHUB_EVENT_PATH    pull_request イベント JSON
+  GITHUB_REPOSITORY    owner/repo`
 
 export type PrRiskCliIo = {
   readonly argv: readonly string[]
@@ -59,7 +75,14 @@ type ReplayCommand = {
   readonly prs: readonly number[]
 }
 
-type ParsedArgs = GithubCommand | ReplayCommand | { readonly error: string }
+type ReviewCommand = {
+  readonly command: 'review'
+  readonly noComment: boolean
+  readonly judgmentPath: string
+  readonly output: string
+}
+
+type ParsedArgs = GithubCommand | ReplayCommand | ReviewCommand | { readonly error: string }
 
 function jevDeps(env: NodeJS.Dict<string>): JevDeps {
   return { OPENROUTER_API_KEY: env.OPENROUTER_API_KEY ?? '' }
@@ -100,6 +123,39 @@ function parseGithubArgs(rest: readonly string[]): GithubCommand | { readonly er
     return { error: `不明なオプション: ${arg}` }
   }
   return { command: 'github', noComment, output }
+}
+
+function parseReviewArgs(rest: readonly string[]): ReviewCommand | { readonly error: string } {
+  let noComment = false
+  let judgmentPath = PR_RISK_JUDGMENT_FILENAME
+  let output = HIGH_RISK_REVIEW_FILENAME
+  for (let index = 0; index < rest.length; index += 1) {
+    const arg = rest[index]
+    if (arg === '--no-comment') {
+      noComment = true
+      continue
+    }
+    if (arg === '--judgment') {
+      const value = rest[index + 1]
+      if (value === undefined) {
+        return { error: '--judgment の値がありません' }
+      }
+      judgmentPath = value
+      index += 1
+      continue
+    }
+    if (arg === '--output') {
+      const value = rest[index + 1]
+      if (value === undefined) {
+        return { error: '--output の値がありません' }
+      }
+      output = value
+      index += 1
+      continue
+    }
+    return { error: `不明なオプション: ${arg}` }
+  }
+  return { command: 'review', noComment, judgmentPath, output }
 }
 
 function parseReplayArgs(rest: readonly string[]): ReplayCommand | { readonly error: string } {
@@ -147,6 +203,9 @@ export function parsePrRiskArgs(argv: readonly string[]): ParsedArgs {
   }
   if (command === 'replay') {
     return parseReplayArgs(rest)
+  }
+  if (command === 'review') {
+    return parseReviewArgs(rest)
   }
   return { error: PR_RISK_USAGE }
 }
@@ -239,14 +298,119 @@ async function runReplay(io: PrRiskCliIo, args: ReplayCommand): Promise<number> 
   return 0
 }
 
+function isGitSha(value: string): boolean {
+  return /^[0-9a-f]{7,64}$/i.test(value)
+}
+
+async function readReviewJudgment(io: PrRiskCliIo, path: string): Promise<ReturnType<typeof reviewJudgmentFromJson>> {
+  try {
+    return reviewJudgmentFromJson(JSON.parse(await io.readFile(path)) as unknown)
+  } catch {
+    return null
+  }
+}
+
+async function reviewDiff(
+  io: PrRiskCliIo,
+  baseSha: string,
+  headSha: string,
+): Promise<{ readonly paths: readonly string[]; readonly diff: string | null }> {
+  if (!isGitSha(baseSha) || !isGitSha(headSha)) {
+    return { paths: [], diff: null }
+  }
+  try {
+    const changed = await collectGitChangedFiles(baseSha, headSha, io.execGit)
+    return { paths: changed.files.map((file) => file.path), diff: changed.diff }
+  } catch {
+    return { paths: [], diff: null }
+  }
+}
+
+async function commentHighRiskReview(io: PrRiskCliIo, record: HighRiskReviewRecord, issue: number | null): Promise<void> {
+  if (issue === null) {
+    return
+  }
+  const token = io.env.GITHUB_TOKEN?.trim() ?? ''
+  const repository = parseRepository(io.env.GITHUB_REPOSITORY)
+  if (token.length === 0 || repository === null) {
+    io.stderr.write('GITHUB_TOKEN または GITHUB_REPOSITORY がないのでコメントは省略します\n')
+    return
+  }
+  try {
+    const action = await upsertMatchingComment(
+      createGitHubIssueCommentApi(token, io.fetch),
+      repository.owner,
+      repository.repo,
+      issue,
+      formatHighRiskReviewComment(record),
+      isHighRiskReviewComment,
+    )
+    io.stdout.write(`review comment ${action}\n`)
+  } catch (cause) {
+    io.stderr.write(`コメントの更新に失敗しました: ${cause instanceof Error ? cause.message : String(cause)}\n`)
+  }
+}
+
+async function runReview(io: PrRiskCliIo, args: ReviewCommand): Promise<number> {
+  let eventHeadSha: string | null = null
+  let issue: number | null = null
+  const eventPath = io.env.GITHUB_EVENT_PATH
+  if (eventPath !== undefined && eventPath.trim().length > 0) {
+    try {
+      const payload = JSON.parse(await io.readFile(eventPath)) as unknown
+      const pullRequest = pullRequestFromEvent(payload)
+      if (!('error' in pullRequest)) {
+        eventHeadSha = pullRequest.headSha
+        issue = pullRequest.number
+      }
+    } catch {
+      eventHeadSha = null
+    }
+  }
+  const judgment = await readReviewJudgment(io, args.judgmentPath)
+  const baseSha = judgment?.baseSha ?? ''
+  const changed =
+    judgment === null ? { paths: [], diff: null } : await reviewDiff(io, baseSha, eventHeadSha ?? judgment.headSha)
+  const paths = changed.paths.length > 0 ? changed.paths : (judgment?.files ?? [])
+  const record = await executeHighRiskReview({
+    judgment,
+    eventHeadSha,
+    paths,
+    diff: changed.diff,
+    reviewSwitch: io.env[HIGH_RISK_REVIEW_VARIABLE] ?? null,
+    apiKey: openRouterApiKey({ OPENROUTER_API_KEY: io.env.OPENROUTER_API_KEY ?? '' }),
+    recordedAt: io.now().toISOString(),
+    budget: DEFAULT_REVIEW_BUDGET,
+    fetchImpl: io.fetch,
+  })
+  await io.writeFile(args.output, highRiskReviewJson(record))
+  io.stdout.write(
+    `${record.status} sha=${record.headSha} called=${record.called} cost=${record.estimatedCostUsd ?? 'none'}\n`,
+  )
+  if (!args.noComment) {
+    await commentHighRiskReview(io, record, issue)
+  }
+  return 0
+}
+
 export async function runPrRiskCli(io: PrRiskCliIo): Promise<number> {
   const args = parsePrRiskArgs(io.argv)
   if ('error' in args) {
     return writeError(io, args.error)
   }
   try {
-    return args.command === 'github' ? await runGithub(io, args) : await runReplay(io, args)
+    if (args.command === 'github') {
+      return await runGithub(io, args)
+    }
+    if (args.command === 'replay') {
+      return await runReplay(io, args)
+    }
+    return await runReview(io, args)
   } catch (cause) {
+    if (args.command === 'review') {
+      io.stderr.write(`${cause instanceof Error ? cause.message : String(cause)}\n`)
+      return 0
+    }
     return writeError(io, cause instanceof Error ? cause.message : String(cause))
   }
 }
