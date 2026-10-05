@@ -1,15 +1,30 @@
-import { registerCandidate } from '../candidates/register'
-import { RECOMMEND_MAX_CALLS_PER_FEED_ITEM } from '../recommend/taxonomy'
+import {
+  registerCandidate,
+  type RegisteredCandidateMaterial,
+} from '../candidates/register'
+import {
+  logResolvedRecommendation,
+  resolveDeRecommendation,
+  type ResolveRecommendResult,
+} from '../candidates/recommend'
+import {
+  RECOMMEND_MAX_CALLS_PER_EVALUATION,
+  RECOMMEND_MAX_CALLS_PER_FEED_ITEM,
+  failedRecommendation,
+} from '../recommend/taxonomy'
 import {
   candidateFeedSourceKind,
   COLLECT_TIME_BUDGET_MS,
   MAX_FEED_ITEMS,
+  type CandidateArticle,
   type CandidateStore,
+  type EvaluateSystemOne,
   type FeedCollectionResult,
   type FeedRunId,
   type FeedSource,
   type FetchFeed,
   type FetchPage,
+  type JevDeps,
 } from '../types'
 import { runFeedStage } from './failure-point'
 import { parseFeed } from './parse'
@@ -23,6 +38,8 @@ export type CollectFeedDeps = {
   readonly maxItems?: number
   readonly timeBudgetMs?: number
   readonly deadlineMs?: number
+  readonly jevDeps?: JevDeps
+  readonly evaluateRecommend?: EvaluateSystemOne
 }
 
 export async function collectFeed(
@@ -76,6 +93,7 @@ export async function collectFeed(
   const maxItems = deps.maxItems ?? MAX_FEED_ITEMS
   const deadline = deps.deadlineMs ?? Date.now() + (deps.timeBudgetMs ?? COLLECT_TIME_BUDGET_MS)
   const sourceKind = candidateFeedSourceKind(source.id)
+  const pending: RegisteredCandidateMaterial[] = []
   let itemsRegistered = 0
   let itemsDuplicate = 0
   let itemsSkipped = 0
@@ -93,7 +111,12 @@ export async function collectFeed(
         fetchPage: deps.fetchPage,
         now,
         sourceKind,
+        // Keep Jev out of this loop. The deadline above is page-fetch time only.
         maxJevCalls: RECOMMEND_MAX_CALLS_PER_FEED_ITEM,
+        deferRecommendation: true,
+        onRegistered: (material) => {
+          pending.push(material)
+        },
       }),
     )
     if (!registered.ok) {
@@ -107,6 +130,11 @@ export async function collectFeed(
     }
   }
 
+  // Judgment is a separate step. A slow Jev call must not skip later items.
+  for (const material of pending) {
+    await runFeedStage('store', () => judgeCollectedCandidate(material, deps))
+  }
+
   return {
     sourceId: source.id,
     runId,
@@ -117,4 +145,59 @@ export async function collectFeed(
     itemsDuplicate,
     itemsSkipped,
   }
+}
+
+function hasExtractedBody(extractedHtml: string | null): boolean {
+  return extractedHtml !== null && extractedHtml.trim().length > 0
+}
+
+async function judgeCollectedCandidate(
+  material: RegisteredCandidateMaterial,
+  deps: CollectFeedDeps,
+): Promise<void> {
+  const current = await deps.candidateStore.getById(material.candidate.id)
+  if (current === null) {
+    return
+  }
+  const now = (deps.now ?? (() => new Date()))()
+  let resolved: ResolveRecommendResult
+  try {
+    resolved = await resolveDeRecommendation({
+      existing: current.recommendation,
+      extractedHtml: material.extractedHtml,
+      title: current.title,
+      outlet: current.outlet,
+      canonicalUrl: current.canonicalUrl,
+      paywalled: material.paywalled,
+      now,
+      budget: { remainingCalls: RECOMMEND_MAX_CALLS_PER_EVALUATION },
+      ...(deps.jevDeps === undefined ? {} : { jevDeps: deps.jevDeps }),
+      ...(deps.evaluateRecommend === undefined ? {} : { evaluate: deps.evaluateRecommend }),
+    })
+  } catch {
+    // One thrown judgment must not drop the candidate or fail the collection.
+    // Failed stays retryable on a later collection. This pass does not call again.
+    if (material.paywalled || !hasExtractedBody(material.extractedHtml)) {
+      return
+    }
+    resolved = {
+      recommendation: failedRecommendation({
+        excerptHash: current.recommendation.excerptHash,
+        evaluatedAt: now.toISOString(),
+        errorCode: 'recommend_internal',
+      }),
+      reused: false,
+      budgetSkippedUnevaluated: false,
+    }
+  }
+  if (resolved.budgetSkippedUnevaluated) {
+    return
+  }
+  const updated: CandidateArticle = {
+    ...current,
+    recommendation: resolved.recommendation,
+    updatedAt: now.toISOString(),
+  }
+  await deps.candidateStore.put(updated)
+  logResolvedRecommendation(updated, resolved)
 }
