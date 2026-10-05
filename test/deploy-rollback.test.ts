@@ -690,6 +690,48 @@ describe('deploy rollback', () => {
     expect(readDeployDiff('0'.repeat(40), SHA).diffKnown).toBe(false)
   })
 
+  it('skips rollback when a well-formed sha is not in the checkout', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'rollback-unknown-sha-'))
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'test',
+      GIT_AUTHOR_EMAIL: 'dev@localhost',
+      GIT_COMMITTER_NAME: 'test',
+      GIT_COMMITTER_EMAIL: 'dev@localhost',
+    }
+    const git = (args: readonly string[]) => {
+      const run = spawnSync('git', [...args], { cwd: repo, env: gitEnv, encoding: 'utf8' })
+      expect(run.status, run.stderr).toBe(0)
+      return run.stdout.trim()
+    }
+    git(['init', '-b', 'main'])
+    writeFileSync(join(repo, 'src.txt'), 'a\n')
+    git(['add', 'src.txt'])
+    git(['commit', '-m', 'A'])
+    const head = git(['rev-parse', 'HEAD'])
+    const missing = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+    expect(missing).toMatch(/^[0-9a-f]{40}$/)
+    expect(missing).not.toBe(head)
+    const absent = spawnSync('git', ['cat-file', '-e', missing], { cwd: repo, env: gitEnv, encoding: 'utf8' })
+    expect(absent.status).not.toBe(0)
+
+    const diff = readDeployDiff(missing, head, repo)
+    expect(diff).toEqual({ paths: [], wranglerBefore: null, wranglerAfter: null, diffKnown: false })
+    const alsoMissingHead = readDeployDiff(head, missing, repo)
+    expect(alsoMissingHead.diffKnown).toBe(false)
+
+    const { result, rollback, verify } = await decide({ diff })
+    expect(rollback).not.toHaveBeenCalled()
+    expect(verify).not.toHaveBeenCalled()
+    expect(result.result).toBe('skipped:unknown_diff')
+    expect(result.notified).toBe(true)
+    expect(result.exitCode).toBe(0)
+    expect(result.rolledBack).toBe(false)
+    expect(result.message).toContain('result=skipped:unknown_diff')
+    expect(result.message).toContain('verify=-')
+    expect(result.message).not.toContain(ROLLBACK_REVERT_NOTE)
+  })
+
   it('exports smoke outcome fields without extra state', () => {
     expect(
       smokeResultOutputs({

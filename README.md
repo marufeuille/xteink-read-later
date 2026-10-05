@@ -339,7 +339,7 @@ npm run typecheck
 
 `npm test` は単体と、fixture + OpenAI モックの E2E。実 `OPENAI_API_KEY` もライブの記事取得も不要。
 
-GitHub Actions が pull request と `main` への push で install / typecheck / 単体 / E2E を回す。**マージしてよい判断基準は CI が緑であること。** `main` ではそのジョブが通ったあとだけ Worker をデプロイする。PR のリスク分類試行（記録のみ）は `docs/pr-risk.md`。
+GitHub Actions が pull request と `main` への push で install / typecheck / 単体 / E2E を回す。マージしてよいかは [AGENTS.md](AGENTS.md) と [docs/github-merge-gates.md](docs/github-merge-gates.md)。CI や `merge-gate` が緑であることだけではマージしない。`main` では、入った変更に対するチェックが通ったあとだけ Worker をデプロイする。PR のリスク分類試行（記録のみ）は `docs/pr-risk.md`。
 
 任意のライブ E2E（実ネットワーク。英語記事は OpenAI が必要）はローカル限定:
 
@@ -363,7 +363,7 @@ npm run translate:bakeoff
 
 `main` への push / merge で GitHub Actions が `wrangler deploy` する。日常のデプロイにローカルの `npm run deploy` は使わない。Workers Paid を前提（`limits.cpu_ms = 30000`）。秘密情報はソースにも Git にも入れない。
 
-CI の `typecheck, unit, e2e` が失敗した run ではデプロイジョブは走らない。**マージしてよいのはそのチェックが緑のときだけ。**
+CI の `typecheck, unit, e2e` が失敗した run ではデプロイジョブは走らない。`main` へ入ったあと、デプロイはそのチェックが成功したときだけ走る。
 
 ### 初回だけ — Cloudflare 側（Workers Secret）
 
