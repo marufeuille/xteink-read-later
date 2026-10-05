@@ -372,6 +372,7 @@ async function runReview(io: PrRiskCliIo, args: ReviewCommand): Promise<number> 
   const changed =
     judgment === null ? { paths: [], diff: null } : await reviewDiff(io, baseSha, eventHeadSha ?? judgment.headSha)
   const paths = changed.paths.length > 0 ? changed.paths : (judgment?.files ?? [])
+  const priorComments = await listReviewCommentBodies(io, issue, args.noComment)
   const record = await executeHighRiskReview({
     judgment,
     eventHeadSha,
@@ -382,15 +383,40 @@ async function runReview(io: PrRiskCliIo, args: ReviewCommand): Promise<number> 
     recordedAt: io.now().toISOString(),
     budget: DEFAULT_REVIEW_BUDGET,
     fetchImpl: io.fetch,
+    priorComments,
   })
   await io.writeFile(args.output, highRiskReviewJson(record))
   io.stdout.write(
     `${record.status} sha=${record.headSha} called=${record.called} cost=${record.estimatedCostUsd ?? 'none'}\n`,
   )
-  if (!args.noComment) {
+  if (!args.noComment && record.status !== 'already_called') {
     await commentHighRiskReview(io, record, issue)
   }
   return 0
+}
+
+async function listReviewCommentBodies(
+  io: PrRiskCliIo,
+  issue: number | null,
+  noComment: boolean,
+): Promise<readonly string[]> {
+  if (noComment || issue === null) {
+    return []
+  }
+  const token = io.env.GITHUB_TOKEN?.trim() ?? ''
+  const repository = parseRepository(io.env.GITHUB_REPOSITORY)
+  if (token.length === 0 || repository === null) {
+    return []
+  }
+  try {
+    const comments = await createGitHubIssueCommentApi(token, io.fetch).list(repository.owner, repository.repo, issue)
+    return comments.map((comment) => comment.body)
+  } catch (cause) {
+    io.stderr.write(
+      `既存のレビューコメントを読めなかったので、呼び出し済みかは見ていません。${cause instanceof Error ? cause.message : String(cause)}\n`,
+    )
+    return []
+  }
 }
 
 export async function runPrRiskCli(io: PrRiskCliIo): Promise<number> {

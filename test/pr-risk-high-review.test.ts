@@ -9,11 +9,13 @@ import {
   HIGH_RISK_REVIEW_MAX_TOKENS,
   HIGH_RISK_REVIEW_MODEL,
   HIGH_RISK_REVIEW_PRICING_URL,
+  commentRecordsReviewCall,
   estimateReviewCostUsd,
   executeHighRiskReview,
   fitReviewPrompt,
   formatHighRiskReviewComment,
   highRiskReviewEnabled,
+  highRiskReviewJson,
   isHighRiskReviewComment,
   isHighRiskReviewTarget,
   reviewJudgmentFromJson,
@@ -197,6 +199,35 @@ describe('high-risk review routing', () => {
     expect(comment).toContain('マージの可否は変えません')
   })
 
+  it('records empty model output separately from no findings', async () => {
+    const record = await executeHighRiskReview(
+      run({
+        fetchImpl: async () => reviewResponse('   '),
+      }),
+    )
+    expect(record.status).toBe('empty_output')
+    expect(record.called).toBe(true)
+    expect(record.findings).toEqual([])
+    const comment = formatHighRiskReviewComment(record)
+    expect(comment).toContain(`モデル出力が空でした（head SHA \`${HEAD}\`）`)
+    expect(comment).toContain('指摘としては扱っていません')
+    expect(comment).not.toContain('指摘はありません')
+  })
+
+  it('records unparseable model output separately from no findings', async () => {
+    const record = await executeHighRiskReview(
+      run({
+        fetchImpl: async () => reviewResponse('not json at all'),
+      }),
+    )
+    expect(record.status).toBe('unparseable')
+    expect(record.called).toBe(true)
+    expect(record.findings).toEqual([])
+    const comment = formatHighRiskReviewComment(record)
+    expect(comment).toContain(`モデル出力を指摘として読めませんでした（head SHA \`${HEAD}\`）`)
+    expect(comment).not.toContain('指摘はありません')
+  })
+
   it('drops findings that have no location or evidence', async () => {
     const record = await executeHighRiskReview(
       run({
@@ -373,6 +404,38 @@ describe('high-risk review routing', () => {
     expect(comment).toContain('[REDACTED]')
     expect(comment).toContain('src/http/auth.ts')
   })
+
+  it('redacts secret-like values in the review artifact the same way as the comment', () => {
+    const record = reviewedRecord({
+      reason: 'saw sk-supersecretvalue123 in the diff',
+      findings: [
+        {
+          location: 'src/http/auth.ts',
+          evidence: 'key sk-supersecretvalue123 was committed',
+          detail: 'remove it',
+        },
+      ],
+    })
+    const json = highRiskReviewJson(record)
+    expect(json).not.toContain('sk-supersecretvalue123')
+    expect(json).toContain('[REDACTED]')
+    expect(json).toContain('src/http/auth.ts')
+    expect(JSON.parse(json)).toMatchObject({ status: 'reviewed', headSha: HEAD })
+  })
+
+  it('counts a call only when this SHA already has a called comment', () => {
+    const called = formatHighRiskReviewComment(
+      reviewedRecord({
+        findings: [{ location: 'src/http/auth.ts', evidence: 'checkToken() が削除されている', detail: '' }],
+      }),
+    )
+    expect(commentRecordsReviewCall(called, HEAD)).toBe(true)
+    expect(commentRecordsReviewCall(called, OTHER)).toBe(false)
+    const notCalled = formatHighRiskReviewComment(
+      reviewedRecord({ status: 'out_of_scope', called: false, reason: '対象外です。' }),
+    )
+    expect(commentRecordsReviewCall(notCalled, HEAD)).toBe(false)
+  })
 })
 
 describe('high-risk review CLI', () => {
@@ -514,6 +577,62 @@ describe('high-risk review CLI', () => {
     expect(comments[0]?.body).toContain(head)
     expect(comments[0]?.body).not.toContain(OTHER)
   })
+
+  it('second run on the same SHA does not call the API', async () => {
+    const comments: { id: number; body: string }[] = []
+    let openRouterCalls = 0
+    let commentWrites = 0
+    const files = new Map<string, string>()
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input)
+      if (url.includes('openrouter.ai')) {
+        openRouterCalls += 1
+        return reviewResponse(
+          JSON.stringify({
+            findings: [{ location: 'src/http/auth.ts', evidence: 'first finding', detail: 'first' }],
+          }),
+        )
+      }
+      if (url.endsWith('/issues/69/comments?per_page=100') && init?.method === 'GET') {
+        return Response.json(comments)
+      }
+      if (url.endsWith('/issues/69/comments') && init?.method === 'POST') {
+        commentWrites += 1
+        const body = JSON.parse(String(init.body)) as { body: string }
+        comments.push({ id: 9, body: body.body })
+        return Response.json({ id: 9 })
+      }
+      if (url.includes('/issues/comments/') && (init?.method === 'PATCH' || init?.method === 'POST')) {
+        commentWrites += 1
+        throw new Error('must not replace the call record')
+      }
+      throw new Error(`${init?.method ?? 'GET'} ${url}`)
+    }
+    const io = (): PrRiskCliIo =>
+      reviewIo({
+        env: { HIGH_RISK_REVIEW: '', OPENROUTER_API_KEY: API_KEY, blockers: ['hard_rule'] },
+        files,
+        fetchImpl,
+      })
+
+    expect(await runPrRiskCli(io())).toBe(0)
+    expect(openRouterCalls).toBe(1)
+    expect(commentWrites).toBe(1)
+    const first = comments[0]?.body ?? ''
+    expect(first).toContain(`sha=${HEAD} `)
+    expect(first).toContain('| API | 呼んだ |')
+    expect(first).toContain('first finding')
+
+    expect(await runPrRiskCli(io())).toBe(0)
+    expect(openRouterCalls).toBe(1)
+    expect(commentWrites).toBe(1)
+    expect(comments).toHaveLength(1)
+    expect(comments[0]?.body).toBe(first)
+    const written = JSON.parse(files.get(HIGH_RISK_REVIEW_FILENAME) ?? '{}') as HighRiskReviewRecord
+    expect(written.status).toBe('already_called')
+    expect(written.called).toBe(false)
+    expect(written.reason).toContain('再度は呼びません')
+  })
 })
 
 describe('high-risk review docs', () => {
@@ -531,6 +650,10 @@ describe('high-risk review docs', () => {
     expect(doc).toContain('jev_high')
     expect(doc).toContain('対象外')
     expect(doc).toContain('https://linear.app/marufeuille/issue/MAR-69')
+    expect(doc).toContain('US$2.50')
+    expect(doc).toContain('9 件')
+    expect(doc).toContain('head SHA の累計ではない')
+    expect(doc).not.toContain('1 head SHA')
     expect(estimateReviewCostUsd(0, HIGH_RISK_REVIEW_MAX_TOKENS, DEFAULT_REVIEW_BUDGET)).toBeLessThan(
       HIGH_RISK_REVIEW_COST_CAP_USD,
     )

@@ -62,6 +62,9 @@ export type HighRiskReviewStatus =
   | 'api_error'
   | 'missing_judgment'
   | 'stale_judgment'
+  | 'already_called'
+  | 'empty_output'
+  | 'unparseable'
 
 export type HighRiskFinding = {
   readonly location: string
@@ -111,6 +114,7 @@ export type HighRiskReviewRun = {
   readonly recordedAt: string
   readonly budget: ReviewBudget
   readonly fetchImpl: typeof fetch
+  readonly priorComments?: readonly string[]
 }
 
 type CallResult =
@@ -131,6 +135,9 @@ const STATUS_LABEL: Readonly<Record<HighRiskReviewStatus, string>> = {
   api_error: 'API 失敗',
   missing_judgment: '判定なし',
   stale_judgment: '古い判定',
+  already_called: '呼び出し済み',
+  empty_output: '出力が空',
+  unparseable: '出力を解釈できない',
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -155,6 +162,10 @@ export function highRiskReviewEnabled(value: string | null): boolean {
 
 export function isHighRiskReviewTarget(blockers: readonly string[]): boolean {
   return blockers.includes('hard_rule') || blockers.includes('jev_high')
+}
+
+export function commentRecordsReviewCall(body: string, headSha: string): boolean {
+  return body.includes(`${HIGH_RISK_REVIEW_COMMENT_MARKER} sha=${headSha} `) && body.includes('| API | 呼んだ |')
 }
 
 export function estimateTextTokens(text: string, charsPerToken: number): number {
@@ -473,13 +484,7 @@ async function callReviewModel(
   }
 }
 
-function reviewedReason(findings: readonly HighRiskFinding[], unparsed: boolean, empty: boolean): string {
-  if (unparsed) {
-    return 'モデルの出力を指摘として採用できませんでした。根拠のある指摘はありません。'
-  }
-  if (empty) {
-    return 'モデル出力が空でした。指摘はありません。'
-  }
+function reviewedReason(findings: readonly HighRiskFinding[]): string {
   if (findings.length === 0) {
     return '指摘はありません。'
   }
@@ -525,13 +530,24 @@ export async function executeHighRiskReview(run: HighRiskReviewRun): Promise<Hig
     )
   }
 
+  const judgment = run.judgment
+  if ((run.priorComments ?? []).some((body) => commentRecordsReviewCall(body, judgment.headSha))) {
+    return idle(
+      run,
+      judgment.headSha,
+      judgment.baseSha,
+      'already_called',
+      'この head SHA ではレビュー API を呼んだ記録があるので、再度は呼びません。',
+    )
+  }
+
   const paths = run.paths.length > 0 ? run.paths : run.judgment.files
   const fitted = fitReviewPrompt({ paths, diff: run.diff ?? '', budget: run.budget })
   if (fitted.skip) {
     return baseRecord(run, run.judgment.headSha, run.judgment.baseSha, {
       status: 'skipped_cost',
       called: false,
-      reason: `呼ぶ前の見積もりが 1 head SHA あたりの上限 US$${run.budget.costCapUsd} を超えるので、レビュー API は呼びません。`,
+      reason: `呼ぶ前の見積もりが 1 回の呼び出しあたりの上限 US$${run.budget.costCapUsd} を超えるので、レビュー API は呼びません。`,
       inputTokens: fitted.inputTokens,
       outputTokens: null,
       estimatedCostUsd: fitted.preCallCostUsd,
@@ -558,22 +574,40 @@ export async function executeHighRiskReview(run: HighRiskReviewRun): Promise<Hig
     })
   }
 
-  const parsed = parseFindings(called.content)
   const inputTokens = called.inputTokens ?? fitted.inputTokens
   const outputTokens = called.outputTokens
   const estimatedCostUsd =
     outputTokens === null ? fitted.preCallCostUsd : estimateReviewCostUsd(inputTokens, outputTokens, run.budget)
   const missingDiff = run.diff === null ? ' git diff は取れなかったので、パスだけを送りました。' : ''
-  return baseRecord(run, run.judgment.headSha, run.judgment.baseSha, {
-    status: 'reviewed',
-    called: true,
-    reason: `${reviewedReason(parsed.findings, parsed.unparsed, called.content.trim().length === 0)}${missingDiff}`,
+  const usageFields = {
+    called: true as const,
     inputTokens,
     outputTokens,
     estimatedCostUsd,
     preCallCostUsd: fitted.preCallCostUsd,
     diffCharsSent: fitted.diffCharsSent,
     truncatedForCost: fitted.truncatedForCost,
+    findings: [] as readonly HighRiskFinding[],
+  }
+  if (called.content.trim().length === 0) {
+    return baseRecord(run, run.judgment.headSha, run.judgment.baseSha, {
+      ...usageFields,
+      status: 'empty_output',
+      reason: `モデル出力が空でした。指摘としては扱っていません。${missingDiff}`,
+    })
+  }
+  const parsed = parseFindings(called.content)
+  if (parsed.unparsed) {
+    return baseRecord(run, run.judgment.headSha, run.judgment.baseSha, {
+      ...usageFields,
+      status: 'unparseable',
+      reason: `モデル出力を指摘として読めませんでした。${missingDiff}`,
+    })
+  }
+  return baseRecord(run, run.judgment.headSha, run.judgment.baseSha, {
+    ...usageFields,
+    status: 'reviewed',
+    reason: `${reviewedReason(parsed.findings)}${missingDiff}`,
     findings: parsed.findings,
   })
 }
@@ -587,6 +621,12 @@ function usdCell(value: number | null): string {
 }
 
 function findingsMarkdown(record: HighRiskReviewRecord): string {
+  if (record.status === 'empty_output') {
+    return `モデル出力が空でした（head SHA \`${record.headSha}\`）。指摘としては扱っていません。`
+  }
+  if (record.status === 'unparseable') {
+    return `モデル出力を指摘として読めませんでした（head SHA \`${record.headSha}\`）。`
+  }
   if (record.findings.length === 0) {
     return `指摘はありません（head SHA \`${record.headSha}\`）。`
   }
@@ -630,5 +670,5 @@ export function isHighRiskReviewComment(body: string): boolean {
 }
 
 export function highRiskReviewJson(record: HighRiskReviewRecord): string {
-  return `${JSON.stringify(record, null, 2)}\n`
+  return `${redactSecrets(JSON.stringify(record, null, 2))}\n`
 }

@@ -153,7 +153,9 @@ npm run pr-risk:review -- --no-comment
 
 分類の記録とは別に、high と判定した PR だけ OpenRouter の Sol 級モデルで追加レビューする。**必須チェックではない。** `merge-gate` の `needs` にも ruleset にも入っていない。指摘は PR の会話コメントに残すだけで、レビュースレッドは作らない。未解決のレビュースレッドがあるとマージできないため、行コメントにはしない。マージ権限はない。`pull_request_target` は使わない。
 
-ジョブ名は `high-risk-review`（`.github/workflows/pr-risk.yml`）。`pr-risk-trial` が成功した `pull_request` だけで走る。新しいコミットは head SHA が変わるので、同じコメントをその SHA の結果で上書きして再実行する。判定ファイルの head SHA がイベントの head SHA と違うときは、古い結果を無効として API を呼ばない。
+ジョブ名は `high-risk-review`（`.github/workflows/pr-risk.yml`）。`pr-risk-trial` が成功した `pull_request` の `opened` / `synchronize` / `reopened` / `ready_for_review` だけで走る。本文やタイトルの `edited` では workflow 自体を走らせない。
+
+費用上限 US$0.30 は、API を呼ぶその 1 回の見積もり上限である。head SHA の累計ではない。同じ head SHA で、会話コメントにその SHA の呼び出し記録（`<!-- high-risk-review sha=` と「API を呼んだ」）が既にあるときは、もう呼ばない。コメントは上書きしないので、その記録は残る。新しいコミットは head SHA が変わるので、high ならもう一度呼び、コメントをその SHA の結果で置き換える。判定ファイルの head SHA がイベントの head SHA と違うときも、古い結果は無効として API を呼ばない。
 
 ### high とみなす条件
 
@@ -178,6 +180,8 @@ npm run pr-risk:review -- --no-comment
 
 低リスク候補（`blockers` が空）も対象外。
 
+workflow の replay 既定 13 件（#7, #10, #13, #14, #18, #21, #31, #33, #34, #35, #36, #39, #40）を、MAR-68 の replay（[Actions run 35505906619](https://github.com/marufeuille/xteink-read-later/actions/runs/35505906619)、`hard_rule=9`、`low_risk=1`）の blockers で見ると、`hard_rule` または `jev_high` は **9 件**（#7, #10, #13, #14, #18, #31, #33, #35, #39）である。残り 4 件は対象外で API は呼ばない。#21、#34、#40 は fail-safe だけ（`low_confidence` や `noul_high`、一部は `incomplete_input`）。#36 は低リスク候補。`additional_review` の 12 件全部は呼ばない。
+
 ### モデル、単価、上限
 
 | 項目 | 内容 |
@@ -186,14 +190,15 @@ npm run pr-risk:review -- --no-comment
 | 単価の出典 | [GPT-6.1 Sol on OpenRouter](https://openrouter.ai/openai/gpt-6.1-sol)（2026-10-05 確認） |
 | 入力 | US$2.00 / 100万トークン（1トークン US$0.000002） |
 | 出力 | US$10.00 / 100万トークン（1トークン US$0.00001） |
-| 1 head SHA の上限 | US$0.30 |
+| 1 回の上限 | US$0.30（この呼び出しの見積もり。head SHA の累計ではない） |
 | `max_tokens` | 2048 |
 | reasoning | `effort: low`（このモデルは reasoning が必須で、対応する最も低い effort。既定は medium） |
-| 呼び出し | 1 head SHA につき 1 回。通信のリトライはしない |
+| 同じ SHA | その SHA で API を呼んだコメントがあれば、もう呼ばない |
+| 呼び出し | 通信のリトライはしない |
 
 同じ公開単価（入力 US$2 / 100万、出力 US$10 / 100万）の Sol 級には `openai/gpt-5.6-sol` と `openai/gpt-6-sol` もある。コーディング向けの新しい `openai/gpt-6.1-sol` を選んだ。`openai/gpt-5.6-sol-pro` はトークン単価が同じでも reasoning が増え、上限に当たりやすいので使わない。
 
-呼ぶ前の見積もりは `入力トークン × 0.000002 + max_tokens × 0.00001`。入力トークンは、送る文字列を 1 文字 1 トークンと見なし（日本語の diff でも上限を超えない側に倒す）、メッセージ枠として 32 を足した数。見積もりが US$0.30 を超えるときは diff を短くして再計算する。パスと固定プロンプトだけでも超えるときは呼ばず、理由を残す。
+呼ぶ前の見積もりは `入力トークン × 0.000002 + max_tokens × 0.00001`。入力トークンは、送る文字列を 1 文字 1 トークンと見なし（日本語の diff でも上限を超えない側に倒す）、メッセージ枠として 32 を足した数。見積もりが US$0.30 を超えるときは diff を短くして再計算する。パスと固定プロンプトだけでも超えるときは呼ばず、理由を残す。cache write（US$2.50 / 100万トークン）はこの見積もりに入れていない。OpenRouter が入力をキャッシュへ書くと、その分は別料金になる。
 
 2048 トークンの出力は US$0.02048。残り US$0.27952 が入力に使えるので、この見積もりではおおよそ 14 万文字まで送れる。それを超える diff は打ち切る。
 
@@ -213,4 +218,4 @@ npm run pr-risk:review -- --no-comment
 
 ### 指摘
 
-指摘には箇所（パス）と、diff にある根拠を書く。根拠のある指摘が無ければ、その旨を head SHA 付きで書く。API が失敗してもジョブは成功のままにし、失敗したことと head SHA を残す。
+指摘には箇所（パス）と、diff にある根拠を書く。根拠のある指摘が無ければ、その旨を head SHA 付きで書く。モデル出力が空のとき、または指摘の JSON として読めないときは「指摘はありません」にはしない。空ならその旨、読めなければ読めなかった旨を head SHA 付きで書く。API が失敗してもジョブは成功のままにし、失敗したことと head SHA を残す。

@@ -20,6 +20,8 @@ describe('pr-risk trial isolation', () => {
     expect(workflow).toContain('record')
     expect(workflow).toContain('\n  workflow_dispatch:\n')
     expect(workflow).not.toContain('pull_request_target')
+    expect(workflow).not.toContain('edited')
+    expect(workflow).toContain('types: [opened, synchronize, reopened, ready_for_review]')
     expect(classify).toContain("if: github.event_name == 'pull_request'")
     expect(classify).toContain('name: pr-risk-trial')
     expect(replay).toContain("if: github.event_name == 'workflow_dispatch'")
