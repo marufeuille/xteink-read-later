@@ -591,6 +591,10 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
     if (resolved === null || inner.length === 0) {
       return inner
     }
+    // An image-only link would become `[X3IMG:n:…](url)`, which is not a placeholder line.
+    if (isStandaloneImagePlaceholder(inner)) {
+      return `\n\n${inner}\n\n`
+    }
     return `[${inner}](${resolved})`
   }
 
@@ -607,6 +611,10 @@ function markdownNode(node: Node, ctx: SerializeCtx): string {
   }
 
   return markdownChildren(node, tag === 'code' || tag === 'pre' ? { ...ctx, inPre: true } : ctx)
+}
+
+function isStandaloneImagePlaceholder(value: string): boolean {
+  return !value.includes('\n') && x3ImageFromLine(value) !== null
 }
 
 function rootCtx(base: HttpUrl): SerializeCtx {

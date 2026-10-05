@@ -38,6 +38,14 @@ describe('splitMarkdownForTranslation', () => {
     expect(marker.endsWith('|')).toBe(true)
   })
 
+  it('keeps a link-wrapped image placeholder unsplittable', () => {
+    const marker = x3ImageMarker(1, 'https://example.com/diagram.png')
+    const wrapped = `[${marker}](https://example.com/lightbox)`
+    const markdown = `${'a'.repeat(50)}\n\n${wrapped}\n\n${'b'.repeat(50)}`
+    const chunks = splitMarkdownForTranslation(markdown, 80)
+    expect(chunks.filter((chunk) => chunk.includes('X3IMG:'))).toEqual([wrapped])
+  })
+
   it('keeps a pipe table together', () => {
     const table = '| name | value |\n| --- | --- |\n| compatibility_date | 2026-09-19 |'
     const markdown = `${'a'.repeat(40)}\n\n${table}\n\n${'b'.repeat(40)}`

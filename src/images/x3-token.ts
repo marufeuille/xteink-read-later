@@ -22,14 +22,21 @@ export function x3ImageMarker(index: number, url: string): string {
 }
 
 /**
- * Image placeholder at the start of a line.
+ * A whole line that is only a Markdown link around an image placeholder.
+ * The link target is the article's lightbox URL, not the image bytes.
+ */
+const LINKED_IMAGE_LINE = /^\[([\s\S]+)\]\((https?:\/\/[^)\s]+)\)\s*$/
+
+/**
+ * Image placeholder at the start of a line, or a whole line that is a Markdown
+ * link whose label is that placeholder.
  * `X3IMG:n:encoded|caption` splits on `|`.
  * `X3IMG:n:https://… caption` takes the raw URL until whitespace or `|`.
  * A legacy line that is only `X3IMG:n:encoded` still matches.
  * Alphanumeric caption glued on with no `|` or space stays text: the URL boundary is ambiguous.
  */
 export function x3ImageFromLine(line: string): X3ImageMatch | null {
-  const header = /^X3IMG:([1-9]\d{0,2}):([\s\S]*)$/.exec(line.trim())
+  const header = /^X3IMG:([1-9]\d{0,2}):([\s\S]*)$/.exec(imagePlaceholderText(line))
   if (header === null) {
     return null
   }
@@ -48,6 +55,20 @@ export function x3ImageFromLine(line: string): X3ImageMatch | null {
 /** Absolute http(s) URL from a placeholder line, or null when the line is not one. */
 export function x3ImageUrlFromLine(line: string): HttpUrl | null {
   return x3ImageFromLine(line)?.url ?? null
+}
+
+function imagePlaceholderText(line: string): string {
+  const trimmed = line.trim()
+  const linked = LINKED_IMAGE_LINE.exec(trimmed)
+  const label = linked?.[1]?.trim()
+  const href = linked?.[2]
+  if (label === undefined || href === undefined || parseHttpUrl(href) === null) {
+    return trimmed
+  }
+  if (!/^X3IMG:[1-9]\d{0,2}:/.test(label)) {
+    return trimmed
+  }
+  return label
 }
 
 function splitImagePayload(payload: string): { readonly encoded: string; readonly rest: string } | null {

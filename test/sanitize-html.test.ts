@@ -209,6 +209,72 @@ describe('XML-illegal chars and img drop', () => {
     expect(html).toBe('<p><img src="https://example.com/photo.png" alt=""/></p>')
   })
 
+  it('restores an image placeholder wrapped in a markdown link', () => {
+    const marker = 'X3IMG:1:https%3A%2F%2Fcdn.example.com%2Fphoto.png|'
+    const html = markdownToHtml(
+      `[${marker}](https://example.com/posts/lightbox)`,
+      BASE,
+    )
+    expect(html).toBe('<p><img src="https://cdn.example.com/photo.png" alt=""/></p>')
+    expect(html).not.toContain('X3IMG:')
+    expect(html).not.toContain('lightbox')
+  })
+
+  it('still restores a placeholder that starts the line', () => {
+    const html = markdownToHtml('X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png|', BASE)
+    expect(html).toBe('<p><img src="https://example.com/photo.png" alt=""/></p>')
+  })
+
+  it('keeps an ordinary markdown link', () => {
+    const html = markdownToHtml(
+      'See [the notes](https://example.com/notes) and [photo.png](https://example.com/photo.png).',
+      BASE,
+    )
+    expect(html).toBe(
+      '<p>See <a href="https://example.com/notes">the notes</a> and <a href="https://example.com/photo.png">photo.png</a>.</p>',
+    )
+    expect(html).not.toMatch(/<img\b/i)
+    expect(html).not.toContain('X3IMG:')
+  })
+
+  it('does not treat a non-image X3IMG label as an image', () => {
+    const html = markdownToHtml(
+      '[X3IMG:1:not-a-url|](https://example.com/notes)',
+      BASE,
+    )
+    expect(html).toBe('<p><a href="https://example.com/notes">X3IMG:1:not-a-url|</a></p>')
+    expect(html).not.toMatch(/<img\b/i)
+  })
+
+  it('keeps a linked raster as a bare placeholder line and restores it', () => {
+    const src = 'https://cdn.example.com/photo.png'
+    const markdown = htmlToMarkdown(
+      '<p>Before the figure.</p>' +
+        '<figure><a href="https://cdn.example.com/full.png" class="image-link">' +
+        '<div><picture><source srcset="https://cdn.example.com/photo.png 424w">' +
+        `<img src="${src}" alt="" class="sizing-normal"></picture>` +
+        '<div><button type="button">Restack</button></div></div></a>' +
+        '<figcaption>Separate caption</figcaption></figure>' +
+        '<p>After the figure. See <a href="https://example.com/notes">the notes</a>.</p>',
+      BASE,
+    )
+    const marker = markdown.split('\n').find((line) => line.startsWith('X3IMG:'))
+    expect(marker).toBe(`X3IMG:1:${encodeURIComponent(src)}|`)
+    expect(markdown).not.toContain(`[${marker}]`)
+    expect(markdown).not.toContain('Restack')
+    expect(markdown).toContain('Separate caption')
+    expect(markdown).toContain('[the notes](https://example.com/notes)')
+    const html = markdownToHtml(markdown, BASE)
+    expect(html).toContain(`<img src="${src}" alt=""/>`)
+    expect(html).toContain('Before the figure.')
+    expect(html).toContain('Separate caption')
+    expect(html).toContain('After the figure.')
+    expect(html).toContain('<a href="https://example.com/notes">the notes</a>')
+    expect(html).not.toContain('X3IMG:')
+    expect(html).not.toContain('full.png')
+    expect(html).not.toContain('Restack')
+  })
+
   it('splits a caption glued after the terminator into its own paragraph', () => {
     const html = markdownToHtml(
       "X3IMG:1:https%3A%2F%2Fexample.com%2Fphoto.png|Grok Bot's cloud computer",
