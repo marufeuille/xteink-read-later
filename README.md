@@ -11,6 +11,7 @@
 | [docs/classification.md](docs/classification.md) | clip 後の話題・種類（現行） |
 | [docs/de-recommend.md](docs/de-recommend.md) | 候補のおすすめ度（現行） |
 | [docs/daily-opds.md](docs/daily-opds.md) | まとめ EPUB の識別子と旧号（現行） |
+| [docs/opds-accounts.md](docs/opds-accounts.md) | OPDS の本番とスモーク（追加・削除・ローテーション） |
 | [docs/workers-logs.md](docs/workers-logs.md) | Workers Logs のフィールドと日次の保存クエリ（現行） |
 | [docs/health-checks.md](docs/health-checks.md) | 本番スモークのステータス合否（朝晩と、Access 外形監視（Cronitor）と、定期収集・クリップの Job 監視と、Access 経路を変えたとき） |
 | [docs/github-merge-gates.md](docs/github-merge-gates.md) | `main` のマージ条件（現行） |
@@ -63,7 +64,7 @@ https://xteink-read-later.<account>.workers.dev/opds
 - **https** にする（本番）。`http://` の workers.dev は使わない
 - パスは **`/opds`**。origin だけ、`/clip`、`/opds/download/…` はカタログではない
 - CrossPoint には **末尾スラッシュなし** で入れる（サーバは `/opds/` も同じルートだが、端末側の取り違えを避ける）
-- 認証は **HTTP Basic**（`OPDS_USERNAME` / `OPDS_PASSWORD`）。**`CLIP_TOKEN` や Bearer は使わない**
+- 認証は **HTTP Basic**（`OPDS_USERNAME` / `OPDS_PASSWORD`）。**`CLIP_TOKEN` や Bearer は使わない**。追加・削除・ローテーションは [docs/opds-accounts.md](docs/opds-accounts.md)。
 - 空パスワードは使わない（端末が username-only を送らない）
 - 2026-09-30 に CrossPoint 実機で通った。https の `/opds` を端末に登録でき、`clip` と `ebook` の日付棚が出て、最新の digest を開け、EPUB を取得できた。再クリップ後は日付棚に載った。
 
@@ -379,7 +380,7 @@ npx wrangler secret put SMOKE_CLIP_TOKEN_SHA256
 npx wrangler secret put SMOKE_OPDS_BASIC_SHA256
 ```
 
-プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。スモーク用の 2 つは生の token やパスワードではなく、SHA-256 の16進だけを貼る。作り方は [docs/deploy-smoke.md](docs/deploy-smoke.md)。Worker に `SMOKE_CLIP_TOKEN` / `SMOKE_OPDS_USERNAME` / `SMOKE_OPDS_PASSWORD` は作らない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。任意で `npx wrangler queues create xteink-read-later-feed`。任意で `npx wrangler queues create xteink-read-later-digest`。任意で `npx wrangler d1 create xteink-read-later-candidates`（id はデプロイジョブが wrangler.jsonc に書く）。
+プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。スモーク用の 2 つは生の token やパスワードではなく、SHA-256 の16進だけを貼る。クリップ token の作り方は [docs/deploy-smoke.md](docs/deploy-smoke.md)。OPDS の追加・削除・ローテーション（`SMOKE_OPDS_BASIC_SHA256` を含む）は [docs/opds-accounts.md](docs/opds-accounts.md)。Worker に `SMOKE_CLIP_TOKEN` / `SMOKE_OPDS_USERNAME` / `SMOKE_OPDS_PASSWORD` は作らない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。任意で `npx wrangler queues create xteink-read-later-feed`。任意で `npx wrangler queues create xteink-read-later-digest`。任意で `npx wrangler d1 create xteink-read-later-candidates`（id はデプロイジョブが wrangler.jsonc に書く）。
 
 ### 初回だけ — 管理画面の Google 認証（Cloudflare Access）
 
@@ -434,7 +435,7 @@ Access の Terraform は上の `CLOUDFLARE_API_TOKEN` を読まない。Workers 
 
 アプリ用の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` は GitHub Secrets に入れない（Cloudflare の `wrangler secret put` 側）。`OPENROUTER_API_KEY` は Worker 用と Actions 試行用で別々に置く。
 
-本番の値は置かない。置くのはスモーク専用の値だけ。Actions に置く生の値は `SMOKE_CLIP_TOKEN`、`SMOKE_OPDS_USERNAME`、`SMOKE_OPDS_PASSWORD`、`SMOKE_SLACK_WEBHOOK_URL`。Worker に置くのはそのハッシュ `SMOKE_CLIP_TOKEN_SHA256` と `SMOKE_OPDS_BASIC_SHA256` だけで、生の値は置かない。未設定のあいだは warning annotation と job summary に足りない名前だけを出して skip する。値は出さない。リポジトリ変数 `SMOKE_REQUIRED` が `true` / `1` / `yes` のときだけ、その skip を失敗にする。手順は [docs/deploy-smoke.md](docs/deploy-smoke.md)。
+本番の値は置かない。置くのはスモーク専用の値だけ。Actions に置く生の値は `SMOKE_CLIP_TOKEN`、`SMOKE_OPDS_USERNAME`、`SMOKE_OPDS_PASSWORD`、`SMOKE_SLACK_WEBHOOK_URL`。Worker に置くのはそのハッシュ `SMOKE_CLIP_TOKEN_SHA256` と `SMOKE_OPDS_BASIC_SHA256` だけで、生の値は置かない。未設定のあいだは warning annotation と job summary に足りない名前だけを出して skip する。値は出さない。リポジトリ変数 `SMOKE_REQUIRED` が `true` / `1` / `yes` のときだけ、その skip を失敗にする。`SMOKE_REQUIRED` は Actions の Variables に置く。Secrets ではない。手順は [docs/deploy-smoke.md](docs/deploy-smoke.md)。OPDS の追加・削除・ローテーションは [docs/opds-accounts.md](docs/opds-accounts.md)。
 
 Secrets 未設定のまま `main` にマージすると、チェックは通ってもデプロイジョブが落ちる。`TF_CLOUDFLARE_API_TOKEN` か state 用の 2 つが未設定、または R2 に state が無いときも、Workers のデプロイとは別に Access の plan / apply が落ちる。空の state ではアプリを作らない。
 
