@@ -260,6 +260,8 @@ type _feedLogHasNoUrl = Assert<'url' extends keyof FeedLog ? false : true>
 
 type _feedLogHasNoReason = Assert<'reason' extends keyof FeedLog ? false : true>
 
+type _feedLogStatusCodeIsNumber = Assert<Equals<NonNullable<FeedLog['statusCode']>, number>>
+
 type _feedLogHasNoBody = Assert<'body' extends keyof FeedLog ? false : true>
 
 type _feedLogHasNoMessage = Assert<'message' extends keyof FeedLog ? false : true>

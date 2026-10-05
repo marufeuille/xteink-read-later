@@ -1,9 +1,51 @@
 import { readBoundedBytes } from '../extract/bounded-body'
 import { FETCH_TIMEOUT_MS, USER_AGENT } from '../extract/constants'
 import { decodeHtmlBytes } from '../extract/html-encoding'
-import type { FetchError, FetchedFeed, FetchFeed, HttpUrl, Result } from '../types'
+import type { FetchError, FetchFailedError, FetchedFeed, FetchFeed, HttpUrl, Result } from '../types'
 import { err, MAX_FEED_BYTES, ok, parseHttpUrl } from '../types'
 import { isFeedContentType } from './parse'
+
+// Same token rule as feedFetchLogReason in src/log.ts. The logger drops anything else.
+const FEED_LOG_REASON = /^[A-Za-z][A-Za-z0-9_]{0,47}$/
+
+function responseStatusCode(status: number): number | undefined {
+  if (!Number.isInteger(status) || status < 100 || status > 599) {
+    return undefined
+  }
+  return status
+}
+
+function withStatus(status: number): { readonly statusCode?: number } {
+  const statusCode = responseStatusCode(status)
+  return statusCode === undefined ? {} : { statusCode }
+}
+
+function fetchFailed(
+  url: HttpUrl,
+  reason: string,
+  detail: { readonly statusCode?: number; readonly logReason?: string },
+): FetchFailedError {
+  return {
+    kind: 'fetch_failed',
+    url,
+    reason,
+    ...(detail.statusCode === undefined ? {} : { statusCode: detail.statusCode }),
+    ...(detail.logReason === undefined ? {} : { logReason: detail.logReason }),
+  }
+}
+
+// This fetch aborts only through AbortSignal.timeout, so AbortError is a timeout.
+function thrownLogReason(cause: unknown): string | undefined {
+  if (typeof cause === 'object' && cause !== null && 'name' in cause) {
+    if (cause.name === 'TimeoutError' || cause.name === 'AbortError') {
+      return 'timeout'
+    }
+  }
+  if (!(cause instanceof Error) || !FEED_LOG_REASON.test(cause.name)) {
+    return undefined
+  }
+  return cause.name
+}
 
 export const fetchFeed: FetchFeed = async (url: HttpUrl): Promise<Result<FetchedFeed, FetchError>> => {
   try {
@@ -18,20 +60,22 @@ export const fetchFeed: FetchFeed = async (url: HttpUrl): Promise<Result<Fetched
     })
 
     if (!response.ok) {
-      return err({
-        kind: 'fetch_failed',
-        url,
-        reason: `HTTP ${response.status}`,
-      })
+      return err(
+        fetchFailed(url, `HTTP ${response.status}`, {
+          ...withStatus(response.status),
+          logReason: 'http_error',
+        }),
+      )
     }
 
     const contentType = response.headers.get('content-type') ?? ''
     if (!isFeedContentType(contentType)) {
-      return err({
-        kind: 'fetch_failed',
-        url,
-        reason: `Unsupported content type: ${contentType || '(empty)'}`,
-      })
+      return err(
+        fetchFailed(url, `Unsupported content type: ${contentType || '(empty)'}`, {
+          ...withStatus(response.status),
+          logReason: 'unsupported_content_type',
+        }),
+      )
     }
 
     const bytes = await readBoundedBytes(response, MAX_FEED_BYTES)
@@ -41,11 +85,12 @@ export const fetchFeed: FetchFeed = async (url: HttpUrl): Promise<Result<Fetched
 
     const decoded = decodeHtmlBytes(bytes.value, contentType)
     if (!decoded.ok) {
-      return err({
-        kind: 'fetch_failed',
-        url,
-        reason: decoded.reason,
-      })
+      return err(
+        fetchFailed(url, decoded.reason, {
+          ...withStatus(response.status),
+          logReason: 'unsupported_charset',
+        }),
+      )
     }
 
     const finalUrl = parseHttpUrl(response.url) ?? url
@@ -57,6 +102,7 @@ export const fetchFeed: FetchFeed = async (url: HttpUrl): Promise<Result<Fetched
     })
   } catch (cause) {
     const reason = cause instanceof Error ? cause.message : String(cause)
-    return err({ kind: 'fetch_failed', url, reason })
+    const logReason = thrownLogReason(cause)
+    return err(fetchFailed(url, reason, logReason === undefined ? {} : { logReason }))
   }
 }
