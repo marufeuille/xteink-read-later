@@ -6,15 +6,23 @@ import { createExtractPipeline } from '../src/extract/pipeline'
 import { runScheduledFeedCollection } from '../src/feeds/schedule'
 import { unavailableClassification } from '../src/classify/taxonomy'
 import { createClipPipeline } from '../src/pipeline/clip'
+import { DIGEST_QUEUE_MAX_RETRIES } from '../src/daily/budget'
+import { createMemoryDigestRunStore, newDigestRunId, type DigestRunRecord } from '../src/daily/run-store'
 import { CLIP_QUEUE_NAME, createClipQueueHandler } from '../src/queue/clip'
+import { DIGEST_QUEUE_NAME, createDigestQueueHandler } from '../src/queue/digest'
 import { withOpenAiUsage } from '../src/translate/openai-usage'
 import { handleScheduled } from '../src/schedule'
+import { createMemoryCandidateStore } from '../src/store/memory-candidates'
+import { createMemoryDigestStore } from '../src/store/memory-digest'
 import { createMemoryFeedSourceStore } from '../src/store/memory-sources'
 import { createMemoryStore } from '../src/store/memory'
+import { resetCronitorDnsCache } from '../src/telemetry/cronitor-ipv4'
 import {
   CRONITOR_API_KEY_BINDING,
   CRONITOR_CLIP_FAIL_MESSAGE,
   CRONITOR_CLIP_MONITOR_KEY_BINDING,
+  CRONITOR_DAILY_DIGEST_FAIL_MESSAGE,
+  CRONITOR_DAILY_DIGEST_MONITOR_KEY_BINDING,
   CRONITOR_FEED_COLLECT_FAIL_MESSAGE,
   CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING,
   CRONITOR_PING_TIMEOUT_MS,
@@ -22,6 +30,7 @@ import {
   traceCronitorJob,
 } from '../src/telemetry/cronitor'
 import {
+  asCandidateId,
   asClipJobId,
   asClipRunId,
   asFeedSourceId,
@@ -31,6 +40,7 @@ import {
   parseHttpUrl,
   type ClipPipeline,
   type ClipQueueMessage,
+  type DigestQueueMessage,
   type FeedSource,
   type HttpUrl,
   type TranslateArticle,
@@ -43,7 +53,7 @@ import {
   readCronitorPing,
   type RecordedCronitorPing,
 } from './cronitor-fetch'
-import { createFakeDigestQueue } from './fake-digest-queue'
+import { createFakeDigestQueue, type FakeDigestQueue } from './fake-digest-queue'
 import { createFakeFeedQueue } from './fake-feed-queue'
 import { createFakeQueue } from './fake-queue'
 
@@ -51,6 +61,9 @@ const root = dirname(fileURLToPath(import.meta.url))
 const API_KEY = 'cronitor-test-api'
 const FEED_MONITOR = 'xteink-feed-collect'
 const CLIP_MONITOR = 'xteink-clip'
+const DIGEST_MONITOR = 'xteink-daily-digest'
+const DIGEST_DAY = '2026-09-21'
+const DIGEST_NOW = new Date('2026-09-21T03:00:00.000Z')
 const SECRET = 'telemetry-secret-must-not-leak'
 const jaHtml = readFileSync(join(root, 'fixtures', 'ja-tech.html'), 'utf8')
 
@@ -73,6 +86,7 @@ function cronitorBindings(overrides: Record<string, string | undefined> = {}): C
     [CRONITOR_API_KEY_BINDING]: API_KEY,
     [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]: FEED_MONITOR,
     [CRONITOR_CLIP_MONITOR_KEY_BINDING]: CLIP_MONITOR,
+    [CRONITOR_DAILY_DIGEST_MONITOR_KEY_BINDING]: DIGEST_MONITOR,
     ...overrides,
   } as Cloudflare.Env
 }
@@ -195,6 +209,7 @@ describe('Cronitor job telemetry', () => {
       CRONITOR_API_KEY_BINDING,
       CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING,
       CRONITOR_CLIP_MONITOR_KEY_BINDING,
+      CRONITOR_DAILY_DIGEST_MONITOR_KEY_BINDING,
     ]) {
       expect(example).toContain(`${name}=`)
       expect(docs).toContain(name)
@@ -203,6 +218,10 @@ describe('Cronitor job telemetry', () => {
     expect(docs).toContain('xteink-digest-send-no-access')
     expect(docs).toContain(CRONITOR_FEED_COLLECT_FAIL_MESSAGE)
     expect(docs).toContain(CRONITOR_CLIP_FAIL_MESSAGE)
+    expect(docs).toContain(CRONITOR_DAILY_DIGEST_FAIL_MESSAGE)
+    expect(docs).toContain('xteink-daily-digest')
+    expect(docs).toContain('90 分')
+    expect(docs).toContain('日次ダイジェストの ping にも付けない')
     expect(docs).toContain('missing_api_key')
     expect(docs).toContain('blank_monitor_key')
     expect(docs).toContain('redirect_blocked')
@@ -221,6 +240,7 @@ describe('Cronitor job telemetry', () => {
     expect(workersLogs).toContain('prompt_tokens')
     expect(workersLogs).toContain('estimated_usd')
     expect(workersLogs).toContain('$metadata.service = "xteink-read-later" AND event = "cronitor"')
+    expect(workersLogs).toContain('日次ダイジェストの終端')
     expect(workersLogs).toContain('regex(event, "^(pipeline|daily_digest|opds_download|feed)$")')
     expect(index).toContain('await handleScheduled(controller, env)')
     expect(index).toContain('createClipQueueHandler')
@@ -718,6 +738,7 @@ describe('scheduled feed collection telemetry', () => {
     expect(cronitor.pings[1]?.metrics.has('prompt_tokens')).toBe(false)
     expect(cronitor.pings[1]?.metrics.has('estimated_usd')).toBe(false)
     expect(cronitor.pings).toHaveLength(2)
+    expect(cronitor.pings.every((ping) => !ping.href.includes(DIGEST_MONITOR))).toBe(true)
     const logs = cronitorLogLines()
     expect(logs.map((entry) => entry.message)).toEqual(['cronitor sent run', 'cronitor sent complete'])
     expectNoTelemetrySecrets(logs, [API_KEY, FEED_MONITOR, 'https://zenn.dev'])
@@ -1024,5 +1045,305 @@ describe('clip queue telemetry', () => {
     const logs = cronitorLogLines()
     expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
     expectNoTelemetrySecrets(logs, [SECRET, API_KEY, CLIP_MONITOR, 'example.com', 'workers-cpu'])
+  })
+})
+
+describe('daily digest run telemetry', () => {
+  function digestEnv(queue: FakeDigestQueue, base: Cloudflare.Env = cronitorBindings()): Cloudflare.Env {
+    return { ...base, DIGEST_QUEUE: queue } as Cloudflare.Env
+  }
+
+  function digestDeps(
+    cronitorFetch: typeof fetch | undefined,
+    extra: Parameters<typeof createDigestQueueHandler>[0] = {},
+  ): Parameters<typeof createDigestQueueHandler>[0] {
+    return {
+      store: createMemoryStore(),
+      candidateStore: createMemoryCandidateStore(),
+      digestStore: createMemoryDigestStore(),
+      runStore: createMemoryDigestRunStore(),
+      now: () => DIGEST_NOW,
+      fetchPage: async () => {
+        throw new Error('fetch should not run')
+      },
+      ...extra,
+      ...(cronitorFetch === undefined ? {} : { cronitorFetch }),
+    }
+  }
+
+  async function deliver(
+    body: { date: string; step?: 'publish' | 'watchdog'; runId?: string },
+    deps: Parameters<typeof createDigestQueueHandler>[0],
+    env: Cloudflare.Env,
+    attempts = 1,
+  ): Promise<{ acked: boolean; retried: boolean }> {
+    let acked = false
+    let retried = false
+    const batch: MessageBatch<DigestQueueMessage> = {
+      messages: [
+        {
+          id: 'digest_msg',
+          timestamp: DIGEST_NOW,
+          body,
+          attempts,
+          ack() {
+            acked = true
+          },
+          retry() {
+            retried = true
+          },
+        },
+      ],
+      queue: DIGEST_QUEUE_NAME,
+      metadata: { metrics: { backlogCount: 0, backlogBytes: 0 } },
+      retryAll() {
+        for (const message of this.messages) {
+          message.retry()
+        }
+      },
+      ackAll() {
+        acked = true
+      },
+    }
+    await createDigestQueueHandler(deps)(batch, env)
+    return { acked, retried }
+  }
+
+  function runningRecord(runId: string, overrides: Partial<DigestRunRecord> = {}): DigestRunRecord {
+    const stamp = DIGEST_NOW.toISOString()
+    const candidateId = asCandidateId(`cand_${'a'.repeat(32)}`)
+    return {
+      v: 1,
+      runId,
+      date: DIGEST_DAY,
+      status: 'running',
+      phase: 'publish',
+      startedAt: stamp,
+      updatedAt: stamp,
+      planOffset: 0,
+      pendingEval: [],
+      evalIndex: 0,
+      jevCalls: 0,
+      selectedIds: [candidateId],
+      summarizeIndex: 1,
+      prepared: [
+        {
+          candidateId,
+          canonicalUrl: mustUrl('https://example.com/digest-article'),
+          title: `記事 ${SECRET}`,
+          summaryHtml: `<p>${SECRET}</p>`,
+        },
+      ],
+      skipped: 0,
+      exhaustedSkips: 0,
+      articleId: null,
+      qrCount: 0,
+      ...overrides,
+    }
+  }
+
+  it('sends one complete ping when an empty issue finishes, and not for each step', async () => {
+    const cronitor = createCronitorFetch()
+    const runStore = createMemoryDigestRunStore()
+    const queue = createFakeDigestQueue()
+    queue.push({ date: DIGEST_DAY })
+    await queue.drain(digestEnv(queue), {
+      ...digestDeps(cronitor.fetch, { runStore }),
+    })
+
+    const stored = await runStore.get(DIGEST_DAY)
+    expect(stored?.record.status).toBe('empty')
+    const runId = stored?.record.runId
+    expect(runId).toEqual(expect.any(String))
+    if (runId === undefined) {
+      throw new Error('missing digest run')
+    }
+    expectRunThen(cronitor.pings, 'complete', DIGEST_MONITOR)
+    expect(cronitor.pings).toHaveLength(2)
+    expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
+    expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.has('prompt_tokens')).toBe(false)
+    expect(cronitor.pings[1]?.metrics.has('estimated_usd')).toBe(false)
+    expect(cronitor.pings[1]?.message).toBeNull()
+    expect(queue.delayedSize).toBe(1)
+
+    const late = await deliver(
+      { date: DIGEST_DAY, step: 'watchdog', runId },
+      digestDeps(cronitor.fetch, { runStore }),
+      cronitorBindings(),
+    )
+    expect(late).toEqual({ acked: true, retried: false })
+    expect(cronitor.pings).toHaveLength(2)
+  })
+
+  it('sends complete when the issue is published and omits the article from the ping', async () => {
+    const cronitor = createCronitorFetch()
+    const runStore = createMemoryDigestRunStore()
+    const runId = newDigestRunId()
+    await runStore.put(runningRecord(runId), null)
+    const done = await deliver(
+      { date: DIGEST_DAY, step: 'publish', runId },
+      digestDeps(cronitor.fetch, { runStore }),
+      cronitorBindings(),
+    )
+
+    expect(done).toEqual({ acked: true, retried: false })
+    expect((await runStore.get(DIGEST_DAY))?.record.status).toBe('published')
+    expectRunThen(cronitor.pings, 'complete', DIGEST_MONITOR)
+    expect(cronitor.pings[1]?.metrics.get('count')).toBe('1')
+    expect(cronitor.pings[1]?.metrics.get('error_count')).toBe('0')
+    expect(cronitor.pings[1]?.metrics.has('prompt_tokens')).toBe(false)
+    expect(cronitor.pings[1]?.href).not.toContain('example.com')
+    expect(cronitor.pings[1]?.href).not.toContain(SECRET)
+    expect(cronitor.pings[1]?.href).not.toContain('digest-article')
+  })
+
+  it('sends fail for a terminal digest failure and skips the ping while retries remain', async () => {
+    const runId = newDigestRunId()
+    const failingStore = {
+      ...createMemoryStore(),
+      async put() {
+        throw new Error(`${SECRET} publish failed https://example.com/digest-article`)
+      },
+    }
+    const retry = createCronitorFetch()
+    const retryStore = createMemoryDigestRunStore()
+    await retryStore.put(runningRecord(runId), null)
+    const retried = await deliver(
+      { date: DIGEST_DAY, step: 'publish', runId },
+      digestDeps(retry.fetch, { runStore: retryStore, store: failingStore }),
+      cronitorBindings(),
+      1,
+    )
+    expect(retried).toEqual({ acked: false, retried: true })
+    expect(retry.pings).toEqual([])
+    expect((await retryStore.get(DIGEST_DAY))?.record.status).toBe('running')
+
+    const terminal = createCronitorFetch()
+    const terminalStore = createMemoryDigestRunStore()
+    await terminalStore.put(runningRecord(runId), null)
+    const failed = await deliver(
+      { date: DIGEST_DAY, step: 'publish', runId },
+      digestDeps(terminal.fetch, { runStore: terminalStore, store: failingStore }),
+      cronitorBindings(),
+      DIGEST_QUEUE_MAX_RETRIES + 1,
+    )
+    expect(failed).toEqual({ acked: true, retried: false })
+    expect((await terminalStore.get(DIGEST_DAY))?.record.status).toBe('failed')
+    expectRunThen(terminal.pings, 'fail', DIGEST_MONITOR)
+    expect(terminal.pings[1]?.message).toBe(CRONITOR_DAILY_DIGEST_FAIL_MESSAGE)
+    expect(terminal.pings[1]?.metrics.get('count')).toBe('1')
+    expect(terminal.pings[1]?.metrics.get('error_count')).toBe('1')
+    expect(terminal.pings[1]?.metrics.has('prompt_tokens')).toBe(false)
+    expect(terminal.pings[1]?.href).not.toContain(SECRET)
+    expect(terminal.pings[1]?.href).not.toContain('example.com')
+    expect(terminal.pings[1]?.href).not.toContain('publish failed')
+
+    const again = await deliver(
+      { date: DIGEST_DAY, step: 'watchdog', runId },
+      digestDeps(terminal.fetch, { runStore: terminalStore, store: failingStore }),
+      cronitorBindings(),
+    )
+    expect(again.acked).toBe(true)
+    expect(terminal.pings).toHaveLength(2)
+  })
+
+  it('does not ping a fresh watchdog or an invalid message', async () => {
+    const cronitor = createCronitorFetch()
+    const runStore = createMemoryDigestRunStore()
+    const runId = newDigestRunId()
+    await runStore.put(runningRecord(runId, { phase: 'summarize', updatedAt: DIGEST_NOW.toISOString() }), null)
+    const queue = createFakeDigestQueue()
+    const fresh = await deliver(
+      { date: DIGEST_DAY, step: 'watchdog', runId },
+      digestDeps(cronitor.fetch, { runStore }),
+      digestEnv(queue),
+    )
+    expect(fresh).toEqual({ acked: true, retried: false })
+    expect((await runStore.get(DIGEST_DAY))?.record.status).toBe('running')
+    expect(cronitor.pings).toEqual([])
+
+    const invalid = await deliver({ date: 'not-a-date' }, digestDeps(cronitor.fetch, { runStore }), digestEnv(queue))
+    expect(invalid).toEqual({ acked: true, retried: false })
+    expect(cronitor.pings).toEqual([])
+  })
+
+  it('skips the ping when the digest monitor key is missing and still finishes the issue', async () => {
+    const cronitor = createCronitorFetch()
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const runStore = createMemoryDigestRunStore()
+    const queue = createFakeDigestQueue()
+    queue.push({ date: DIGEST_DAY })
+    const env = digestEnv(queue, {
+      ...TEST_BINDINGS,
+      [CRONITOR_API_KEY_BINDING]: API_KEY,
+    } as Cloudflare.Env)
+    await queue.drain(env, digestDeps(cronitor.fetch, { runStore }))
+
+    expect((await runStore.get(DIGEST_DAY))?.record.status).toBe('empty')
+    expect(cronitor.pings).toEqual([])
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.outcome)).toEqual(['missing_monitor_key'])
+    expectNoTelemetrySecrets(logs, [API_KEY, DIGEST_MONITOR, SECRET])
+  })
+
+  it('still finishes the issue when the Cronitor ping throws', async () => {
+    const cronitor = createThrowingCronitorFetch(new Error(SECRET))
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const runStore = createMemoryDigestRunStore()
+    const queue = createFakeDigestQueue()
+    queue.push({ date: DIGEST_DAY })
+    await queue.drain(digestEnv(queue), digestDeps(cronitor.fetch, { runStore }))
+
+    expect((await runStore.get(DIGEST_DAY))?.record.status).toBe('empty')
+    expect(cronitor.calls).toBe(2)
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.outcome)).toEqual(['network', 'network'])
+    expectNoTelemetrySecrets(logs, [SECRET, API_KEY, DIGEST_MONITOR])
+  })
+
+  it('pings once when unpublishing retries after the issue is already empty', async () => {
+    const cronitor = createCronitorFetch()
+    const runStore = createMemoryDigestRunStore()
+    const queue = createFakeDigestQueue()
+    queue.push({ date: DIGEST_DAY })
+    const store = {
+      ...createMemoryStore(),
+      async listMeta() {
+        throw new Error(`${SECRET} list failed`)
+      },
+    }
+    await queue.drain(digestEnv(queue), digestDeps(cronitor.fetch, { runStore, store }))
+
+    expect((await runStore.get(DIGEST_DAY))?.record.status).toBe('empty')
+    expect(queue.size).toBe(1)
+    expectRunThen(cronitor.pings, 'complete', DIGEST_MONITOR)
+    expect(cronitor.pings).toHaveLength(2)
+    expect(cronitor.pings[1]?.href).not.toContain(SECRET)
+    expect(cronitor.pings[1]?.href).not.toContain('list failed')
+  })
+
+  it('uses the ipv4 socket path when no test fetch is injected', async () => {
+    resetCronitorDnsCache()
+    const seen: string[] = []
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
+      const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      seen.push(href)
+      return new Response(JSON.stringify({ Answer: [{ type: 1, TTL: 60, data: '1.2.3.4' }] }), { status: 200 })
+    })
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const runStore = createMemoryDigestRunStore()
+    const queue = createFakeDigestQueue()
+    queue.push({ date: DIGEST_DAY })
+    await queue.drain(digestEnv(queue), digestDeps(undefined, { runStore }))
+
+    expect((await runStore.get(DIGEST_DAY))?.record.status).toBe('empty')
+    const logs = cronitorLogLines()
+    expect(logs.map((entry) => entry.message)).toEqual(['cronitor network run', 'cronitor network complete'])
+    expect(logs[0]).toMatchObject({ outcome: 'network', pingState: 'run', transport: 'ipv4', cause: 'connect' })
+    expect(logs[1]).toMatchObject({ outcome: 'network', pingState: 'complete', transport: 'ipv4', cause: 'connect' })
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.every((href) => new URL(href).hostname === 'cloudflare-dns.com')).toBe(true)
+    expectNoTelemetrySecrets(logs, [API_KEY, DIGEST_MONITOR, '1.2.3.4', 'cloudflare-sockets-stub', 'cronitor.link'])
   })
 })

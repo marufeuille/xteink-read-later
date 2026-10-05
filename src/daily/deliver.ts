@@ -57,6 +57,11 @@ export type DigestDeliveryOutcome = {
   readonly action: 'ack' | 'retry'
   readonly enqueue: readonly DigestEnqueue[]
   readonly finished: DigestRunResult | null
+  /**
+   * Terminal status this delivery newly recorded (`published`, `empty`, or `failed`).
+   * Messages that only observe an already finished run leave this null.
+   */
+  readonly decided: DigestRunResult | null
 }
 
 type NormalizedMessage =
@@ -85,12 +90,12 @@ function isDigestStep(value: string): value is DigestQueueStep {
   return (STEPS as readonly string[]).includes(value)
 }
 
-function ack(finished: DigestRunResult | null = null): DigestDeliveryOutcome {
-  return { action: 'ack', enqueue: [], finished }
+function ack(finished: DigestRunResult | null = null, decided: DigestRunResult | null = null): DigestDeliveryOutcome {
+  return { action: 'ack', enqueue: [], finished, decided }
 }
 
-function retry(): DigestDeliveryOutcome {
-  return { action: 'retry', enqueue: [], finished: null }
+function retry(decided: DigestRunResult | null = null): DigestDeliveryOutcome {
+  return { action: 'retry', enqueue: [], finished: null, decided }
 }
 
 export function parseDigestQueueMessage(body: unknown): NormalizedMessage | null {
@@ -341,10 +346,11 @@ async function finishEmpty(ctx: DeliveryContext, loaded: DigestRunLoaded): Promi
     return retry()
   }
   logTerminal(saved.record, ctx.now(), ctx.attempts, undefined, undefined)
+  const result = toResult(saved.record)
   if (!(await removeCurrentIssue(ctx)) && !isFinalDigestAttempt(ctx.attempts)) {
-    return retry()
+    return retry(result)
   }
-  return ack(toResult(saved.record))
+  return ack(result, result)
 }
 
 async function finishPublished(
@@ -359,7 +365,8 @@ async function finishPublished(
     return retry()
   }
   logTerminal(saved.record, ctx.now(), ctx.attempts, undefined, undefined)
-  return ack(toResult(saved.record))
+  const result = toResult(saved.record)
+  return ack(result, result)
 }
 
 async function failDay(
@@ -379,17 +386,19 @@ async function failDay(
       return retry()
     }
     logTerminal(next, ctx.now(), ctx.attempts, stage, errorKind)
-    return ack(toResult(next))
+    const unsaved = toResult(next)
+    return ack(unsaved, unsaved)
   }
   logTerminal(saved.record, ctx.now(), ctx.attempts, stage, errorKind)
+  const result = toResult(saved.record)
   if (!(await removeCurrentIssue(ctx)) && !isFinalDigestAttempt(ctx.attempts)) {
-    return retry()
+    return retry(result)
   }
-  return ack(toResult(saved.record))
+  return ack(result, result)
 }
 
 function continueWith(record: DigestRunRecord, extra: readonly DigestEnqueue[] = []): DigestDeliveryOutcome {
-  return { action: 'ack', enqueue: [messageFor(record), ...extra], finished: null }
+  return { action: 'ack', enqueue: [messageFor(record), ...extra], finished: null, decided: null }
 }
 
 async function stepStart(ctx: DeliveryContext, date: string): Promise<DigestDeliveryOutcome> {
@@ -412,15 +421,16 @@ async function stepStart(ctx: DeliveryContext, date: string): Promise<DigestDeli
       errorKind: 'internal_error',
       attempt: ctx.attempts,
     })
-    return ack({
+    const failed = {
       date,
-      status: 'failed',
+      status: 'failed' as const,
       selected: 0,
       summarized: 0,
       skipped: 0,
       articleId: null,
       qrCount: 0,
-    })
+    }
+    return ack(failed, failed)
   }
   const started: DigestRunLoaded = { record, etag: wrote.etag }
   logRunning(record, 'start', ctx.now(), ctx.attempts)
@@ -428,7 +438,7 @@ async function stepStart(ctx: DeliveryContext, date: string): Promise<DigestDeli
   if (ctx.scheduleWatchdog) {
     enqueue.push(watchdogMessage(record))
   }
-  return { action: 'ack', enqueue, finished: null }
+  return { action: 'ack', enqueue, finished: null, decided: null }
 }
 
 async function alignOrRepair(
@@ -757,7 +767,7 @@ async function stepWatchdog(ctx: DeliveryContext, loaded: DigestRunLoaded): Prom
     return ack(toResult(record))
   }
   if (!stale(record, ctx.now())) {
-    return { action: 'ack', enqueue: [watchdogMessage(record)], finished: null }
+    return { action: 'ack', enqueue: [watchdogMessage(record)], finished: null, decided: null }
   }
   return failDay(ctx, loaded, 'watchdog', 'retry_exhausted')
 }
@@ -833,15 +843,16 @@ export async function processDigestDelivery(
         attempt: attempts,
         ...(message.step === 'start' ? {} : { stage: message.step }),
       })
-      return ack({
+      const failed = {
         date: message.date,
-        status: 'failed',
+        status: 'failed' as const,
         selected: 0,
         summarized: 0,
         skipped: 0,
         articleId: null,
         qrCount: 0,
-      })
+      }
+      return ack(failed, failed)
     }
     return failDay(ctx, loaded, message.step === 'start' ? 'start' : message.step, 'internal_error')
   }

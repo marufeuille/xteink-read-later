@@ -147,6 +147,8 @@ $metadata.service = "xteink-read-later" AND event = "cronitor"
 
 クリップの `complete` / `fail` には OpenAI のカスタムメトリクス（`prompt_tokens`、`completion_tokens`、`estimated_usd`）が載る。`run` には付けない。`estimated_usd` は観測用の概算であり、OpenAI の請求額ではない。日本語スキップは 0。名前と断言の例は [health-checks.md](health-checks.md) に書く。このログ行にはメトリクスの値を出さない。
 
+日次ダイジェストの終端（`published` / `empty` / `failed`）も同じ `event=cronitor` に出る。途中の工程と enqueue は出ない。ダイジェストの ping に OpenAI のカスタムメトリクスは付かない。
+
 ## 工程
 
 失敗の軸と所要は、たとえば次で絞る。`durationMs` は数値。

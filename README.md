@@ -164,7 +164,7 @@ cp .dev.vars.example .dev.vars
 npm run dev
 ```
 
-`wrangler dev` は既定で `http://localhost:8787` を開く。管理画面は wrangler の Access 開発用 identity（`wrangler.jsonc` の `access.dev`、email `dev@localhost`）で入る。`.dev.vars` の `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。`OPENROUTER_API_KEY` が無いときは記事分類とおすすめ判定をスキップし、未分類・未判定のまま載せる。`CRONITOR_API_KEY` / `CRONITOR_FEED_COLLECT_MONITOR_KEY` / `CRONITOR_CLIP_MONITOR_KEY` は空でよい。空なら Cronitor へ送らない。見る対象は [docs/health-checks.md](docs/health-checks.md)。
+`wrangler dev` は既定で `http://localhost:8787` を開く。管理画面は wrangler の Access 開発用 identity（`wrangler.jsonc` の `access.dev`、email `dev@localhost`）で入る。`.dev.vars` の `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` を使う（リポジトリには入れない）。`OPENROUTER_API_KEY` が無いときは記事分類とおすすめ判定をスキップし、未分類・未判定のまま載せる。`CRONITOR_API_KEY` / `CRONITOR_FEED_COLLECT_MONITOR_KEY` / `CRONITOR_CLIP_MONITOR_KEY` / `CRONITOR_DAILY_DIGEST_MONITOR_KEY` は空でよい。空なら Cronitor へ送らない。見る対象は [docs/health-checks.md](docs/health-checks.md)。
 
 `POST /clip` は URL を検証して job を R2 に書き、Queue に `{ jobId, runId, url }` を載せて **202** `status: "queued"` を返す。`jobId` は URL 由来で同じ記事を指し、`runId` は実行ごと。ページ fetch も翻訳も HTTP ではやらない。consumer が抽出 → 翻訳/整形 → EPUB → R2 まで進める。EPUB を書いてから `meta.json` を書く。完了後の記事は `articles/{id}/meta.json` と `book.epub`。job 状態は `jobs/{jobId}.json`（`queued` / `running` / `ready` / `failed`）。本文は job に残さない。同一 URL の再送は同じ `jobId`。queued / running のあいだは二重 enqueue しない。ready / failed のあと、または queued / running が **15 分以上**更新されていないときは新しい `runId` で再投入する。成功時の記事 `id` は canonical URL で決まり、`createdAt` は初回のまま、再保存では `clippedAt` と `updatedAt` を更新する。分類結果の書き込みは `updatedAt` だけを更新し、clip 棚の日付は動かさない。古い `runId` の再配信は状態を `running` に戻さない。
 
