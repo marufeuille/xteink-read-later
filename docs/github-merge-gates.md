@@ -1,6 +1,6 @@
 # GitHub merge gates
 
-AGENTS.md の自律マージを、GitHub 側でも強制する。運用の正本は `.github/merge-gates/main-ruleset.json` と `.github/workflows/ci.yml`。
+GitHub が `main` で強制するのは、pull request と必須チェック `merge-gate` である。PM の内容検品は GitHub では見ていない。クラウドエージェントは `merge-gate` が緑でもマージしない。誰がマージしてよいかは [AGENTS.md](../AGENTS.md) と、この文書の「マージしてよいとき」。機械的な正本は `.github/merge-gates/main-ruleset.json` と `.github/workflows/ci.yml`。
 
 ## なぜ public か
 
@@ -14,7 +14,7 @@ AGENTS.md の自律マージを、GitHub 側でも強制する。運用の正本
 
 - `main`（default branch）への直接 push / force push / 削除を禁止する
 - bypass リストは空。管理者も迂回できない
-- 変更は pull request 経由。人間の Approve は必須にしない（自律マージ用）
+- 変更は pull request 経由。人間の Approve は GitHub の必須にしない。Masahiro にマージ承認は求めない
 - 未解決のレビュースレッドがあるとマージできない
 - 必須チェックは `merge-gate` だけ。発行元は GitHub Actions（App ID `15368`）
 - `merge-gate` は分類ジョブ `classify changes` が `success` で、`typecheck, unit, e2e`（ジョブ `check`）と `simulator images`（ジョブ `simulator-images`）がそれぞれ `success` またはパス分類による `skipped` のとき成功する。失敗とキャンセルは失敗にする。必須チェック名は `merge-gate` のままなので、このスキップ方針に ruleset の再適用は要らない
@@ -38,15 +38,30 @@ AGENTS.md の自律マージを、GitHub 側でも強制する。運用の正本
 
 Access Terraform（`.github/workflows/access-terraform.yml`）は必須チェックではない。`on.paths` で `infra/access/**` と、その workflow、`.github/scripts/access-terraform.sh` だけを対象にする。無関係な PR では workflow 自体が走らない。必須チェックに足すときは `on.paths` を外し、スキップはジョブの `if` に移す。workflow が未実行だと、そのチェックは pending のまま残り、マージできない。この差分は simulator と `deploy worker` を走らせない。Workers の deploy は `CLOUDFLARE_API_TOKEN` のまま。Access Terraform は `TF_CLOUDFLARE_API_TOKEN`。手順は [access-as-code.md](access-as-code.md)。
 
-`merge-gate` は `if: always()` なので、依存ジョブが skipped でも失敗でも実行される。`classify changes` が失敗したときはゲートも失敗する。GitHub はジョブの `if` による skipped を必須チェックの成功として扱う。必須なのは常に実行する `merge-gate` だけで、その結論が `success` のときだけマージできる。
+`merge-gate` は `if: always()` なので、依存ジョブが skipped でも失敗でも実行される。`classify changes` が失敗したときはゲートも失敗する。GitHub はジョブの `if` による skipped を必須チェックの成功として扱う。GitHub がマージを受け付けるのは、常に実行する `merge-gate` の結論が `success` のときである。それだけでは、このリポジトリの手順としてマージしてよいことにはならない。条件は「マージしてよいとき」。
 
 ## 最新 main との組合せ
 
 複数エージェントが同時に PR を出す前提なので、利用できるなら merge queue を使う。queue は最新 `main` との合成に対して `merge_group` で `merge-gate` を再実行し、`ALLGREEN` なので失敗した PR は落ちて止まる。
 
-merge queue が個人リポジトリで使えない場合は、required status checks の up-to-date（strict）に落とす。その場合は PR を最新 `main` に合わせてからマージする。
+merge queue が個人リポジトリで使えない場合は、required status checks の up-to-date（strict）に落とす。その設定のときは、マージする前に PR を最新 `main` に合わせる。
 
-自動マージ経路はリポジトリの auto-merge。条件を満たした PR で `gh pr merge --auto` する。チェックが失敗または未報告ならマージされない。
+## マージしてよいとき
+
+`merge-gate` が成功していることだけではマージしない。CI が緑であることだけでもマージしない。
+
+クラウドエージェント（Cursor の cloud agent と `cursor[bot]` を含む）は、マージ、squash、auto-merge をしない。`gh pr merge` と `gh pr merge --auto` は実行しない。PR を Ready for review で開いたら、そのエージェントの作業は終わる。
+
+マージまたは squash してよいのは、次の両方が、その PR の現在の head について真のときだけである。
+
+- 対応する Linear チケットのコメントに、文言 `PM 内容検品: **合格**` と、その PR の head SHA（16進で 40 桁）の両方が入っている。文言はこれと一致すること
+- その同じ head で必須チェック `merge-gate` が成功している。失敗、キャンセル、未実行は成功にしない
+
+head が変わったら、新しい 40 桁の SHA について内容検品と `merge-gate` をやり直す。前の head への合格コメントは、新しい head の合格にはならない。
+
+Masahiro にマージ承認は求めない。
+
+クラウドエージェント以外がマージするとき、リポジトリの auto-merge と merge queue は、上の両方が揃った head に対してだけ使ってよい。チェックが失敗または未報告なら、GitHub はマージを完了しない。クラウドエージェントは、条件が揃っていても `gh pr merge` と `gh pr merge --auto` を実行しない。
 
 ## 適用と確認
 
@@ -65,7 +80,8 @@ bash .github/scripts/verify-merge-gates.sh
 git push origin HEAD:main
 # protected branch で拒否される
 
-# テストを壊した PR を開き、CI 後:
+# テストを壊した PR で、ゲートが拒否することを見る例。
+# クラウドエージェントが自分の PR をマージする手順ではない。
 gh pr merge --auto --merge
 # merge-gate が success でないため auto-merge は完了しない
 ```

@@ -25,7 +25,7 @@ deploy が path filter で skip されたとき、このジョブも skip する
 
 入れるもの: `github.sha`、Worker version、失敗した工程、jobId、最後の stage、errorKind、Actions の run URL。実行と DELETE の両方が失敗したときだけ `cleanupErrorKind`。入れないもの: 記事 URL、token、パスワード、ハッシュの入力にした生の値、記事本文。ログも同じ。クリップ失敗で Worker の Cronitor `xteink-clip` も鳴ることがある。二重になってよい。
 
-切り分け、DELETE が残した記事の人手削除、手動の rollback は Ops の runbook が正本である。手順はこの文書に複製しない。
+切り分け、DELETE が残した記事の人手削除、手動の rollback は Ops の runbook が正本である。その runbook はこのリポジトリには無い。人手の削除手順はそこへ置く。手順はこの文書に複製しない。
 
 ## 未設定の skip
 
@@ -66,7 +66,7 @@ deploy の直前に、本番の Worker version id を `previous_worker_version` 
 wrangler rollback <previous_worker_version> --message "deploy-rollback sha=… run=…" --yes
 ```
 
-戻したあと、スモークを 1 回だけ再実行する。結果は `verified` か `still_failing`。再スモークが失敗しても、もう一度は戻さない。再スモークの内部期限は 9 分で、rollback ステップの 12 分より短い。期限までに終わらなければ `verify=-` で通知し、ジョブ summary にも同じ行を書く。
+戻したあと、スモークを 1 回だけ再実行する。結果は `verified` か `still_failing`。再スモークが失敗しても、もう一度は戻さない。再スモークの内部期限は 9 分で、rollback ステップの 12 分より短い。期限までに終わらなければ `verify=-` で通知し、ジョブ summary にも同じ行を書く。`[deploy-rollback]` が `verify=-` のとき、再スモークは期限で打ち切られ、スモーク記事の DELETE が終わらないことがある。残った記事はオペレーターが手で消す。Ops の runbook はこのリポジトリには無く、その人手削除の手順は runbook に置く。手順はこの文書に複製しない。
 
 rollback コマンド自体が失敗したときは、終了コードと、token を含み得ない stderr の先頭だけをジョブのログに出す。その行は Slack にも job summary の本文にも入れない。
 

@@ -12,9 +12,11 @@
 | --- | --- | --- | --- |
 | 本番 | Worker secret | `OPDS_USERNAME` | 生のユーザー名。空にしない。コロンは入れない |
 | 本番 | Worker secret | `OPDS_PASSWORD` | 生のパスワード。空にしない。ハッシュではない |
-| スモーク | GitHub Actions の secret | `SMOKE_OPDS_USERNAME` | 生のユーザー名。本番と同じにしない |
+| スモーク | GitHub Actions の secret | `SMOKE_OPDS_USERNAME` | 生のユーザー名。本番と同じにしない。コロンは入れない（Basic は最初のコロンで分ける） |
 | スモーク | GitHub Actions の secret | `SMOKE_OPDS_PASSWORD` | 生のパスワード。本番と同じにしない |
 | スモーク | Worker secret | `SMOKE_OPDS_BASIC_SHA256` | `ユーザー名:パスワード` の UTF-8 バイト列の SHA-256。16進、小文字、64 桁。区切りのコロンは 1 つ。末尾の改行は入れない |
+
+ユーザー名とパスワードは ASCII に限る。Worker は Basic の payload を `atob` で復号し、そのバイト列を UTF-8 の文字へ戻さずに secret と比べる。非 ASCII は一致しない。本番の照合も同じ。スモークは、その `atob` 後の文字列をハッシュして `SMOKE_OPDS_BASIC_SHA256` と比べるので、非 ASCII は同じように外れる。
 
 本番の 2 つは GitHub Actions に置かない。スモークの生のユーザー名とパスワードは Worker に置かない。Worker が読むスモーク用の名前は `SMOKE_OPDS_BASIC_SHA256` だけ。古い名前 `SMOKE_OPDS_USERNAME` / `SMOKE_OPDS_PASSWORD` が Worker に残っていても読まない。
 
