@@ -1,6 +1,17 @@
-import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { appendFileSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { buildSmokeSlackMessage } from './message.ts'
+import { buildSmokeSlackMessage, sanitizeKind } from './message.ts'
+import {
+  classifySmokeForRollback,
+  fetchLiveWorkerVersion,
+  formatGithubOutput,
+  readDeployDiff,
+  runDeployRollback,
+  runWranglerRollback,
+  smokeResultOutputs,
+  type DeployDiff,
+  type RollbackContext,
+} from './rollback.ts'
 import {
   cleanupSmokeArticle,
   notificationForState,
@@ -120,6 +131,123 @@ async function notify(): Promise<number> {
   return sendSlack(buildSmokeSlackMessage(fields))
 }
 
+function exportOutputs(): number {
+  const outputs = smokeResultOutputs(readState(statePath()))
+  const lines = [
+    formatGithubOutput('outcome', outputs.outcome),
+    formatGithubOutput('failedStep', outputs.failedStep),
+    formatGithubOutput('errorKind', outputs.errorKind),
+    formatGithubOutput('cleanupErrorKind', outputs.cleanupErrorKind),
+  ].join('')
+  const file = envValue('GITHUB_OUTPUT')
+  if (file === undefined || file.trim().length === 0) {
+    process.stdout.write(lines)
+    return 0
+  }
+  appendFileSync(file, lines)
+  return 0
+}
+
+function rollbackContext(): RollbackContext {
+  return {
+    jobResult: envValue('SMOKE_JOB_RESULT') ?? '',
+    outcome: envValue('SMOKE_OUTCOME') ?? '',
+    failedStep: envValue('SMOKE_FAILED_STEP') ?? '',
+    errorKind: envValue('SMOKE_ERROR_KIND') ?? '',
+    cleanupErrorKind: envValue('SMOKE_CLEANUP_ERROR_KIND') ?? '',
+    previousWorkerVersion: envValue('PREVIOUS_WORKER_VERSION') ?? '',
+    workerVersion: envValue('WORKER_VERSION') ?? '',
+    githubSha: envValue('GITHUB_SHA') ?? '',
+    runUrl: envValue('SMOKE_RUN_URL') ?? '',
+    runId: envValue('GITHUB_RUN_ID') ?? '',
+  }
+}
+
+function knownDiff(): DeployDiff {
+  return { paths: [], wranglerBefore: null, wranglerAfter: null, diffKnown: true }
+}
+
+async function verifyAfterRollback(): Promise<'passed' | 'failed' | 'skipped'> {
+  const path = statePath()
+  const previous = envValue('PREVIOUS_WORKER_VERSION')
+  const settings = {
+    ...settingsFromEnv(),
+    ...(previous === undefined ? {} : { workerVersion: previous }),
+  }
+  const result = await runDeploySmoke({
+    settings,
+    log: (line) => {
+      console.log(line)
+    },
+    onProgress: (state) => {
+      writeState(path, state)
+    },
+  })
+  writeState(path, result.state)
+  const cleaned = await cleanupSmokeArticle({
+    state: result.state,
+    settings,
+    log: (line) => {
+      console.log(line)
+    },
+  })
+  if (!cleaned.ok) {
+    console.log(`cleanup errorKind=${sanitizeKind(cleaned.errorKind)}`)
+    writeState(path, { ...result.state, cleanupErrorKind: cleaned.errorKind })
+  }
+  if (result.kind === 'passed') {
+    return 'passed'
+  }
+  if (result.kind === 'skipped') {
+    return 'skipped'
+  }
+  return 'failed'
+}
+
+async function rollback(): Promise<number> {
+  const context = rollbackContext()
+  const early = classifySmokeForRollback(context)
+  const diff =
+    early.kind === 'candidate'
+      ? readDeployDiff(envValue('PREVIOUS_WORKER_SHA') ?? '', envValue('GITHUB_SHA') ?? '')
+      : knownDiff()
+  const accountId = envValue('CLOUDFLARE_ACCOUNT_ID') ?? ''
+  const apiToken = envValue('CLOUDFLARE_API_TOKEN') ?? ''
+  const live =
+    early.kind === 'candidate'
+      ? await fetchLiveWorkerVersion({ accountId, apiToken, fetchImpl: fetch })
+      : 'unknown'
+  const summaryFile = envValue('GITHUB_STEP_SUMMARY')
+  const decided = await runDeployRollback({
+    context,
+    diff,
+    liveWorkerVersion: live,
+    rollback: async (versionId, message) => runWranglerRollback(versionId, message),
+    verify: verifyAfterRollback,
+    notify: async (message) => {
+      await sendSlack(message)
+    },
+    summarize: (message) => {
+      if (summaryFile === undefined || summaryFile.trim().length === 0) {
+        return
+      }
+      appendFileSync(summaryFile, `### deploy-rollback\n\n${message}\n`)
+    },
+    log: (line) => {
+      console.log(line)
+    },
+  })
+  return decided.exitCode
+}
+
 const command = process.argv[2]
-const exitCode = await (command === 'cleanup' ? cleanup() : command === 'notify' ? notify() : run())
+const exitCode = await (command === 'cleanup'
+  ? cleanup()
+  : command === 'notify'
+    ? notify()
+    : command === 'export-outputs'
+      ? exportOutputs()
+      : command === 'rollback'
+        ? rollback()
+        : run())
 process.exit(exitCode)

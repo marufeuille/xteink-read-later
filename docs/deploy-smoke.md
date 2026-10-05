@@ -1,6 +1,6 @@
 # デプロイ後スモーク
 
-`main` で Worker の deploy が成功したあと、同じ workflow の `deploy smoke` が本番 origin を 1 回だけ確認する。朝晩の外形、Access の Cronitor、クリップ失敗の Cronitor とは別で、それらを置き換えない。自動 rollback はしない。
+`main` で Worker の deploy が成功したあと、同じ workflow の `deploy smoke` が本番 origin を 1 回だけ確認する。朝晩の外形、Access の Cronitor、クリップ失敗の Cronitor とは別で、それらを置き換えない。スモークがコード起因らしい失敗をしたときは、その deploy の直前に本番で動いていた Worker version へ自動で戻す。
 
 本番 origin は `https://xteink-read-later.marufeuille.workers.dev`。
 
@@ -17,7 +17,7 @@ deploy が path filter で skip されたとき、このジョブも skip する
 
 成功時は Slack に出さない。失敗したとき、またはジョブがキャンセルされたとき、Slack `#xteink-cronitor` へ 1 通出す。通知ステップの条件は `failure() || cancelled()`。メッセージは `[deploy-smoke]` で始まる。実行と DELETE の両方が失敗したときは、同じ行に `cleanupErrorKind` を足す。
 
-ステップの timeout は checkout 1 分、Node の準備 1 分、install 3 分、スモーク 8 分、DELETE 2 分、通知 1 分で、合計 16 分。ジョブ全体は 18 分。合計がジョブの上限を超えない。
+ステップの timeout は checkout 1 分、Node の準備 1 分、install 3 分、スモーク 8 分、DELETE 2 分、通知 1 分、結果の export 1 分で、合計 17 分。ジョブ全体は 18 分。合計がジョブの上限を超えない。
 
 ```text
 [deploy-smoke] github.sha=0123456789abcdef0123456789abcdef01234567 workerVersion=01234567-89ab-cdef-0123-456789abcdef failedStep=poll-job jobId=job_0123456789abcdef0123456789abcdef lastStage=extract errorKind=fetch_failed runUrl=https://github.com/marufeuille/xteink-read-later/actions/runs/123
@@ -25,7 +25,56 @@ deploy が path filter で skip されたとき、このジョブも skip する
 
 入れるもの: `github.sha`、Worker version、失敗した工程、jobId、最後の stage、errorKind、Actions の run URL。実行と DELETE の両方が失敗したときだけ `cleanupErrorKind`。入れないもの: 記事 URL、token、パスワード、ハッシュの入力にした生の値、記事本文。ログも同じ。クリップ失敗で Worker の Cronitor `xteink-clip` も鳴ることがある。二重になってよい。
 
-切り分けと、DELETE が残した記事の人手削除は Ops の runbook。
+切り分け、DELETE が残した記事の人手削除、手動の rollback は Ops の runbook が正本である。手順はこの文書に複製しない。
+
+## 自動 rollback
+
+deploy の直前に、本番の Worker version id を `previous_worker_version` として記録する。同じ応答から、その version を出した git SHA を `previous_worker_sha` として記録する。deploy は `wrangler deploy --message deploy-sha=<github.sha>` で、その SHA を deployment の message に残す。message が version 側にしか無いときは、その version の annotation を読む。`github.event.before` は使わない。失敗した deploy や、concurrency でキャンセルされた run のコミットは本番に出ていないことがあり、その範囲で差分を取ると `migrations/` を見落とす。SHA が message からも annotation からも取れないときは `skipped:unknown_diff` で通知だけし、戻さない。deploy のあと、この run の `worker_version` も記録する。id なしの `wrangler rollback` は使わない。`wrangler secret put` も version を作るので、直前にアップロードされた版は、この deploy の直前とは限らない。version には secret の値も入っている。古すぎる版に戻すと、その日入れたスモーク用ハッシュが落ちることがある。戻すときは、記録した id を指定する。
+
+`deploy rollback` は `deploy` と `deploy smoke` の両方を `needs` に持ち、`if: always()` でスモークが失敗またはキャンセルしたあとにも判定する。対象は、`main` への push で deploy が成功し、スモークが失敗またはキャンセルされたときだけである。成功と、未設定による skip では戻さない。
+
+戻すのは、次をすべて満たすときだけ。
+
+- スモークの `outcome` が `failed`。skip とキャンセルは対象外
+- 失敗が下の表だけ。表に無い失敗は通知するだけで、戻さない
+
+| failedStep | errorKind |
+| --- | --- |
+| `post-clip` | `http_5xx`（`http_500` から `http_599`） |
+| `poll-job` | `extract_failed`、`epub_failed`、`internal_error` |
+| `opds-catalog` | `not_in_catalog`、`http_5xx` |
+| `download-epub` | `http_5xx` |
+| `verify-epub` | `epub_*` |
+
+- `previous_worker_version` と、この run の `worker_version` が両方取れている。`unknown` ではない
+- いまの本番 version が、この run の `worker_version` と一致する。古い run や手動の再実行で、より新しいリリースを戻さない
+- `previous_worker_sha` からこの run の SHA までの差分に `migrations/` が無く、`wrangler.jsonc` の bindings と triggers も変わっていない
+
+コマンドは、インストール済みの wrangler が受ける形で、version id と `--message` と `--yes` を付ける。
+
+```text
+wrangler rollback <previous_worker_version> --message "deploy-rollback sha=… run=…" --yes
+```
+
+戻したあと、スモークを 1 回だけ再実行する。結果は `verified` か `still_failing`。再スモークが失敗しても、もう一度は戻さない。再スモークの内部期限は 9 分で、rollback ステップの 12 分より短い。期限までに終わらなければ `verify=-` で通知し、ジョブ summary にも同じ行を書く。
+
+rollback コマンド自体が失敗したときは、終了コードと、token を含み得ない stderr の先頭だけをジョブのログに出す。その行は Slack にも job summary の本文にも入れない。
+
+D1 のスキーマとデータは戻らない。main の revert も、マージの停止もしない。戻したときは「main には変更が残っています。revert PR が要ります」と通知する。
+
+`[deploy-smoke]` の行はそのまま残す。別に `[deploy-rollback]` を 1 通、同じ `SMOKE_SLACK_WEBHOOK_URL` へ出す。GitHub の job summary にも同じ行を書く。戻す処理自体が失敗したときは、このジョブを失敗にする。
+
+```text
+[deploy-rollback] sha=0123456789abcdef0123456789abcdef01234567 from=89abcdef-0123-4567-89ab-cdef01234567 to=01234567-89ab-cdef-0123-456789abcdef trigger=verify-epub/epub_phrase result=rolled_back verify=verified runUrl=https://github.com/marufeuille/xteink-read-later/actions/runs/123 main には変更が残っています。revert PR が要ります
+```
+
+入れるもの: `sha`、`from`、`to`、`trigger`（failedStep / errorKind）、`result`（`rolled_back` / `rollback_failed` / `skipped:<理由>`）、`verify`（`verified` / `still_failing` / `-`）、Actions の run URL。戻したときだけ、main に変更が残っていること。入れないもの: 記事 URL、token、パスワード、ハッシュの入力にした生の値、記事本文。
+
+`result` が `skipped:` になる例: `migration`（`migrations/`、または bindings / triggers）、`unknown_diff`（本番 version の SHA が取れない）、`version_mismatch`（本番がこの run の version ではない。古い run や手動の再実行を含む）、`external`（`network` / `fetch_failed` / `http_401` / `http_403` / `interrupted`）、`unknown_version`。`poll-job` の `timeout`、`article-preflight`、DELETE だけの失敗、表に無い失敗も戻さない。
+
+トークンは既存の GitHub Actions secret `CLOUDFLARE_API_TOKEN` を使う。新しい secret は作らない。
+
+手動で戻すときの手順は、上の Ops の runbook に従う。この文書にはその手順を複製しない。
 
 ## 専用記事
 
