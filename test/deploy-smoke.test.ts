@@ -18,15 +18,17 @@ import { redactSmokeText } from '../src/smoke/redact'
 import {
   cleanupSmokeArticle,
   missingSmokeSecrets,
+  notificationForState,
   notifyIfSmokeFailed,
   requestTarget,
   resolveSmokeArticleUrl,
   runDeploySmoke,
+  smokeMayHavePosted,
   type SmokeSettings,
   type SmokeStateFile,
 } from '../src/smoke/run'
 import { parseWorkerDeploymentVersion } from '../src/smoke/worker-version'
-import { parseHttpUrl } from '../src/types'
+import { articleIdFromCanonicalUrl, parseHttpUrl } from '../src/types'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const TOKEN = 'smoke-clip-token-value'
@@ -461,6 +463,107 @@ describe('deploy smoke script', () => {
     })
     expect(idle.ok).toBe(true)
     expect(fetchImpl).not.toHaveBeenCalled()
+    expect(smokeMayHavePosted(null)).toBe(true)
+    expect(smokeMayHavePosted({ ...state, outcome: 'skipped', jobId: null, articleId: null })).toBe(false)
+  })
+
+  it('deletes by URL hash when the clip may have been accepted without an id', async () => {
+    const articleUrl = parseHttpUrl(ARTICLE)
+    if (articleUrl === null) {
+      throw new Error('url')
+    }
+    const hashed = await articleIdFromCanonicalUrl(articleUrl)
+    expect(hashed).not.toBe(ART)
+    const base: SmokeStateFile = {
+      outcome: 'failed',
+      githubSha: SHA,
+      workerVersion: VERSION,
+      runUrl: RUN,
+      step: 'post-clip',
+      failedStep: 'post-clip',
+      jobId: null,
+      articleId: null,
+      lastStage: null,
+      errorKind: 'invalid_response',
+      missing: [],
+      cleanupErrorKind: null,
+    }
+    const cases: SmokeStateFile[] = [
+      base,
+      { ...base, outcome: 'running', step: 'post-clip', failedStep: null, errorKind: null },
+      { ...base, errorKind: 'network' },
+    ]
+    for (const state of cases) {
+      const deleted: string[] = []
+      const cleaned = await cleanupSmokeArticle({
+        state,
+        settings: settings(),
+        fetch: async (input, init) => {
+          deleted.push(`${init?.method ?? 'GET'} ${requestTarget(input)}`)
+          return new Response(null, { status: 404 })
+        },
+      })
+      expect(cleaned.ok).toBe(true)
+      expect(deleted).toEqual([`DELETE ${ORIGIN}/articles/${hashed}`])
+    }
+
+    const missingFile: string[] = []
+    const fromMissingFile = await cleanupSmokeArticle({
+      state: null,
+      settings: settings(),
+      fetch: async (input, init) => {
+        missingFile.push(`${init?.method ?? 'GET'} ${requestTarget(input)}`)
+        return Response.json({ deleted: true }, { status: 200 })
+      },
+    })
+    expect(fromMissingFile.ok).toBe(true)
+    expect(missingFile).toEqual([`DELETE ${ORIGIN}/articles/${hashed}`])
+
+    const preflight = vi.fn(async () => new Response('no'))
+    const beforePost = await cleanupSmokeArticle({
+      state: { ...base, step: 'article-preflight', failedStep: 'article-preflight', errorKind: 'phrase_missing' },
+      settings: settings(),
+      fetch: preflight,
+    })
+    expect(beforePost.ok).toBe(true)
+    expect(preflight).not.toHaveBeenCalled()
+  })
+
+  it('includes cleanupErrorKind when the run and delete both fail', () => {
+    const failed: SmokeStateFile = {
+      outcome: 'failed',
+      githubSha: SHA,
+      workerVersion: VERSION,
+      runUrl: RUN,
+      step: 'poll-job',
+      failedStep: 'poll-job',
+      jobId: JOB,
+      articleId: ART,
+      lastStage: 'fetch',
+      errorKind: 'timeout',
+      missing: [],
+      cleanupErrorKind: 'http_503',
+    }
+    const fields = notificationForState(failed, {})
+    if (fields === null) {
+      throw new Error('fields')
+    }
+    expect(fields.errorKind).toBe('timeout')
+    expect(fields.cleanupErrorKind).toBe('http_503')
+    const message = buildSmokeSlackMessage(fields)
+    expect(message).toContain('errorKind=timeout')
+    expect(message).toContain('cleanupErrorKind=http_503')
+    expect(message.indexOf('errorKind=timeout')).toBeLessThan(message.indexOf('cleanupErrorKind=http_503'))
+    assertNoLeak(message)
+
+    const deleteOnly = notificationForState({ ...failed, outcome: 'passed', failedStep: null, errorKind: null }, {})
+    if (deleteOnly === null) {
+      throw new Error('deleteOnly')
+    }
+    expect(deleteOnly.failedStep).toBe('delete')
+    expect(deleteOnly.errorKind).toBe('http_503')
+    expect(deleteOnly.cleanupErrorKind).toBeUndefined()
+    expect(buildSmokeSlackMessage(deleteOnly)).not.toContain('cleanupErrorKind')
   })
 
   it('matches the Pages article, the wrangler URL, and the workflow secrets', async () => {
@@ -499,9 +602,32 @@ describe('deploy smoke script', () => {
     expect(ci).toContain('secrets.SMOKE_OPDS_PASSWORD')
     expect(ci).toContain('secrets.SMOKE_SLACK_WEBHOOK_URL')
     expect(ci).toContain('if: always()')
+    expect(ci).toContain('if: ${{ failure() || cancelled() }}')
+    const smokeJob = ci.split('\n  deploy-smoke:')[1] ?? ''
+    const jobTimeout = Number(/^    timeout-minutes: (\d+)/m.exec(smokeJob)?.[1])
+    const stepTimeouts = [...smokeJob.matchAll(/\n        timeout-minutes: (\d+)/g)].map((match) => Number(match[1]))
+    expect(stepTimeouts).toEqual([1, 1, 3, 8, 2, 1])
+    expect(stepTimeouts.reduce((sum, minutes) => sum + minutes, 0)).toBeLessThanOrEqual(jobTimeout)
+    expect(jobTimeout).toBe(18)
     expect(ci).not.toMatch(/secrets\.CLIP_TOKEN/)
     expect(ci).not.toMatch(/secrets\.OPDS_USERNAME/)
     expect(ci).not.toMatch(/secrets\.OPDS_PASSWORD/)
+    const doc = readFileSync(join(root, 'docs/deploy-smoke.md'), 'utf8')
+    const readme = readFileSync(join(root, 'README.md'), 'utf8')
+    const env = readFileSync(join(root, 'src/env.d.ts'), 'utf8')
+    expect(doc).toContain('SMOKE_CLIP_TOKEN_SHA256')
+    expect(doc).toContain('SMOKE_OPDS_BASIC_SHA256')
+    expect(doc).toContain("printf '%s'")
+    expect(doc).not.toContain('npx wrangler secret put SMOKE_CLIP_TOKEN\n')
+    expect(readme).toContain('本番の値は置かない。置くのはスモーク専用の値だけ。')
+    expect(readme).toContain('npx wrangler secret put SMOKE_CLIP_TOKEN_SHA256')
+    expect(readme).toContain('npx wrangler secret put SMOKE_OPDS_BASIC_SHA256')
+    expect(readme).not.toContain('npx wrangler secret put SMOKE_CLIP_TOKEN\n')
+    expect(env).toContain('SMOKE_CLIP_TOKEN_SHA256')
+    expect(env).toContain('SMOKE_OPDS_BASIC_SHA256')
+    expect(env).not.toContain('SMOKE_CLIP_TOKEN:')
+    expect(env).not.toContain('SMOKE_OPDS_USERNAME')
+    expect(env).not.toContain('SMOKE_OPDS_PASSWORD')
     const pages = readFileSync(join(root, '.github/workflows/pages.yml'), 'utf8')
     expect(pages).toContain('actions/upload-pages-artifact')
     expect(pages).toContain('actions/deploy-pages')

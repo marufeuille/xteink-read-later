@@ -83,7 +83,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     const principal = await resolveClipPrincipal(
       c.req.header('authorization'),
       c.env.CLIP_TOKEN,
-      c.env.SMOKE_CLIP_TOKEN,
+      c.env.SMOKE_CLIP_TOKEN_SHA256,
     )
     if (principal === null) {
       return unauthorizedResponse('bearer')
@@ -133,7 +133,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     const principal = await resolveClipPrincipal(
       c.req.header('authorization'),
       c.env.CLIP_TOKEN,
-      c.env.SMOKE_CLIP_TOKEN,
+      c.env.SMOKE_CLIP_TOKEN_SHA256,
     )
     if (principal === null) {
       return unauthorizedResponse('bearer')
@@ -163,8 +163,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
       c.req.header('authorization'),
       c.env.OPDS_USERNAME,
       c.env.OPDS_PASSWORD,
-      c.env.SMOKE_OPDS_USERNAME,
-      c.env.SMOKE_OPDS_PASSWORD,
+      c.env.SMOKE_OPDS_BASIC_SHA256,
     )
     if (principal === null) {
       return unauthorizedResponse('basic')
@@ -231,7 +230,11 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     if (origin === null) {
       return toErrorResponse({ kind: 'invalid_url', url: requestUrl.origin })
     }
-    const articles = await storeFor(c.env, deps).listMeta()
+    const listed = await storeFor(c.env, deps).listMeta()
+    const articles =
+      principal === 'smoke'
+        ? listed.filter((article) => articleMatchesSmokeUrl(article, smokeArticleUrl(c.env)))
+        : listed
     const catalog = buildOpdsCatalog(articles, origin, location)
     if (catalog === null) {
       return toErrorResponse({ kind: 'not_found' })
@@ -287,7 +290,7 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     const principal = await resolveClipPrincipal(
       c.req.header('authorization'),
       c.env.CLIP_TOKEN,
-      c.env.SMOKE_CLIP_TOKEN,
+      c.env.SMOKE_CLIP_TOKEN_SHA256,
     )
     if (principal === null) {
       return unauthorizedResponse('bearer')

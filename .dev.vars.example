@@ -3,11 +3,10 @@ OPENROUTER_API_KEY=
 CLIP_TOKEN=
 OPDS_USERNAME=
 OPDS_PASSWORD=
-# Deploy smoke only. Distinct from CLIP_TOKEN / OPDS_*. Empty disables smoke auth.
-# Values are not committed. See docs/deploy-smoke.md.
-SMOKE_CLIP_TOKEN=
-SMOKE_OPDS_USERNAME=
-SMOKE_OPDS_PASSWORD=
+# Deploy smoke only. SHA-256 hex digests, not the raw token or password.
+# Empty disables smoke auth. Do not commit values. See docs/deploy-smoke.md.
+SMOKE_CLIP_TOKEN_SHA256=
+SMOKE_OPDS_BASIC_SHA256=
 # Optional Cronitor Job telemetry. Empty skips pings. Not the Access HTTP checks.
 # Names: docs/health-checks.md. Do not put real values in git.
 CRONITOR_API_KEY=

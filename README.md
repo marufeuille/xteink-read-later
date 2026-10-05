@@ -375,12 +375,11 @@ npx wrangler secret put OPENROUTER_API_KEY
 npx wrangler secret put CLIP_TOKEN
 npx wrangler secret put OPDS_USERNAME
 npx wrangler secret put OPDS_PASSWORD
-npx wrangler secret put SMOKE_CLIP_TOKEN
-npx wrangler secret put SMOKE_OPDS_USERNAME
-npx wrangler secret put SMOKE_OPDS_PASSWORD
+npx wrangler secret put SMOKE_CLIP_TOKEN_SHA256
+npx wrangler secret put SMOKE_OPDS_BASIC_SHA256
 ```
 
-プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。任意で `npx wrangler queues create xteink-read-later-feed`。任意で `npx wrangler queues create xteink-read-later-digest`。任意で `npx wrangler d1 create xteink-read-later-candidates`（id はデプロイジョブが wrangler.jsonc に書く）。
+プロンプトに値を貼る。この README やリポジトリには書かない。空の `OPDS_PASSWORD` は使わない。スモーク用の 2 つは生の token やパスワードではなく、SHA-256 の16進だけを貼る。作り方は [docs/deploy-smoke.md](docs/deploy-smoke.md)。Worker に `SMOKE_CLIP_TOKEN` / `SMOKE_OPDS_USERNAME` / `SMOKE_OPDS_PASSWORD` は作らない。任意で `npx wrangler r2 bucket create xteink-read-later-articles`。任意で `npx wrangler queues create xteink-read-later-clip`。任意で `npx wrangler queues create xteink-read-later-feed`。任意で `npx wrangler queues create xteink-read-later-digest`。任意で `npx wrangler d1 create xteink-read-later-candidates`（id はデプロイジョブが wrangler.jsonc に書く）。
 
 ### 初回だけ — 管理画面の Google 認証（Cloudflare Access）
 
@@ -435,7 +434,7 @@ Access の Terraform は上の `CLOUDFLARE_API_TOKEN` を読まない。Workers 
 
 アプリ用の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` は GitHub Secrets に入れない（Cloudflare の `wrangler secret put` 側）。`OPENROUTER_API_KEY` は Worker 用と Actions 試行用で別々に置く。
 
-デプロイ後スモークは別の値だけを Actions に置く。`SMOKE_CLIP_TOKEN`、`SMOKE_OPDS_USERNAME`、`SMOKE_OPDS_PASSWORD`、`SMOKE_SLACK_WEBHOOK_URL`。Worker 側の 3 つの資格情報は上の `wrangler secret put`。未設定のあいだジョブは失敗にせず skip する。手順は [docs/deploy-smoke.md](docs/deploy-smoke.md)。
+本番の値は置かない。置くのはスモーク専用の値だけ。Actions に置く生の値は `SMOKE_CLIP_TOKEN`、`SMOKE_OPDS_USERNAME`、`SMOKE_OPDS_PASSWORD`、`SMOKE_SLACK_WEBHOOK_URL`。Worker に置くのはそのハッシュ `SMOKE_CLIP_TOKEN_SHA256` と `SMOKE_OPDS_BASIC_SHA256` だけで、生の値は置かない。未設定のあいだジョブは失敗にせず skip する。手順は [docs/deploy-smoke.md](docs/deploy-smoke.md)。
 
 Secrets 未設定のまま `main` にマージすると、チェックは通ってもデプロイジョブが落ちる。`TF_CLOUDFLARE_API_TOKEN` か state 用の 2 つが未設定、または R2 に state が無いときも、Workers のデプロイとは別に Access の plan / apply が落ちる。空の state ではアプリを作らない。
 

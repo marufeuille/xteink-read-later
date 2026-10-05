@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { createApp } from '../src/app'
-import { parseBasicCredentials, parseBearerToken, secretsEqual } from '../src/http/auth'
+import {
+  configuredSmokeHash,
+  parseBasicCredentials,
+  parseBearerToken,
+  presentedMatchesSha256,
+  secretsEqual,
+  sha256HexDigest,
+  smokeBasicMaterial,
+} from '../src/http/auth'
 import { createMemoryStore } from '../src/store/memory'
 import { asArticleId, asEpubBytes, parseHttpUrl } from '../src/types'
 import {
@@ -37,6 +45,30 @@ describe('auth helpers', () => {
     expect(await secretsEqual('', '')).toBe(false)
     expect(await secretsEqual(TEST_CLIP_TOKEN, TEST_CLIP_TOKEN)).toBe(true)
     expect(await secretsEqual(TEST_CLIP_TOKEN, 'other')).toBe(false)
+  })
+
+  it('compares smoke secrets by hashing the presented value', async () => {
+    const abc = 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad'
+    expect(await sha256HexDigest('abc')).toBe(abc)
+    expect(configuredSmokeHash(`  ${abc.toUpperCase()}\n`)).toBe(abc)
+    expect(await presentedMatchesSha256('abc', abc)).toBe(true)
+    expect(await presentedMatchesSha256('abd', abc)).toBe(false)
+    expect(await presentedMatchesSha256(abc, abc)).toBe(false)
+
+    const emptyHash = 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+    expect(await sha256HexDigest('')).toBe(emptyHash)
+    expect(await presentedMatchesSha256('', emptyHash)).toBe(false)
+    expect(configuredSmokeHash(undefined)).toBeNull()
+    expect(configuredSmokeHash('')).toBeNull()
+    expect(configuredSmokeHash('   ')).toBeNull()
+    expect(configuredSmokeHash('not-a-hash')).toBeNull()
+    expect(configuredSmokeHash(abc.slice(0, 63))).toBeNull()
+
+    const material = smokeBasicMaterial('smoke-user', 'p:ass')
+    expect(material).toBe('smoke-user:p:ass')
+    const basicHash = await sha256HexDigest(material)
+    expect(await presentedMatchesSha256(material, basicHash)).toBe(true)
+    expect(await presentedMatchesSha256('smoke-user:other', basicHash)).toBe(false)
   })
 })
 

@@ -75,12 +75,57 @@ export async function opdsBasicAuthorized(
   return userOk && passOk
 }
 
-/** Blank and whitespace-only values are unset. They never match, including the empty string. */
-export function configuredSmokeSecret(value: string | undefined): string | null {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+const SHA256_HEX = /^[0-9a-f]{64}$/
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = await sha256(value)
+  let hex = ''
+  for (const byte of digest) {
+    hex += byte.toString(16).padStart(2, '0')
+  }
+  return hex
+}
+
+function hexEqual(actual: string, expected: string): boolean {
+  if (actual.length !== expected.length) {
+    return false
+  }
+  let diff = 0
+  for (let i = 0; i < actual.length; i += 1) {
+    diff |= actual.charCodeAt(i) ^ expected.charCodeAt(i)
+  }
+  return diff === 0
+}
+
+/**
+ * Blank, whitespace, and anything that is not 64 hex digits is unset.
+ * Callers store a SHA-256 digest, never the raw smoke secret.
+ */
+export function configuredSmokeHash(value: string | undefined): string | null {
+  if (typeof value !== 'string') {
     return null
   }
-  return value
+  const normalized = value.trim().toLowerCase()
+  if (!SHA256_HEX.test(normalized)) {
+    return null
+  }
+  return normalized
+}
+
+/** SHA-256 of `username:password`, the string Basic auth decodes. No extra newline. */
+export function smokeBasicMaterial(username: string, password: string): string {
+  return `${username}:${password}`
+}
+
+/** Hash the presented value and compare to a stored digest. An empty presented value never matches. */
+export async function presentedMatchesSha256(presented: string, expectedHash: string): Promise<boolean> {
+  const actual = await sha256Hex(presented)
+  const matches = hexEqual(actual, expectedHash.toLowerCase())
+  return presented.length > 0 && matches
+}
+
+export async function sha256HexDigest(value: string): Promise<string> {
+  return sha256Hex(value)
 }
 
 export type CredentialPrincipal = 'production' | 'smoke'
@@ -88,40 +133,44 @@ export type CredentialPrincipal = 'production' | 'smoke'
 export async function resolveClipPrincipal(
   header: string | undefined,
   productionToken: string | undefined,
-  smokeToken: string | undefined,
+  smokeTokenHash: string | undefined,
 ): Promise<CredentialPrincipal | null> {
   if (await clipTokenAuthorized(header, productionToken)) {
     return 'production'
   }
-  const smoke = configuredSmokeSecret(smokeToken)
-  if (smoke === null) {
+  const smokeHash = configuredSmokeHash(smokeTokenHash)
+  if (smokeHash === null) {
     return null
   }
-  if (await clipTokenAuthorized(header, smoke)) {
-    return 'smoke'
+  const presented = parseBearerToken(header)
+  if (presented === null || !(await presentedMatchesSha256(presented, smokeHash))) {
+    return null
   }
-  return null
+  return 'smoke'
 }
 
 export async function resolveOpdsPrincipal(
   header: string | undefined,
   productionUser: string | undefined,
   productionPassword: string | undefined,
-  smokeUser: string | undefined,
-  smokePassword: string | undefined,
+  smokeBasicHash: string | undefined,
 ): Promise<CredentialPrincipal | null> {
   if (await opdsBasicAuthorized(header, productionUser, productionPassword)) {
     return 'production'
   }
-  const user = configuredSmokeSecret(smokeUser)
-  const password = configuredSmokeSecret(smokePassword)
-  if (user === null || password === null) {
+  const smokeHash = configuredSmokeHash(smokeBasicHash)
+  if (smokeHash === null) {
     return null
   }
-  if (await opdsBasicAuthorized(header, user, password)) {
-    return 'smoke'
+  const presented = parseBasicCredentials(header)
+  if (presented === null || presented.username.length === 0 || presented.password.length === 0) {
+    return null
   }
-  return null
+  const material = smokeBasicMaterial(presented.username, presented.password)
+  if (!(await presentedMatchesSha256(material, smokeHash))) {
+    return null
+  }
+  return 'smoke'
 }
 
 export function forbiddenResponse(): Response {

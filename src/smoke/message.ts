@@ -12,6 +12,7 @@ export type SmokeFailureFields = {
   readonly jobId: string | null
   readonly lastStage: string | null
   readonly errorKind: string | null
+  readonly cleanupErrorKind?: string | null
   readonly runUrl: string
 }
 
@@ -51,5 +52,9 @@ export function buildSmokeSlackMessage(input: SmokeFailureFields): string {
   const stage = sanitizeKind(input.lastStage)
   const errorKind = sanitizeKind(input.errorKind)
   const runUrl = sanitizeRunUrl(input.runUrl)
-  return `[deploy-smoke] github.sha=${sha} workerVersion=${version} failedStep=${step} jobId=${jobId} lastStage=${stage} errorKind=${errorKind} runUrl=${runUrl}`
+  const cleanup =
+    input.cleanupErrorKind === undefined || input.cleanupErrorKind === null
+      ? ''
+      : ` cleanupErrorKind=${sanitizeKind(input.cleanupErrorKind)}`
+  return `[deploy-smoke] github.sha=${sha} workerVersion=${version} failedStep=${step} jobId=${jobId} lastStage=${stage} errorKind=${errorKind}${cleanup} runUrl=${runUrl}`
 }
