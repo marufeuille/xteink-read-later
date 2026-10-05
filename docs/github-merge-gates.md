@@ -76,6 +76,10 @@ gh pr merge --auto --merge
 
 `pr-risk-trial`（`.github/workflows/pr-risk.yml`）は判定を記録するだけ。必須チェックにしない。`merge-gate` の `needs` にも足さない。本運用の足し方は `docs/pr-risk.md` と次の節。
 
+## 高リスク追加レビュー（任意）
+
+`high-risk-review`（同じ workflow、[MAR-69](https://linear.app/marufeuille/issue/MAR-69)）は、判定が high の PR にだけ Sol 級モデルのレビューを残す任意ジョブである。`merge-gate` の `needs` にも、ruleset の必須チェックにも入っていない。止めるときは Actions の Variable `HIGH_RISK_REVIEW` を `off` にする。ruleset の再適用は要らない。条件と単価は `docs/pr-risk.md`。下の手順は、あとから必須にするとき（[MAR-61](https://linear.app/marufeuille/issue/MAR-61)）のもので、このジョブを足しただけでは行わない。
+
 ## 高リスク AI レビューを後から必須にする
 
 認証・秘密情報・削除・CI / デプロイ設定など、AGENTS.md の高リスク変更向け。

@@ -14,6 +14,7 @@
     "translate:bakeoff": "TRANSLATE_BAKEOFF=1 vitest run --config vitest.e2e.config.ts test/e2e/translate-bakeoff.live.test.ts",
     "pr-risk:github": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/pr-risk/cli.ts github",
     "pr-risk:replay": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/pr-risk/cli.ts replay",
+    "pr-risk:review": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/pr-risk/cli.ts review",
     "simulator:images": "vitest run --config vitest.simulator.config.ts",
     "deploy": "wrangler deploy"
   },
