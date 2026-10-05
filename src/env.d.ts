@@ -5,6 +5,10 @@ declare namespace Cloudflare {
     CLIP_TOKEN: string
     OPDS_USERNAME: string
     OPDS_PASSWORD: string
+    SMOKE_CLIP_TOKEN: string
+    SMOKE_OPDS_USERNAME: string
+    SMOKE_OPDS_PASSWORD: string
+    SMOKE_ARTICLE_URL: string
     PUBLIC_ORIGIN: string
     CRONITOR_API_KEY: string
     CRONITOR_FEED_COLLECT_MONITOR_KEY: string

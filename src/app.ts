@@ -1,5 +1,6 @@
 import { Hono, type Context } from 'hono'
-import { clipTokenAuthorized, opdsBasicAuthorized, unauthorizedResponse } from './http/auth'
+import { forbiddenResponse, resolveClipPrincipal, resolveOpdsPrincipal, unauthorizedResponse } from './http/auth'
+import { articleMatchesSmokeUrl, configuredSmokeArticleUrl, httpUrlsEqual } from './http/smoke-scope'
 import { mountBookRoutes } from './http/book-routes'
 import { mountCandidateRoutes, type CandidateHttpDeps } from './http/candidate-routes'
 import { mountClipRecentRoutes } from './http/clip-recent-routes'
@@ -71,11 +72,20 @@ function queueFor(env: Cloudflare.Env, deps: AppDeps): Queue<ClipQueueMessage> {
   return deps.queue ?? env.CLIP_QUEUE
 }
 
+function smokeArticleUrl(env: Cloudflare.Env): string | undefined {
+  return typeof env.SMOKE_ARTICLE_URL === 'string' ? env.SMOKE_ARTICLE_URL : undefined
+}
+
 export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   const app = new Hono<AppEnv>()
 
   const clip = async (c: Context<AppEnv>) => {
-    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
+    const principal = await resolveClipPrincipal(
+      c.req.header('authorization'),
+      c.env.CLIP_TOKEN,
+      c.env.SMOKE_CLIP_TOKEN,
+    )
+    if (principal === null) {
       return unauthorizedResponse('bearer')
     }
     let raw: string
@@ -95,6 +105,12 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     }
 
     const url = parsed.value
+    if (principal === 'smoke') {
+      const allowed = configuredSmokeArticleUrl(smokeArticleUrl(c.env))
+      if (allowed === null || !httpUrlsEqual(url, allowed)) {
+        return forbiddenResponse()
+      }
+    }
     const queued = await enqueueClipJob({
       store: storeFor(c.env, deps),
       queue: queueFor(c.env, deps),
@@ -114,7 +130,12 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   mountClipRecentRoutes(app, deps)
 
   const getClipJob = async (c: Context<AppEnv>) => {
-    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
+    const principal = await resolveClipPrincipal(
+      c.req.header('authorization'),
+      c.env.CLIP_TOKEN,
+      c.env.SMOKE_CLIP_TOKEN,
+    )
+    if (principal === null) {
       return unauthorizedResponse('bearer')
     }
     const jobId = c.req.param('jobId')
@@ -125,23 +146,41 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     if (job === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
+    if (principal === 'smoke') {
+      const allowed = configuredSmokeArticleUrl(smokeArticleUrl(c.env))
+      if (allowed === null || !httpUrlsEqual(job.sourceUrl, allowed)) {
+        return toErrorResponse({ kind: 'not_found' })
+      }
+    }
     return c.json(toClipJobBody(job), 200)
   }
 
   app.on('GET', ['/clip/jobs/:jobId', '/clip/jobs/:jobId/'], getClipJob)
   mountBookRoutes(app, deps)
 
-  const requireOpdsBasic = async (c: Context<AppEnv>) => {
-    if (!(await opdsBasicAuthorized(c.req.header('authorization'), c.env.OPDS_USERNAME, c.env.OPDS_PASSWORD))) {
+  const opdsPrincipal = async (c: Context<AppEnv>) => {
+    const principal = await resolveOpdsPrincipal(
+      c.req.header('authorization'),
+      c.env.OPDS_USERNAME,
+      c.env.OPDS_PASSWORD,
+      c.env.SMOKE_OPDS_USERNAME,
+      c.env.SMOKE_OPDS_PASSWORD,
+    )
+    if (principal === null) {
       return unauthorizedResponse('basic')
     }
-    return null
+    return principal
+  }
+
+  const smokeMayReadArticle = async (c: Context<AppEnv>, id: ArticleId): Promise<boolean> => {
+    const meta = await storeFor(c.env, deps).getMeta(id)
+    return meta !== null && articleMatchesSmokeUrl(meta, smokeArticleUrl(c.env))
   }
 
   app.get('/articles/:id', async (c) => {
-    const denied = await requireOpdsBasic(c)
-    if (denied !== null) {
-      return denied
+    const principal = await opdsPrincipal(c)
+    if (principal instanceof Response) {
+      return principal
     }
     const id = c.req.param('id')
     if (!isArticleId(id)) {
@@ -151,16 +190,22 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
     if (meta === null) {
       return toErrorResponse({ kind: 'not_found' })
     }
+    if (principal === 'smoke' && !articleMatchesSmokeUrl(meta, smokeArticleUrl(c.env))) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
     return c.json(meta, 200)
   })
 
   app.get('/articles/:id/book.epub', async (c) => {
-    const denied = await requireOpdsBasic(c)
-    if (denied !== null) {
-      return denied
+    const principal = await opdsPrincipal(c)
+    if (principal instanceof Response) {
+      return principal
     }
     const id = c.req.param('id')
     if (!isArticleId(id)) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    if (principal === 'smoke' && !(await smokeMayReadArticle(c, id))) {
       return toErrorResponse({ kind: 'not_found' })
     }
     const started = Date.now()
@@ -173,9 +218,9 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   })
 
   const opdsCatalog = async (c: Context<AppEnv>) => {
-    const denied = await requireOpdsBasic(c)
-    if (denied !== null) {
-      return denied
+    const principal = await opdsPrincipal(c)
+    if (principal instanceof Response) {
+      return principal
     }
     const requestUrl = new URL(c.req.url)
     const location = parseOpdsCatalogPath(requestUrl.pathname)
@@ -218,12 +263,15 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   )
 
   app.get('/opds/download/:file', async (c) => {
-    const denied = await requireOpdsBasic(c)
-    if (denied !== null) {
-      return denied
+    const principal = await opdsPrincipal(c)
+    if (principal instanceof Response) {
+      return principal
     }
     const id = parseOpdsDownloadFile(c.req.param('file'))
     if (id === null) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    if (principal === 'smoke' && !(await smokeMayReadArticle(c, id))) {
       return toErrorResponse({ kind: 'not_found' })
     }
     const started = Date.now()
@@ -236,11 +284,19 @@ export function createApp(deps: AppDeps = {}): Hono<AppEnv> {
   })
 
   app.delete('/articles/:id', async (c) => {
-    if (!(await clipTokenAuthorized(c.req.header('authorization'), c.env.CLIP_TOKEN))) {
+    const principal = await resolveClipPrincipal(
+      c.req.header('authorization'),
+      c.env.CLIP_TOKEN,
+      c.env.SMOKE_CLIP_TOKEN,
+    )
+    if (principal === null) {
       return unauthorizedResponse('bearer')
     }
     const id = c.req.param('id')
     if (!isArticleId(id)) {
+      return toErrorResponse({ kind: 'not_found' })
+    }
+    if (principal === 'smoke' && !(await smokeMayReadArticle(c, id))) {
       return toErrorResponse({ kind: 'not_found' })
     }
     const deleted = await storeFor(c.env, deps).delete(id)

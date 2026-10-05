@@ -126,6 +126,9 @@ jobs:
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.result == 'success' && needs.changes.outputs.deploy == 'true' && needs.check.result == 'success' && (needs.simulator-images.result == 'success' || needs.simulator-images.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      github_sha: ${{ steps.revision.outputs.github_sha }}
+      worker_version: ${{ steps.revision.outputs.worker_version }}
     env:
       WRANGLER_SEND_METRICS: 'false'
     steps:
@@ -168,3 +171,58 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: npm
           command: deploy
+      - name: Record deployed revision
+        id: revision
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bash .github/scripts/record-deploy-revision.sh
+
+  # Post-deploy only. A path-filter skip or a failed deploy leaves this job skipped.
+  # Re-running the deploy job re-runs this job because it needs: deploy.
+  # Missing smoke secrets or an unreachable Pages article log 未設定 and exit 0.
+  deploy-smoke:
+    name: deploy smoke
+    needs: [deploy]
+    if: ${{ always() && needs.deploy.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Run deploy smoke
+        timeout-minutes: 8
+        env:
+          SMOKE_CLIP_TOKEN: ${{ secrets.SMOKE_CLIP_TOKEN }}
+          SMOKE_OPDS_USERNAME: ${{ secrets.SMOKE_OPDS_USERNAME }}
+          SMOKE_OPDS_PASSWORD: ${{ secrets.SMOKE_OPDS_PASSWORD }}
+          SMOKE_SLACK_WEBHOOK_URL: ${{ secrets.SMOKE_SLACK_WEBHOOK_URL }}
+          SMOKE_ARTICLE_URL: ${{ vars.SMOKE_ARTICLE_URL }}
+          SMOKE_ORIGIN: https://xteink-read-later.marufeuille.workers.dev
+          WORKER_VERSION: ${{ needs.deploy.outputs.worker_version }}
+          SMOKE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SMOKE_STATE_PATH: smoke-state.json
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts run
+      - name: Delete smoke article
+        if: always()
+        timeout-minutes: 2
+        env:
+          SMOKE_CLIP_TOKEN: ${{ secrets.SMOKE_CLIP_TOKEN }}
+          SMOKE_ARTICLE_URL: ${{ vars.SMOKE_ARTICLE_URL }}
+          SMOKE_ORIGIN: https://xteink-read-later.marufeuille.workers.dev
+          SMOKE_STATE_PATH: smoke-state.json
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts cleanup
+      - name: Notify smoke failure
+        if: failure()
+        timeout-minutes: 2
+        env:
+          SMOKE_SLACK_WEBHOOK_URL: ${{ secrets.SMOKE_SLACK_WEBHOOK_URL }}
+          WORKER_VERSION: ${{ needs.deploy.outputs.worker_version }}
+          SMOKE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SMOKE_STATE_PATH: smoke-state.json
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts notify

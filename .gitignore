@@ -7,3 +7,4 @@ simulator/out/
 *.tsbuildinfo
 .DS_Store
 pr-risk-judgment.json
+smoke-state.json
