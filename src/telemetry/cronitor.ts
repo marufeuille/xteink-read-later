@@ -22,9 +22,11 @@ export const CRONITOR_PING_TIMEOUT_MS = 2_000
 export const CRONITOR_API_KEY_BINDING = 'CRONITOR_API_KEY'
 export const CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING = 'CRONITOR_FEED_COLLECT_MONITOR_KEY'
 export const CRONITOR_CLIP_MONITOR_KEY_BINDING = 'CRONITOR_CLIP_MONITOR_KEY'
+export const CRONITOR_DAILY_DIGEST_MONITOR_KEY_BINDING = 'CRONITOR_DAILY_DIGEST_MONITOR_KEY'
 
 export const CRONITOR_FEED_COLLECT_FAIL_MESSAGE = 'feed collection failed'
 export const CRONITOR_CLIP_FAIL_MESSAGE = 'clip processing failed'
+export const CRONITOR_DAILY_DIGEST_FAIL_MESSAGE = 'daily digest failed'
 
 const METRIC_ORDER = ['count', 'duration', 'error_count'] as const
 const MAX_MESSAGE_CHARS = 2_000
@@ -50,11 +52,13 @@ export type CronitorJobMetrics = {
 export type CronitorMonitorKeyBinding =
   | typeof CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING
   | typeof CRONITOR_CLIP_MONITOR_KEY_BINDING
+  | typeof CRONITOR_DAILY_DIGEST_MONITOR_KEY_BINDING
 
 export type CronitorEnv = {
   readonly [CRONITOR_API_KEY_BINDING]?: string
   readonly [CRONITOR_FEED_COLLECT_MONITOR_KEY_BINDING]?: string
   readonly [CRONITOR_CLIP_MONITOR_KEY_BINDING]?: string
+  readonly [CRONITOR_DAILY_DIGEST_MONITOR_KEY_BINDING]?: string
 }
 
 export type TraceCronitorJobOptions<T> = {
@@ -126,7 +130,7 @@ function logCronitorSafe(entry: Parameters<typeof logCronitor>[0]): void {
   try {
     logCronitor(entry)
   } catch {
-    // A log failure must not fail the clip or feed job.
+    // A log failure must not fail the clip, feed, or digest job.
   }
 }
 

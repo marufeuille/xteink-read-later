@@ -9,5 +9,6 @@ declare namespace Cloudflare {
     CRONITOR_API_KEY: string
     CRONITOR_FEED_COLLECT_MONITOR_KEY: string
     CRONITOR_CLIP_MONITOR_KEY: string
+    CRONITOR_DAILY_DIGEST_MONITOR_KEY: string
   }
 }
