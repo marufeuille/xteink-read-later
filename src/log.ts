@@ -227,6 +227,13 @@ export type FeedLog = {
   readonly attempt?: number
   /** Declared or received size. Number only, and only for payload_too_large. */
   readonly bytes?: number
+  /** HTTP status for fetch_failed. Absent when the fetch had no response status. */
+  readonly statusCode?: number
+  /**
+   * Short fetch_failed token. Written to Workers Logs as `reason`.
+   * The input name stays off `reason` so a free-form fetch message cannot be passed through.
+   */
+  readonly logReason?: string
 }
 
 const FEED_HOSTNAME =
@@ -258,14 +265,44 @@ function finiteByteCount(value: unknown): number | undefined {
   return value
 }
 
+// 1–48 chars. Letters, digits, and underscore. Rejects URLs, headers, and messages.
+const FEED_FETCH_LOG_REASON = /^[A-Za-z][A-Za-z0-9_]{0,47}$/
+
+function feedFetchStatusCode(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 100 || value > 599) {
+    return undefined
+  }
+  return value
+}
+
+function feedFetchLogReason(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !FEED_FETCH_LOG_REASON.test(value)) {
+    return undefined
+  }
+  return value
+}
+
 export function feedCollectionErrorLog(error: {
   readonly kind: string
   readonly bytes?: unknown
-}): { readonly errorKind: string; readonly bytes?: number } {
+  readonly statusCode?: unknown
+  readonly logReason?: unknown
+  // The stored fetch reason. Kept off the log: it may be an exception message or header.
+  readonly reason?: unknown
+}): {
+  readonly errorKind: string
+  readonly bytes?: number
+  readonly statusCode?: number
+  readonly logReason?: string
+} {
   const bytes = error.kind === 'payload_too_large' ? finiteByteCount(error.bytes) : undefined
+  const statusCode = error.kind === 'fetch_failed' ? feedFetchStatusCode(error.statusCode) : undefined
+  const logReason = error.kind === 'fetch_failed' ? feedFetchLogReason(error.logReason) : undefined
   return {
     errorKind: error.kind,
     ...(bytes === undefined ? {} : { bytes }),
+    ...(statusCode === undefined ? {} : { statusCode }),
+    ...(logReason === undefined ? {} : { logReason }),
   }
 }
 
@@ -273,6 +310,8 @@ export function logFeed(entry: FeedLog): void {
   const failurePoint =
     entry.errorKind === 'internal_error' ? normalizeFeedFailurePoint(entry.failurePoint) : undefined
   const bytes = entry.errorKind === 'payload_too_large' ? finiteByteCount(entry.bytes) : undefined
+  const statusCode = entry.errorKind === 'fetch_failed' ? feedFetchStatusCode(entry.statusCode) : undefined
+  const reason = entry.errorKind === 'fetch_failed' ? feedFetchLogReason(entry.logReason) : undefined
   const hostname = entry.hostname === undefined ? undefined : feedIndexHostname(entry.hostname)
   writeStructuredLog({
     event: 'feed',
@@ -285,6 +324,8 @@ export function logFeed(entry: FeedLog): void {
     ...(entry.runId === undefined ? {} : { runId: entry.runId }),
     ...(entry.attempt === undefined ? {} : { attempt: entry.attempt }),
     ...(bytes === undefined ? {} : { bytes }),
+    ...(statusCode === undefined ? {} : { statusCode }),
+    ...(reason === undefined ? {} : { reason }),
   })
 }
 

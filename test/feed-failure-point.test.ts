@@ -339,6 +339,87 @@ describe('feed internal_error failurePoint', () => {
     })
   })
 
+  it('logs statusCode and a short reason for fetch_failed and leaves the raw reason out', async () => {
+    const sourceStore = createMemoryFeedSourceStore()
+    await sourceStore.put(baseSource())
+    const leak = 'HTTP 503 raw body token=super-secret-token https://user:secret@news.example/rss?x=1'
+    const result = await deliver(
+      {
+        sourceStore,
+        candidateStore: createMemoryCandidateStore(),
+        fetchFeed: async (url) =>
+          err({
+            kind: 'fetch_failed',
+            url,
+            reason: leak,
+            statusCode: 503,
+            logReason: 'http_error',
+          }),
+        fetchPage,
+        now: () => new Date('2026-09-21T19:00:00.000Z'),
+      },
+      1,
+    )
+    expect(feedLogs(result.logs)).toEqual([
+      {
+        message: 'feed collect fetch_failed',
+        event: 'feed',
+        stage: 'collect',
+        durationMs: expect.any(Number),
+        errorKind: 'fetch_failed',
+        statusCode: 503,
+        reason: 'http_error',
+        sourceId: SOURCE_ID,
+        hostname: 'example.com',
+        runId: RUN_ID,
+        attempt: 1,
+      },
+    ])
+    expect(feedLogs(result.logs)[0]).not.toHaveProperty('failurePoint')
+    const text = JSON.stringify(result.logs)
+    expect(text).not.toContain('raw body')
+    expect(text).not.toContain('super-secret-token')
+    expect(text).not.toContain('https://')
+    expect(text).not.toContain('news.example')
+    expect(String(feedLogs(result.logs)[0]?.message)).toBe('feed collect fetch_failed')
+  })
+
+  it('omits statusCode and reason when fetch_failed only has an exception message', async () => {
+    const sourceStore = createMemoryFeedSourceStore()
+    await sourceStore.put(baseSource())
+    const result = await deliver(
+      {
+        sourceStore,
+        candidateStore: createMemoryCandidateStore(),
+        fetchFeed: async (url) =>
+          err({
+            kind: 'fetch_failed',
+            url,
+            reason: 'TypeError: https://attacker.example/private?token=super-secret-token <item>raw body</item>',
+          }),
+        fetchPage,
+        now: () => new Date('2026-09-21T19:00:00.000Z'),
+      },
+      1,
+    )
+    expect(feedLogs(result.logs)).toEqual([
+      {
+        message: 'feed collect fetch_failed',
+        event: 'feed',
+        stage: 'collect',
+        durationMs: expect.any(Number),
+        errorKind: 'fetch_failed',
+        sourceId: SOURCE_ID,
+        hostname: 'example.com',
+        runId: RUN_ID,
+        attempt: 1,
+      },
+    ])
+    expect(feedLogs(result.logs)[0]).not.toHaveProperty('statusCode')
+    expect(feedLogs(result.logs)[0]).not.toHaveProperty('reason')
+    expectNoLeak(result.logs)
+  })
+
   it('logs payload_too_large with a numeric size and without the feed url or exception text', async () => {
     const sourceStore = createMemoryFeedSourceStore()
     await sourceStore.put(baseSource())

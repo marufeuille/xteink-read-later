@@ -12,7 +12,7 @@ URL、本文、API token はログに足さない。`message` に載せるのは
 | `daily_digest` | `status` = `published` / `empty` / `failed` / `running`。`running` は途中進捗（`stage`）。完了は `published` / `empty` / `failed` |
 | `digest_interest` | その号の QR から全文送信した弱いいいね。`result` = `recorded` / `already_recorded` / `ignored`。記録できたときだけ `label` = `weak_positive`。`ignored` は `reason` = `not_in_issue` / `invalid_expiry` |
 | `opds_download` | 件数。`durationMs` と `articleId` |
-| `feed` | `stage` = `collect`。失敗だけ `errorKind`。`internal_error` だけ `failurePoint`（`fetch` / `parse` / `store` / `unknown`）。`payload_too_large` だけ `bytes`（数値）。成功に `errorKind` は無い |
+| `feed` | `stage` = `collect`。失敗だけ `errorKind`。`internal_error` だけ `failurePoint`（`fetch` / `parse` / `store` / `unknown`）。`payload_too_large` だけ `bytes`（数値）。`fetch_failed` だけ、取れたとき `statusCode`（100–599 の整数）と短い `reason`。成功に `errorKind` は無い |
 | （invocation） | `$workers.outcome` = `exceededCpu` |
 
 `pipeline` で `clipOutcome` の無い `errorKind` は工程の失敗や再試行である。clip の失敗件数には数えない。`feed` の `errorKind` は収集の失敗で、下の日次クエリに含める。`site_recovery` の `url` は従来どおり残す。`message` には入れない。
@@ -67,6 +67,12 @@ Cloudflare は入れ子の OR（grouped OR）を AND に正規化する。これ
 
 ```text
 $metadata.service = "xteink-read-later" AND event = "feed" AND errorKind = "payload_too_large"
+```
+
+`fetch_failed` の `statusCode` は、応答の HTTP ステータスが分かったときだけの整数である。ネットワーク例外やタイムアウトでステータスが無いときはフィールドを付けない。推測値は入れない。`reason` は 48 文字以内の英数字と `_` だけで、`http_error` / `unsupported_content_type` / `unsupported_charset` / `timeout`、または例外の `name`（例: `TypeError`）である。例外の message、レスポンス本文、Content-Type の中身、トークン、フル URL、Secret は出さない。他の `errorKind` には `statusCode` も `reason` も付けない。`message` は `feed collect fetch_failed` のままである。ステータスで絞るときは次を使う。
+
+```text
+$metadata.service = "xteink-read-later" AND event = "feed" AND errorKind = "fetch_failed" AND statusCode = 403
 ```
 
 ### 保存クエリ `xteink-read-later feed`

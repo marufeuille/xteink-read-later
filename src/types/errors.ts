@@ -21,6 +21,10 @@ export type FetchFailedError = {
   readonly reason: string
   // Site recovery determined that retrying the same URL will not succeed.
   readonly terminal?: true
+  /** HTTP status from the response. Absent when fetch threw before a status existed. */
+  readonly statusCode?: number
+  /** Short Workers Logs token. Never an exception message, URL, header, or body. */
+  readonly logReason?: string
 }
 
 export type ExtractFailedError = {

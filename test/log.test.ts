@@ -292,6 +292,205 @@ describe('feed hostname log', () => {
   })
 })
 
+describe('feed fetch_failed status and reason', () => {
+  const secretUrl = 'https://user:secret-token@joereis.substack.com/feed?token=query-secret'
+  const rawBody = '<rss>raw body token=super-secret-token</rss>'
+
+  it('logs statusCode and a short reason only when both are known and safe', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    expect(
+      feedCollectionErrorLog({
+        kind: 'fetch_failed',
+        statusCode: 503,
+        logReason: 'http_error',
+        reason: `HTTP 503 ${secretUrl} ${rawBody}`,
+        bytes: 12,
+      }),
+    ).toEqual({
+      errorKind: 'fetch_failed',
+      statusCode: 503,
+      logReason: 'http_error',
+    })
+    expect(
+      feedCollectionErrorLog({
+        kind: 'fetch_failed',
+        statusCode: 200,
+        logReason: 'unsupported_content_type',
+      }),
+    ).toEqual({
+      errorKind: 'fetch_failed',
+      statusCode: 200,
+      logReason: 'unsupported_content_type',
+    })
+    logFeed({
+      stage: 'collect',
+      durationMs: 4,
+      errorKind: 'fetch_failed',
+      sourceId: 'src_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      hostname: 'joereis.substack.com',
+      statusCode: 403,
+      logReason: 'http_error',
+    })
+    const parsed = loggedObject()
+    expect(parsed).toEqual({
+      message: 'feed collect fetch_failed',
+      event: 'feed',
+      stage: 'collect',
+      durationMs: 4,
+      errorKind: 'fetch_failed',
+      sourceId: 'src_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      hostname: 'joereis.substack.com',
+      statusCode: 403,
+      reason: 'http_error',
+    })
+    expect(String(parsed.message)).toBe('feed collect fetch_failed')
+    expect(String(parsed.message)).not.toContain('403')
+    expect(String(parsed.message)).not.toContain('http_error')
+    expect(typeof parsed.statusCode).toBe('number')
+  })
+
+  it('omits statusCode when the fetch has no status and drops unsafe or overlong reasons', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const longReason = 'a'.repeat(49)
+    const maxReason = `T${'a'.repeat(47)}`
+    expect(longReason).toHaveLength(49)
+    expect(maxReason).toHaveLength(48)
+    expect(
+      feedCollectionErrorLog({
+        kind: 'fetch_failed',
+        reason: `TypeError: ${secretUrl} ${rawBody}`,
+        logReason: `TypeError: ${secretUrl}`,
+      }),
+    ).toEqual({ errorKind: 'fetch_failed' })
+    expect(
+      feedCollectionErrorLog({
+        kind: 'fetch_failed',
+        reason: 'HTTP 503',
+      }),
+    ).toEqual({ errorKind: 'fetch_failed' })
+    expect(feedCollectionErrorLog({ kind: 'fetch_failed', logReason: 'timeout' })).toEqual({
+      errorKind: 'fetch_failed',
+      logReason: 'timeout',
+    })
+    expect(feedCollectionErrorLog({ kind: 'fetch_failed', logReason: 'TypeError' })).toEqual({
+      errorKind: 'fetch_failed',
+      logReason: 'TypeError',
+    })
+    expect(feedCollectionErrorLog({ kind: 'fetch_failed', logReason: longReason })).toEqual({
+      errorKind: 'fetch_failed',
+    })
+    expect(feedCollectionErrorLog({ kind: 'fetch_failed', logReason: maxReason })).toEqual({
+      errorKind: 'fetch_failed',
+      logReason: maxReason,
+    })
+    expect(
+      feedCollectionErrorLog({
+        kind: 'fetch_failed',
+        statusCode: 99,
+        logReason: 'http_error',
+      }),
+    ).toEqual({ errorKind: 'fetch_failed', logReason: 'http_error' })
+    expect(
+      feedCollectionErrorLog({
+        kind: 'fetch_failed',
+        statusCode: 600,
+        logReason: 'http_error',
+      }),
+    ).toEqual({ errorKind: 'fetch_failed', logReason: 'http_error' })
+    expect(
+      feedCollectionErrorLog({
+        kind: 'fetch_failed',
+        statusCode: 503.5,
+        logReason: 'http_error',
+      }),
+    ).toEqual({ errorKind: 'fetch_failed', logReason: 'http_error' })
+    expect(
+      feedCollectionErrorLog({
+        kind: 'fetch_failed',
+        statusCode: '503',
+        logReason: 'http_error',
+      }),
+    ).toEqual({ errorKind: 'fetch_failed', logReason: 'http_error' })
+    expect(
+      feedCollectionErrorLog({
+        kind: 'payload_too_large',
+        bytes: 9,
+        statusCode: 413,
+        logReason: 'http_error',
+        reason: secretUrl,
+      }),
+    ).toEqual({ errorKind: 'payload_too_large', bytes: 9 })
+    expect(
+      feedCollectionErrorLog({
+        kind: 'invalid_feed',
+        statusCode: 400,
+        logReason: 'http_error',
+        reason: rawBody,
+      }),
+    ).toEqual({ errorKind: 'invalid_feed' })
+
+    logFeed({
+      stage: 'collect',
+      durationMs: 1,
+      errorKind: 'fetch_failed',
+      hostname: 'seattledataguy.substack.com',
+      logReason: 'timeout',
+    })
+    logFeed({
+      stage: 'collect',
+      durationMs: 2,
+      errorKind: 'fetch_failed',
+      statusCode: 404,
+      logReason: `${secretUrl} ${rawBody}`,
+    })
+    logFeed({
+      stage: 'collect',
+      durationMs: 3,
+      errorKind: 'internal_error',
+      failurePoint: 'fetch',
+      statusCode: 500,
+      logReason: 'http_error',
+    })
+    const calls = vi.mocked(console.log).mock.calls.map((call) => call[0] as Record<string, unknown>)
+    expect(calls[0]).toEqual({
+      message: 'feed collect fetch_failed',
+      event: 'feed',
+      stage: 'collect',
+      durationMs: 1,
+      errorKind: 'fetch_failed',
+      hostname: 'seattledataguy.substack.com',
+      reason: 'timeout',
+    })
+    expect(calls[0]).not.toHaveProperty('statusCode')
+    expect(calls[1]).toEqual({
+      message: 'feed collect fetch_failed',
+      event: 'feed',
+      stage: 'collect',
+      durationMs: 2,
+      errorKind: 'fetch_failed',
+      statusCode: 404,
+    })
+    expect(calls[1]).not.toHaveProperty('reason')
+    expect(calls[2]).toEqual({
+      message: 'feed collect internal_error fetch',
+      event: 'feed',
+      stage: 'collect',
+      durationMs: 3,
+      errorKind: 'internal_error',
+      failurePoint: 'fetch',
+    })
+    expect(calls[2]).not.toHaveProperty('statusCode')
+    expect(calls[2]).not.toHaveProperty('reason')
+    const text = JSON.stringify(calls)
+    expect(text).not.toContain('https://')
+    expect(text).not.toContain('secret-token')
+    expect(text).not.toContain('query-secret')
+    expect(text).not.toContain('super-secret-token')
+    expect(text).not.toContain('raw body')
+    expect(text).not.toContain('substack.com/feed')
+  })
+})
+
 describe('daily workers logs query', () => {
   it('documents the saved queries for the post-cron summary', () => {
     const doc = readFileSync(
@@ -311,6 +510,12 @@ describe('daily workers logs query', () => {
     expect(doc).toContain(
       '`hostname` はフィード URL のホスト名だけで、path と query は含めない。情報源が分かっている成功と失敗に付き、`event = "feed" AND hostname = "example.com"` で検索する。',
     )
+    expect(doc).toContain('`fetch_failed` だけ、取れたとき `statusCode`（100–599 の整数）と短い `reason`')
+    expect(doc).toContain(
+      '`fetch_failed` の `statusCode` は、応答の HTTP ステータスが分かったときだけの整数である。ネットワーク例外やタイムアウトでステータスが無いときはフィールドを付けない。',
+    )
+    expect(doc).toContain('errorKind = "fetch_failed" AND statusCode = 403')
+    expect(doc).toContain('例外の message、レスポンス本文、Content-Type の中身、トークン、フル URL、Secret は出さない')
     expect(doc).toContain('URL、本文、Secret、例外メッセージは付けない')
     expect(doc).toContain('errorKind = "payload_too_large"')
     expect(doc).toContain('internal_error')
