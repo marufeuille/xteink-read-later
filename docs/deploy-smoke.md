@@ -33,7 +33,9 @@ GitHub Actions の secret が空または未作成のとき、`SMOKE_ARTICLE_URL
 
 同じ skip で、GitHub Actions の warning annotation と、そのステップの job summary に、足りない名前だけを並べる。値、token、パスワード、値の一部は出さない。
 
-リポジトリ変数 `SMOKE_REQUIRED` が `true`、`1`、`yes` のとき（大文字小文字は無視し、前後の空白も無視する）、この skip はジョブを失敗にする。未設定、空、それ以外の値では失敗にしない。本番でこの変数を有効にするかは、secret が揃ったあとに Ops / PM が決める。有効にしてジョブが赤になっても `outcome` は `skipped` のままなので、自動 rollback は skip を戻さない。
+リポジトリ変数 `SMOKE_REQUIRED` が `true`、`1`、`yes` のとき（大文字小文字は無視し、前後の空白も無視する）、この skip はジョブを失敗にする。未設定、空、それ以外の値では失敗にしない。置く場所は GitHub Actions の Variables で、Secrets ではない。Settings → Secrets and variables → Actions → Variables。workflow は `vars.SMOKE_REQUIRED` を読む。本番でこの変数を有効にするかは、secret が揃ったあとに Ops / PM が決める。
+
+有効にしてジョブが赤になっても、記録した `outcome` は `skipped` のままなので、自動 rollback は skip を戻さない。Slack にも届かない。`skipped` は失敗通知を出さない。見えるのは GitHub の失敗表示と warning annotation、それに job summary だけ。
 
 ## 自動 rollback
 
@@ -132,21 +134,56 @@ Worker が読む名前は次の 2 つだけ。生の値を入れる古い名前 
 
 既存の Worker secret は Terraform で管理していない。`infra/access` は Cloudflare Access のアプリとポリシーだけ。秘密は所有者が `npx wrangler secret put` で入れる。
 
-ハッシュの作り方。末尾の改行を入れない。`echo` は使わない。出力の16進だけをプロンプトに貼る。コマンドの中の変数は手元のシェルに置き、画面やチャットに生の値を出さない。
+`SMOKE_CLIP_TOKEN_SHA256` の作り方。末尾の改行を入れない。`echo` で値をパイプしない。値をコマンドラインに書かない。`VAR=値` も `export VAR=値` も履歴に残る。`read -rs -p '...' VAR` は使わない。zsh では `-p` が別の意味になり、変数が空になる。プロンプトは `printf`、秘密の読み取りは `read -rs`。登録前に `echo ${#VAR}` で桁数だけ見る。値は出さない。`set -x` は付けない。`read` より後ろの行を、同じ貼り付けに入れない。
+
+OPDS のユーザー名、パスワード、`SMOKE_OPDS_BASIC_SHA256` の追加・削除・ローテーションは [opds-accounts.md](opds-accounts.md)。本番の資格情報をスモークに使わない。本番パスワードを替えるときに、スモークのハッシュが古い本番パスワードのままなら、先に、または同じ作業で、スモーク専用の値へ替える。
+
+クリップ token を手で決めるとき。この 2 行だけ実行し、プロンプトのあとで値を打つ。
 
 ```bash
-# Linux
-printf '%s' "$SMOKE_CLIP_TOKEN" | sha256sum | awk '{print $1}'
-printf '%s' "${SMOKE_OPDS_USERNAME}:${SMOKE_OPDS_PASSWORD}" | sha256sum | awk '{print $1}'
-
-# macOS
-printf '%s' "$SMOKE_CLIP_TOKEN" | shasum -a 256 | awk '{print $1}'
-printf '%s' "${SMOKE_OPDS_USERNAME}:${SMOKE_OPDS_PASSWORD}" | shasum -a 256 | awk '{print $1}'
+printf 'SMOKE_CLIP_TOKEN: '
+read -rs SMOKE_CLIP_TOKEN
 ```
 
+`read -rs` は Enter の改行を画面に出さない。桁数は別に見る。0 なら入れない。
+
 ```bash
-npx wrangler secret put SMOKE_CLIP_TOKEN_SHA256
-npx wrangler secret put SMOKE_OPDS_BASIC_SHA256
+printf '\n'
+echo ${#SMOKE_CLIP_TOKEN}
+```
+
+ランダムで作るとき。`openssl rand -hex 32` の桁数は 64。
+
+```bash
+SMOKE_CLIP_TOKEN=$(openssl rand -hex 32)
+echo ${#SMOKE_CLIP_TOKEN}
+```
+
+ハッシュは `sha256sum` があればそれを、無ければ `shasum -a 256` を使う。macOS には `sha256sum` が無い。bash と zsh の両方で動く。token が 0 のときは `0` と出て、ハッシュは作らない。空の入力でも SHA-256 自体は 64 桁になる。`gh secret set --body` に値を書かない。
+
+```bash
+if [ "${#SMOKE_CLIP_TOKEN}" -eq 0 ]; then
+  echo 0
+elif command -v sha256sum >/dev/null 2>&1; then
+  SMOKE_CLIP_TOKEN_SHA256=$(printf '%s' "$SMOKE_CLIP_TOKEN" | sha256sum | awk '{print $1}')
+  echo ${#SMOKE_CLIP_TOKEN_SHA256}
+else
+  SMOKE_CLIP_TOKEN_SHA256=$(printf '%s' "$SMOKE_CLIP_TOKEN" | shasum -a 256 | awk '{print $1}')
+  echo ${#SMOKE_CLIP_TOKEN_SHA256}
+fi
+```
+
+64 のときだけ登録する。Worker のハッシュを先、GitHub Actions の生の値をあと。失敗したときは `unset` の前に止めて、同じ変数でやり直す。
+
+```bash
+printf '%s' "$SMOKE_CLIP_TOKEN_SHA256" | npx wrangler secret put SMOKE_CLIP_TOKEN_SHA256
+printf '%s' "$SMOKE_CLIP_TOKEN" | gh secret set SMOKE_CLIP_TOKEN
+```
+
+登録できたら unset する。
+
+```bash
+unset SMOKE_CLIP_TOKEN SMOKE_CLIP_TOKEN_SHA256
 ```
 
 古い名前が Worker に残っているときだけ消す。
@@ -161,4 +198,4 @@ npx wrangler secret delete SMOKE_OPDS_PASSWORD
 
 スモーク用 Basic の OPDS カタログには、設定された記事 URL の記事だけが出る。本番記事の題名と id は出ない。ダウンロードと DELETE もその記事だけ。候補、購入 EPUB、ダイジェスト、`/clip/recent` には使えない。本番の token の権限は変えない。
 
-GHA の生の値と Worker のハッシュは、同じスモーク専用の資格情報から作る。本番の `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` とは別にする。
+GHA の生の値と Worker のハッシュは、同じスモーク専用の資格情報から作る。本番の `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` とは別にする。OPDS のコマンドは [opds-accounts.md](opds-accounts.md)。
