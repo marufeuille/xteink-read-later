@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
@@ -27,6 +28,7 @@ import {
   type SmokeSettings,
   type SmokeStateFile,
 } from '../src/smoke/run'
+import { isSmokeRequired, publishUnsetSkip, unsetSmokeNotice } from '../src/smoke/unset'
 import { parseWorkerDeploymentVersion } from '../src/smoke/worker-version'
 import { articleIdFromCanonicalUrl, parseHttpUrl } from '../src/types'
 
@@ -192,6 +194,101 @@ describe('deploy smoke script', () => {
     }
     expect(fetchImpl).not.toHaveBeenCalled()
     expect(missingSmokeSecrets({})).toEqual([...SMOKE_SECRET_NAMES])
+  })
+
+  it('lists missing config names in the warning and summary and fails only when SMOKE_REQUIRED is truthy', async () => {
+    for (const value of [undefined, '', '  ', 'false', 'no', '0', 'on', 'yesplease', `true ${TOKEN}`]) {
+      expect(isSmokeRequired(value), JSON.stringify(value)).toBe(false)
+    }
+    for (const value of ['true', 'TRUE', ' True ', '1', ' 1 ', 'yes', 'YES', ' Yes ']) {
+      expect(isSmokeRequired(value), JSON.stringify(value)).toBe(true)
+    }
+
+    const result = await runDeploySmoke({
+      settings: settings({ opdsUsername: '', opdsPassword: '   ' }),
+      fetch: vi.fn(async () => new Response('no')),
+      log: () => {},
+    })
+    expect(result.kind).toBe('skipped')
+    if (result.kind !== 'skipped') {
+      return
+    }
+    expect(result.state.outcome).toBe('skipped')
+    expect(result.missing).toEqual(['SMOKE_OPDS_USERNAME', 'SMOKE_OPDS_PASSWORD'])
+
+    const poisoned = [
+      ...result.missing,
+      TOKEN,
+      PASS,
+      USER,
+      WEBHOOK,
+      `${TOKEN.slice(0, 8)}`,
+      `SMOKE_CLIP_TOKEN=${TOKEN}`,
+      'smoke_opds_username',
+    ]
+    const dir = mkdtempSync(join(tmpdir(), 'smoke-unset-'))
+    const warnings: string[] = []
+    const optionalSummary = join(dir, 'optional')
+    const optionalExit = publishUnsetSkip({
+      missing: poisoned,
+      smokeRequired: ' false ',
+      summaryPath: optionalSummary,
+      warn: (line) => warnings.push(line),
+    })
+    expect(optionalExit).toBe(0)
+    const requiredSummary = join(dir, 'required')
+    const requiredExit = publishUnsetSkip({
+      missing: poisoned,
+      smokeRequired: ' YeS ',
+      summaryPath: requiredSummary,
+      warn: (line) => warnings.push(line),
+    })
+    expect(requiredExit).toBe(1)
+    expect(publishUnsetSkip({ missing: poisoned, smokeRequired: undefined, warn: (line) => warnings.push(line) })).toBe(0)
+
+    const leakedSummary = join(dir, 'leaked')
+    const leakedWarnings: string[] = []
+    expect(
+      publishUnsetSkip({
+        missing: poisoned,
+        smokeRequired: `true ${TOKEN}`,
+        summaryPath: leakedSummary,
+        warn: (line) => leakedWarnings.push(line),
+      }),
+    ).toBe(0)
+    const optionalText = `${warnings[0]}\n${readFileSync(optionalSummary, 'utf8')}`
+    const requiredText = `${warnings[1]}\n${readFileSync(requiredSummary, 'utf8')}`
+    const leakedText = `${leakedWarnings.join('\n')}\n${readFileSync(leakedSummary, 'utf8')}`
+    for (const text of [optionalText, requiredText, leakedText, unsetSmokeNotice(poisoned, true).summary]) {
+      expect(text).toContain('SMOKE_OPDS_USERNAME')
+      expect(text).toContain('SMOKE_OPDS_PASSWORD')
+      expect(text).not.toContain('SMOKE_CLIP_TOKEN')
+      expect(text).not.toContain(TOKEN)
+      expect(text).not.toContain(PASS)
+      expect(text).not.toContain(USER)
+      expect(text).not.toContain(WEBHOOK)
+      expect(text).not.toContain(TOKEN.slice(0, 8))
+      expect(text).not.toContain('smoke_opds_username')
+      expect(text).not.toContain('SMOKE_CLIP_TOKEN=')
+    }
+    expect(readFileSync(optionalSummary, 'utf8')).not.toContain('=')
+    expect(readFileSync(requiredSummary, 'utf8')).not.toContain('=')
+    expect(warnings[0]).toBe('::warning title=未設定::未設定: SMOKE_OPDS_USERNAME, SMOKE_OPDS_PASSWORD')
+    expect(warnings[0]).not.toContain('\n')
+    expect(readFileSync(optionalSummary, 'utf8')).toContain('未設定のため skip しました。')
+    expect(readFileSync(optionalSummary, 'utf8')).not.toContain('失敗')
+    expect(readFileSync(requiredSummary, 'utf8')).toContain('`SMOKE_OPDS_USERNAME`')
+    expect(readFileSync(requiredSummary, 'utf8')).toContain('`SMOKE_OPDS_PASSWORD`')
+    expect(readFileSync(requiredSummary, 'utf8')).toContain('SMOKE_REQUIRED')
+    expect(readFileSync(requiredSummary, 'utf8')).not.toContain('YeS')
+    expect(readFileSync(requiredSummary, 'utf8')).not.toContain('yes')
+
+    const articleNotice = unsetSmokeNotice(['SMOKE_ARTICLE_URL', ARTICLE, 'SMOKE_ORIGIN'], false)
+    expect(articleNotice.names).toEqual(['SMOKE_ARTICLE_URL', 'SMOKE_ORIGIN'])
+    expect(articleNotice.annotation).toBe('::warning title=未設定::未設定: SMOKE_ARTICLE_URL, SMOKE_ORIGIN')
+    expect(articleNotice.summary).toContain('`SMOKE_ARTICLE_URL`')
+    expect(articleNotice.summary).toContain('`SMOKE_ORIGIN`')
+    expect(`${articleNotice.annotation}\n${articleNotice.summary}`).not.toContain(ARTICLE)
   })
 
   it('skips an invalid article URL without fetching', async () => {
@@ -604,6 +701,8 @@ describe('deploy smoke script', () => {
     expect(ci).toContain('if: always()')
     expect(ci).toContain('if: ${{ failure() || cancelled() }}')
     const smokeJob = (ci.split('\n  deploy-smoke:')[1] ?? '').split('\n  deploy-rollback:')[0] ?? ''
+    expect(smokeJob).toContain('SMOKE_REQUIRED: ${{ vars.SMOKE_REQUIRED }}')
+    expect(smokeJob).not.toContain('secrets.SMOKE_REQUIRED')
     const jobTimeout = Number(/^    timeout-minutes: (\d+)/m.exec(smokeJob)?.[1])
     const stepTimeouts = [...smokeJob.matchAll(/\n        timeout-minutes: (\d+)/g)].map((match) => Number(match[1]))
     expect(stepTimeouts).toEqual([1, 1, 3, 8, 2, 1, 1])
@@ -615,6 +714,9 @@ describe('deploy smoke script', () => {
     const doc = readFileSync(join(root, 'docs/deploy-smoke.md'), 'utf8')
     const readme = readFileSync(join(root, 'README.md'), 'utf8')
     const env = readFileSync(join(root, 'src/env.d.ts'), 'utf8')
+    expect(doc).toContain('SMOKE_REQUIRED')
+    expect(doc).toContain('warning annotation')
+    expect(doc).toContain('job summary')
     expect(doc).toContain('SMOKE_CLIP_TOKEN_SHA256')
     expect(doc).toContain('SMOKE_OPDS_BASIC_SHA256')
     expect(doc).toContain("printf '%s'")

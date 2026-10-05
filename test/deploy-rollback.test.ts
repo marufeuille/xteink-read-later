@@ -145,6 +145,12 @@ describe('deploy rollback', () => {
         notify: false,
       },
       {
+        name: 'unset skip that failed the smoke job',
+        context: { jobResult: 'failure', outcome: 'skipped', failedStep: '-', errorKind: '-' },
+        reason: 'skip',
+        notify: false,
+      },
+      {
         name: 'passed',
         context: { jobResult: 'success', outcome: 'passed', failedStep: '-', errorKind: '-' },
         reason: 'passed',

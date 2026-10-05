@@ -434,7 +434,7 @@ Access の Terraform は上の `CLOUDFLARE_API_TOKEN` を読まない。Workers 
 
 アプリ用の `OPENAI_API_KEY` / `CLIP_TOKEN` / `OPDS_USERNAME` / `OPDS_PASSWORD` は GitHub Secrets に入れない（Cloudflare の `wrangler secret put` 側）。`OPENROUTER_API_KEY` は Worker 用と Actions 試行用で別々に置く。
 
-本番の値は置かない。置くのはスモーク専用の値だけ。Actions に置く生の値は `SMOKE_CLIP_TOKEN`、`SMOKE_OPDS_USERNAME`、`SMOKE_OPDS_PASSWORD`、`SMOKE_SLACK_WEBHOOK_URL`。Worker に置くのはそのハッシュ `SMOKE_CLIP_TOKEN_SHA256` と `SMOKE_OPDS_BASIC_SHA256` だけで、生の値は置かない。未設定のあいだジョブは失敗にせず skip する。手順は [docs/deploy-smoke.md](docs/deploy-smoke.md)。
+本番の値は置かない。置くのはスモーク専用の値だけ。Actions に置く生の値は `SMOKE_CLIP_TOKEN`、`SMOKE_OPDS_USERNAME`、`SMOKE_OPDS_PASSWORD`、`SMOKE_SLACK_WEBHOOK_URL`。Worker に置くのはそのハッシュ `SMOKE_CLIP_TOKEN_SHA256` と `SMOKE_OPDS_BASIC_SHA256` だけで、生の値は置かない。未設定のあいだは warning annotation と job summary に足りない名前だけを出して skip する。値は出さない。リポジトリ変数 `SMOKE_REQUIRED` が `true` / `1` / `yes` のときだけ、その skip を失敗にする。手順は [docs/deploy-smoke.md](docs/deploy-smoke.md)。
 
 Secrets 未設定のまま `main` にマージすると、チェックは通ってもデプロイジョブが落ちる。`TF_CLOUDFLARE_API_TOKEN` か state 用の 2 つが未設定、または R2 に state が無いときも、Workers のデプロイとは別に Access の plan / apply が落ちる。空の state ではアプリを作らない。
 

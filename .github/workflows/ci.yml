@@ -188,7 +188,9 @@ jobs:
 
   # Post-deploy only. A path-filter skip or a failed deploy leaves this job skipped.
   # Re-running the deploy job re-runs this job because it needs: deploy.
-  # Missing smoke secrets or an unreachable Pages article log 未設定 and exit 0.
+  # An unset secret or config logs 未設定, writes a warning annotation and a job summary
+  # of the missing names, and exits 0. vars.SMOKE_REQUIRED=true|1|yes fails that skip.
+  # The recorded outcome stays skipped, so deploy-rollback still ignores it.
   deploy-smoke:
     name: deploy smoke
     needs: [deploy]
@@ -222,6 +224,7 @@ jobs:
           SMOKE_SLACK_WEBHOOK_URL: ${{ secrets.SMOKE_SLACK_WEBHOOK_URL }}
           SMOKE_ARTICLE_URL: ${{ vars.SMOKE_ARTICLE_URL }}
           SMOKE_ORIGIN: https://xteink-read-later.marufeuille.workers.dev
+          SMOKE_REQUIRED: ${{ vars.SMOKE_REQUIRED }}
           WORKER_VERSION: ${{ needs.deploy.outputs.worker_version }}
           SMOKE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SMOKE_STATE_PATH: smoke-state.json
@@ -253,7 +256,9 @@ jobs:
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts export-outputs
 
   # always() so a failed or cancelled smoke does not skip this job.
-  # A successful deploy on main is required. Success and unset skip do not enter.
+  # A successful deploy on main is required. A green smoke does not enter.
+  # Unset skip keeps outcome=skipped. This job ignores that outcome and does not roll back,
+  # including when SMOKE_REQUIRED failed the smoke job.
   # Rollback uses the version id recorded before this deploy. Never id-less wrangler rollback.
   # The migration diff base is previous_worker_sha, the SHA that produced that version.
   # One attempt. A failing verify smoke does not roll back again. Token is CLOUDFLARE_API_TOKEN.
