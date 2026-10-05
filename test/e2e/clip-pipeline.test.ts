@@ -753,24 +753,51 @@ describe('clip pipeline E2E (fixture network)', () => {
   })
 
   it('fails a paywalled Substack preview with a subscriber reason', async () => {
-    const pageUrl = 'https://www.lennysnewsletter.com/p/advanced-evals'
-    const { fetchedUrls } = installNetworkMock({
-      pages: { [pageUrl]: { html: fixtureHtml('substack-paywall.html') } },
+    const logs: string[] = []
+    const spy = vi.spyOn(console, 'log').mockImplementation((line: unknown) => {
+      logs.push(loggedText(line))
     })
-    const ctx = app()
-    const response = await clipAndDrain(ctx, pageUrl)
-    expect(response.status).toBe(202)
-    const queued = await readJson(response)
-    const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
-    expect(job.status).toBe('failed')
-    expect(job.error?.code).toBe('extract_failed')
-    expect(job.error?.message).toContain('paid subscribers')
-    expect(job.error?.message).toContain(pageUrl)
-    expect(job.error?.message).not.toContain('too short')
-    expect(job.stages?.some((stage) => stage.stage === 'extract' && stage.errorKind === 'extract_failed')).toBe(
-      true,
-    )
-    expect(fetchedUrls).toEqual([pageUrl])
+    try {
+      const pageUrl = 'https://www.lennysnewsletter.com/p/advanced-evals'
+      const { fetchedUrls } = installNetworkMock({
+        pages: { [pageUrl]: { html: fixtureHtml('substack-paywall.html') } },
+      })
+      const ctx = app()
+      const response = await clipAndDrain(ctx, pageUrl)
+      expect(response.status).toBe(202)
+      const queued = await readJson(response)
+      const job = await readJson(await getJob(ctx, queued.jobId ?? ''))
+      expect(job.status).toBe('failed')
+      expect(job.error?.code).toBe('extract_failed')
+      expect(job.error?.message).toContain('paid subscribers')
+      expect(job.error?.message).toContain(pageUrl)
+      expect(job.error?.message).not.toContain('too short')
+      expect(job.stages?.some((stage) => stage.stage === 'extract' && stage.errorKind === 'extract_failed')).toBe(
+        true,
+      )
+      expect(fetchedUrls).toEqual([pageUrl])
+      const pipelineLogs = logs
+        .map((line) => JSON.parse(line) as Record<string, unknown>)
+        .filter((entry) => entry.event === 'pipeline')
+      expect(pipelineLogs.filter((entry) => entry.clipOutcome === 'failed')).toEqual([
+        expect.objectContaining({
+          stage: 'queue',
+          errorKind: 'extract_failed',
+          hostname: 'www.lennysnewsletter.com',
+        }),
+      ])
+      for (const entry of pipelineLogs) {
+        if (entry.clipOutcome !== 'failed') {
+          expect(entry).not.toHaveProperty('hostname')
+        }
+      }
+      const logged = JSON.stringify(pipelineLogs)
+      expect(logged).not.toContain('/p/advanced-evals')
+      expect(logged).not.toContain('https://')
+      expect(logged).not.toContain('paid subscribers')
+    } finally {
+      spy.mockRestore()
+    }
   })
 
   it('translates a long English article across more than one OpenAI call', async () => {

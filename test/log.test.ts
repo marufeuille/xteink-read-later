@@ -7,6 +7,7 @@ import {
   feedLogHostname,
   logCandidateClip,
   logDailyDigest,
+  clipLogHostname,
   logFeed,
   logOpdsDownload,
   logPipeline,
@@ -72,6 +73,7 @@ describe('logPipeline', () => {
       errorKind: 'fetch_failed',
     })
     expect(parsed).not.toHaveProperty('stages')
+    expect(parsed).not.toHaveProperty('hostname')
     expect(JSON.stringify(parsed)).not.toContain('https://')
     expect(JSON.stringify(stages)).not.toContain('clipOutcome')
   })
@@ -491,6 +493,135 @@ describe('feed fetch_failed status and reason', () => {
   })
 })
 
+describe('clip failure hostname log', () => {
+  it('keeps a searchable hostname on a terminal failure and drops path, query, fragment, and secrets', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    const pageUrl =
+      'https://user:secret-token@News.Example.com:8443/private/article?token=query-secret#section'
+    expect(clipLogHostname(pageUrl)).toBe('news.example.com')
+    expect(clipLogHostname('https://[2001:db8::1]/a/b?x=1#f')).toBe('[2001:db8::1]')
+    expect(clipLogHostname('https://例え.jp/path?q=1')).toBe('xn--r8jz45g.jp')
+    expect(clipLogHostname('https://example.com./rss/private-path.xml?token=query-secret')).toBe('example.com')
+    expect(clipLogHostname('not a url')).toBeUndefined()
+    expect(clipLogHostname('')).toBeUndefined()
+    expect(clipLogHostname('http://')).toBeUndefined()
+
+    const stages: ClipStageRecord[] = []
+    const hostname = clipLogHostname(pageUrl)
+    logPipeline(
+      {
+        stage: 'queue',
+        durationMs: 4,
+        errorKind: 'extract_failed',
+        clipOutcome: 'failed',
+        ...(hostname === undefined ? {} : { hostname }),
+      },
+      { jobId: asClipJobId('job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'), attempt: 1, stages },
+    )
+    logPipeline({
+      stage: 'queue',
+      durationMs: 5,
+      errorKind: 'extract_failed',
+      clipOutcome: 'failed',
+      hostname: pageUrl,
+    })
+    logPipeline({
+      stage: 'queue',
+      durationMs: 6,
+      errorKind: 'extract_failed',
+      clipOutcome: 'failed',
+      hostname: 'not a url',
+    })
+    logPipeline({
+      stage: 'queue',
+      durationMs: 7,
+      clipOutcome: 'ready',
+      hostname: 'example.com',
+    })
+    logPipeline({
+      stage: 'extract',
+      durationMs: 8,
+      errorKind: 'extract_failed',
+      hostname: 'example.com',
+    })
+
+    const calls = vi.mocked(console.log).mock.calls.map((call) => call[0] as Record<string, unknown>)
+    expect(calls[0]).toEqual({
+      message: 'pipeline queue failed extract_failed',
+      event: 'pipeline',
+      stage: 'queue',
+      durationMs: 4,
+      errorKind: 'extract_failed',
+      clipOutcome: 'failed',
+      jobId: 'job_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      attempt: 1,
+      hostname: 'news.example.com',
+    })
+    expect(String(calls[0]?.message)).toMatch(/^[A-Za-z0-9_ ]+$/)
+    expect(String(calls[0]?.message)).not.toContain('news.example.com')
+    expect(calls[1]).not.toHaveProperty('hostname')
+    expect(calls[2]).not.toHaveProperty('hostname')
+    expect(calls[3]).toMatchObject({ clipOutcome: 'ready' })
+    expect(calls[3]).not.toHaveProperty('errorKind')
+    expect(calls[3]).not.toHaveProperty('hostname')
+    expect(calls[4]).toMatchObject({ stage: 'extract', errorKind: 'extract_failed' })
+    expect(calls[4]).not.toHaveProperty('hostname')
+    expect(calls[4]).not.toHaveProperty('clipOutcome')
+    expect(stages).toEqual([{ stage: 'queue', durationMs: 4, attempt: 1, errorKind: 'extract_failed' }])
+    expect(JSON.stringify(stages)).not.toContain('news.example.com')
+    expect(JSON.stringify(stages)).not.toContain('hostname')
+    const text = JSON.stringify(calls)
+    expect(text).not.toContain('https://')
+    expect(text).not.toContain('private/article')
+    expect(text).not.toContain('query-secret')
+    expect(text).not.toContain('secret-token')
+    expect(text).not.toContain('8443')
+    expect(text).not.toContain('#section')
+    expect(text).not.toContain('/private/')
+  })
+
+  it('omits hostname and still logs when the host cannot be read', () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+    expect(() =>
+      logPipeline({
+        stage: 'queue',
+        durationMs: 0,
+        errorKind: 'invalid_url',
+        clipOutcome: 'failed',
+      }),
+    ).not.toThrow()
+    expect(() =>
+      logPipeline({
+        stage: 'queue',
+        durationMs: 1,
+        errorKind: 'invalid_url',
+        clipOutcome: 'failed',
+        hostname: null as unknown as string,
+      }),
+    ).not.toThrow()
+    expect(() => clipLogHostname('not a url')).not.toThrow()
+    const calls = vi.mocked(console.log).mock.calls.map((call) => call[0] as Record<string, unknown>)
+    expect(calls[0]).toEqual({
+      message: 'pipeline queue failed invalid_url',
+      event: 'pipeline',
+      stage: 'queue',
+      durationMs: 0,
+      errorKind: 'invalid_url',
+      clipOutcome: 'failed',
+    })
+    expect(calls[1]).toEqual({
+      message: 'pipeline queue failed invalid_url',
+      event: 'pipeline',
+      stage: 'queue',
+      durationMs: 1,
+      errorKind: 'invalid_url',
+      clipOutcome: 'failed',
+    })
+    expect(calls[0]).not.toHaveProperty('hostname')
+    expect(calls[1]).not.toHaveProperty('hostname')
+  })
+})
+
 describe('daily workers logs query', () => {
   it('documents the saved queries for the post-cron summary', () => {
     const doc = readFileSync(
@@ -509,6 +640,12 @@ describe('daily workers logs query', () => {
     expect(doc).toContain('`payload_too_large` だけ `bytes`（数値）')
     expect(doc).toContain(
       '`hostname` はフィード URL のホスト名だけで、path と query は含めない。情報源が分かっている成功と失敗に付き、`event = "feed" AND hostname = "example.com"` で検索する。',
+    )
+    expect(doc).toContain(
+      'clip の `hostname` は、失敗が確定したログ（`event = "pipeline"` かつ `clipOutcome = "failed"`）だけに付ける。値は対象 URL のホスト名だけで、path、query、fragment、userinfo、port、フル URL は含めない。',
+    )
+    expect(doc).toContain(
+      '`event = "pipeline" AND clipOutcome = "failed" AND hostname = "example.com"` で検索する。',
     )
     expect(doc).toContain('`fetch_failed` だけ、取れたとき `statusCode`（100–599 の整数）と短い `reason`')
     expect(doc).toContain(

@@ -238,9 +238,13 @@ type _queueMessageKeys = Assert<Equals<keyof ClipQueueMessage, 'jobId' | 'runId'
 
 type _pipelineLogHasNoUrl = Assert<'url' extends keyof PipelineLog ? false : true>
 
+type _pipelineLogHostnameIsString = Assert<Equals<NonNullable<PipelineLog['hostname']>, string>>
+
 type _clipOutcomeIsTerminal = Assert<Equals<NonNullable<PipelineLog['clipOutcome']>, 'ready' | 'failed'>>
 
 type _stageRecordHasNoUrl = Assert<'url' extends keyof ClipStageRecord ? false : true>
+
+type _stageRecordHasNoHostname = Assert<'hostname' extends keyof ClipStageRecord ? false : true>
 
 type _pipelineLogHasNoExtracted = Assert<'extracted' extends keyof PipelineLog ? false : true>
 

@@ -488,8 +488,23 @@ describe('POST /clip', () => {
         .map((line) => JSON.parse(line) as { event?: string; stage?: string; clipOutcome?: string; errorKind?: string })
         .filter((entry) => entry.event === 'pipeline' && entry.clipOutcome !== undefined)
       expect(outcomes).toEqual([
-        expect.objectContaining({ stage: 'queue', clipOutcome: 'failed', errorKind: 'fetch_failed' }),
+        expect.objectContaining({
+          stage: 'queue',
+          clipOutcome: 'failed',
+          errorKind: 'fetch_failed',
+          hostname: 'example.com',
+        }),
       ])
+      const pipeline = logs
+        .map((line) => JSON.parse(line) as { event?: string; clipOutcome?: string })
+        .filter((entry) => entry.event === 'pipeline')
+      for (const entry of pipeline) {
+        if (entry.clipOutcome !== 'failed') {
+          expect(entry).not.toHaveProperty('hostname')
+        }
+      }
+      expect(JSON.stringify(pipeline)).not.toContain('/missing')
+      expect(JSON.stringify(pipeline)).not.toContain('https://')
 
       const again = await clip(ctx.app, 'https://example.com/missing', ctx.env)
       const againBody = await readJson(again)
@@ -678,7 +693,12 @@ describe('POST /clip', () => {
         .map((line) => JSON.parse(line) as { event?: string; stage?: string; clipOutcome?: string; errorKind?: string })
         .filter((entry) => entry.event === 'pipeline' && entry.clipOutcome !== undefined)
       expect(outcomes).toEqual([
-        expect.objectContaining({ stage: 'queue', clipOutcome: 'failed', errorKind: 'epub_failed' }),
+        expect.objectContaining({
+          stage: 'queue',
+          clipOutcome: 'failed',
+          errorKind: 'epub_failed',
+          hostname: 'example.com',
+        }),
       ])
       expect(
         logs.some(
@@ -835,6 +855,7 @@ describe('POST /clip', () => {
         expect(JSON.stringify(entry)).not.toContain(TEST_CLIP_TOKEN)
         expect(JSON.stringify(entry)).not.toContain('<html')
         expect(entry).not.toHaveProperty('url')
+        expect(entry).not.toHaveProperty('hostname')
       }
     } finally {
       spy.mockRestore()
@@ -906,10 +927,16 @@ describe('POST /clip', () => {
         .map((line) => JSON.parse(line) as { event?: string; clipOutcome?: string; errorKind?: string })
         .filter((entry) => entry.event === 'pipeline' && entry.clipOutcome !== undefined)
       expect(outcomes.map((entry) => entry.clipOutcome)).toEqual(['failed', 'ready'])
-      expect(outcomes[0]).toMatchObject({ clipOutcome: 'failed', errorKind: 'queue_failed' })
+      expect(outcomes[0]).toMatchObject({
+        clipOutcome: 'failed',
+        errorKind: 'queue_failed',
+        hostname: 'example.com',
+      })
       expect(outcomes[1]).toMatchObject({ clipOutcome: 'ready' })
       expect(outcomes[1]).not.toHaveProperty('errorKind')
+      expect(outcomes[1]).not.toHaveProperty('hostname')
       expect(logs.join('\n')).not.toContain('https://example.com/ja/workers-cpu')
+      expect(logs.join('\n')).not.toContain('/ja/workers-cpu')
     } finally {
       spy.mockRestore()
     }

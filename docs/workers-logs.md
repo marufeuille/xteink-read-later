@@ -8,7 +8,7 @@ URL、本文、API token はログに足さない。`message` に載せるのは
 
 | `event` | 日次で見る値 |
 | --- | --- |
-| `pipeline` | `stage`, `durationMs`, `errorKind`。job が `ready` / `failed` になったログだけ `clipOutcome` |
+| `pipeline` | `stage`, `durationMs`, `errorKind`。job が `ready` / `failed` になったログだけ `clipOutcome`。`clipOutcome=failed` だけ、ホスト名が取れたとき `hostname` |
 | `daily_digest` | `status` = `published` / `empty` / `failed` / `running`。`running` は途中進捗（`stage`）。完了は `published` / `empty` / `failed` |
 | `digest_interest` | その号の QR から全文送信した弱いいいね。`result` = `recorded` / `already_recorded` / `ignored`。記録できたときだけ `label` = `weak_positive`。`ignored` は `reason` = `not_in_issue` / `invalid_expiry` |
 | `opds_download` | 件数。`durationMs` と `articleId` |
@@ -64,6 +64,8 @@ Cloudflare は入れ子の OR（grouped OR）を AND に正規化する。これ
 `payload_too_large` の `bytes` は、`Content-Length` か受信済みバイト数の数値だけである。`message` には入れない。URL、本文、Secret、例外メッセージは付けない。サイズで絞るときは次を使う。
 
 `hostname` はフィード URL のホスト名だけで、path と query は含めない。情報源が分かっている成功と失敗に付き、`event = "feed" AND hostname = "example.com"` で検索する。
+
+clip の `hostname` は、失敗が確定したログ（`event = "pipeline"` かつ `clipOutcome = "failed"`）だけに付ける。値は対象 URL のホスト名だけで、path、query、fragment、userinfo、port、フル URL は含めない。本文、token、Secret、例外メッセージも出さない。URL が壊れていてホスト名が取れないときはフィールドを付けない。推測値は入れない。成功（`clipOutcome = "ready"`）と、再試行中で `clipOutcome` の無い `errorKind` には付けない。`message` には入れない。`event = "pipeline" AND clipOutcome = "failed" AND hostname = "example.com"` で検索する。
 
 ```text
 $metadata.service = "xteink-read-later" AND event = "feed" AND errorKind = "payload_too_large"
