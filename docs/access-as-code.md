@@ -24,6 +24,8 @@ plan が既存アプリやポリシーの create / destroy / replace を出し�
 
 以後のパス変更は、PR の plan を見て `main` にマージする。マージすると apply される。plan がアプリやポリシーの作成を出したら import 漏れなのでマージしない。
 
+マージ条件は [AGENTS.md](../AGENTS.md)。
+
 ## パス（Allow の本体）
 
 並びはこの順。

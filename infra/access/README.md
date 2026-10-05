@@ -22,6 +22,8 @@ Workers の記事バケット `xteink-read-later-articles` とは別。CI はこ
 
 `infra/access/**` を変える PR では `.github/workflows/access-terraform.yml` が `terraform plan` し、結果を PR コメントと artifact `access-terraform-plan` に出す。`main` へのマージでは同じ workflow が `terraform apply -auto-approve` する。手動承認の Environment は無い。`workflow_dispatch` も無い。
 
+マージ条件は [AGENTS.md](../../AGENTS.md)。
+
 plan が次の create / destroy / replace を出したら、import 漏れか作り直し。マージしない。state にポリシー 2 つと Allow アプリが無いとき、apply は実行しない。Bypass アプリは `digest_send` か、`moved.tf` を apply する前の `digest_send_bypass` のどちらか一方があればよい。両方あるときは apply しない。
 
 - `cloudflare_zero_trust_access_policy.family`
