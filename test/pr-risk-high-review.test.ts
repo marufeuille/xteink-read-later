@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { parsePrRiskArgs, runPrRiskCli, type PrRiskCliIo } from '../src/pr-risk/cli'
 import {
   DEFAULT_REVIEW_BUDGET,
+  HIGH_RISK_REVIEW_BOT_LOGIN,
   HIGH_RISK_REVIEW_CHARS_PER_TOKEN,
   HIGH_RISK_REVIEW_COST_CAP_USD,
   HIGH_RISK_REVIEW_FILENAME,
@@ -11,6 +12,7 @@ import {
   HIGH_RISK_REVIEW_PRICING_URL,
   commentRecordsReviewCall,
   estimateReviewCostUsd,
+  keepsEarlierReviewCall,
   executeHighRiskReview,
   fitReviewPrompt,
   formatHighRiskReviewComment,
@@ -228,7 +230,7 @@ describe('high-risk review routing', () => {
     expect(comment).not.toContain('指摘はありません')
   })
 
-  it('drops findings that have no location or evidence', async () => {
+  it('marks valid JSON as unparseable when every finding is discarded', async () => {
     const record = await executeHighRiskReview(
       run({
         fetchImpl: async () =>
@@ -237,13 +239,50 @@ describe('high-risk review routing', () => {
               findings: [
                 { location: '', evidence: 'something', detail: 'x' },
                 { location: 'src/http/auth.ts', evidence: '  ', detail: 'x' },
+                null,
+                'not-an-object',
+                { location: 1, evidence: 'shape is wrong' },
               ],
             }),
           ),
       }),
     )
+    expect(record.status).toBe('unparseable')
+    expect(record.called).toBe(true)
     expect(record.findings).toEqual([])
-    expect(formatHighRiskReviewComment(record)).toContain(`指摘はありません（head SHA \`${HEAD}\`）`)
+    const comment = formatHighRiskReviewComment(record)
+    expect(comment).toContain(`モデル出力を指摘として読めませんでした（head SHA \`${HEAD}\`）`)
+    expect(comment).not.toContain('指摘はありません')
+  })
+
+  it('keeps valid findings when other findings are discarded', async () => {
+    const record = await executeHighRiskReview(
+      run({
+        fetchImpl: async () =>
+          reviewResponse(
+            JSON.stringify({
+              findings: [
+                { location: '', evidence: 'drop me' },
+                {
+                  location: 'src/http/auth.ts',
+                  evidence: 'checkToken() が削除されている',
+                  detail: '残す',
+                },
+                null,
+              ],
+            }),
+          ),
+      }),
+    )
+    expect(record.status).toBe('reviewed')
+    expect(record.findings).toEqual([
+      {
+        location: 'src/http/auth.ts',
+        evidence: 'checkToken() が削除されている',
+        detail: '残す',
+      },
+    ])
+    expect(formatHighRiskReviewComment(record)).not.toContain('指摘はありません')
   })
 
   it('truncates an over-cap diff and still makes one call', async () => {
@@ -423,18 +462,63 @@ describe('high-risk review routing', () => {
     expect(JSON.parse(json)).toMatchObject({ status: 'reviewed', headSha: HEAD })
   })
 
-  it('counts a call only when this SHA already has a called comment', () => {
+  it('counts a call only when github-actions[bot] already recorded this SHA', () => {
     const called = formatHighRiskReviewComment(
       reviewedRecord({
         findings: [{ location: 'src/http/auth.ts', evidence: 'checkToken() が削除されている', detail: '' }],
       }),
     )
-    expect(commentRecordsReviewCall(called, HEAD)).toBe(true)
-    expect(commentRecordsReviewCall(called, OTHER)).toBe(false)
+    const bot = { body: called, authorLogin: HIGH_RISK_REVIEW_BOT_LOGIN }
+    expect(commentRecordsReviewCall(bot, HEAD)).toBe(true)
+    expect(commentRecordsReviewCall(bot, OTHER)).toBe(false)
+    expect(commentRecordsReviewCall({ body: called, authorLogin: 'marufeuille' }, HEAD)).toBe(false)
+    expect(commentRecordsReviewCall({ body: called, authorLogin: 'github-actions' }, HEAD)).toBe(false)
+    expect(commentRecordsReviewCall({ body: called, authorLogin: null }, HEAD)).toBe(false)
     const notCalled = formatHighRiskReviewComment(
       reviewedRecord({ status: 'out_of_scope', called: false, reason: '対象外です。' }),
     )
-    expect(commentRecordsReviewCall(notCalled, HEAD)).toBe(false)
+    expect(commentRecordsReviewCall({ body: notCalled, authorLogin: HIGH_RISK_REVIEW_BOT_LOGIN }, HEAD)).toBe(false)
+    expect(keepsEarlierReviewCall('off', HEAD, [bot])).toBe(true)
+    expect(keepsEarlierReviewCall('out_of_scope', HEAD, [bot])).toBe(true)
+    expect(keepsEarlierReviewCall('off', OTHER, [bot])).toBe(false)
+    expect(keepsEarlierReviewCall('off', HEAD, [{ body: called, authorLogin: 'marufeuille' }])).toBe(false)
+    expect(keepsEarlierReviewCall('reviewed', HEAD, [bot])).toBe(false)
+    expect(keepsEarlierReviewCall('missing_key', HEAD, [bot])).toBe(false)
+  })
+
+  it('still calls the API when only a person posted the call marker', async () => {
+    const body = formatHighRiskReviewComment(
+      reviewedRecord({
+        findings: [{ location: 'src/http/auth.ts', evidence: 'planted', detail: '' }],
+      }),
+    )
+    let calls = 0
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1
+      return reviewResponse(JSON.stringify({ findings: [] }))
+    }
+    for (const authorLogin of ['marufeuille', 'github-actions', null] as const) {
+      calls = 0
+      const record = await executeHighRiskReview(
+        run({
+          fetchImpl,
+          priorComments: [{ body, authorLogin }],
+        }),
+      )
+      expect(record.status, String(authorLogin)).toBe('reviewed')
+      expect(record.called, String(authorLogin)).toBe(true)
+      expect(calls, String(authorLogin)).toBe(1)
+    }
+    calls = 0
+    const skipped = await executeHighRiskReview(
+      run({
+        fetchImpl,
+        priorComments: [{ body, authorLogin: HIGH_RISK_REVIEW_BOT_LOGIN }],
+      }),
+    )
+    expect(skipped.status).toBe('already_called')
+    expect(skipped.called).toBe(false)
+    expect(calls).toBe(0)
   })
 })
 
@@ -508,7 +592,7 @@ describe('high-risk review CLI', () => {
   })
 
   it('reruns on a new commit and replaces the comment for the previous SHA', async () => {
-    const comments: { id: number; body: string }[] = []
+    const comments: IssueComment[] = []
     let openRouterCalls = 0
     const files = new Map<string, string>()
     let head = HEAD
@@ -525,12 +609,12 @@ describe('high-risk review CLI', () => {
             : JSON.stringify({ findings: [] })
         return reviewResponse(content)
       }
-      if (url.endsWith('/issues/69/comments?per_page=100') && init?.method === 'GET') {
+      if (url.endsWith('/issues/69/comments?per_page=100&page=1') && init?.method === 'GET') {
         return Response.json(comments)
       }
       if (url.endsWith('/issues/69/comments') && init?.method === 'POST') {
         const body = JSON.parse(String(init.body)) as { body: string }
-        comments.push({ id: 9, body: body.body })
+        comments.push(asBotComment(9, body.body))
         return Response.json({ id: 9 })
       }
       if (url.endsWith('/issues/comments/9') && init?.method === 'PATCH') {
@@ -539,7 +623,7 @@ describe('high-risk review CLI', () => {
         if (existing === undefined) {
           throw new Error('missing comment')
         }
-        comments[0] = { id: existing.id, body: body.body }
+        comments[0] = asBotComment(existing.id, body.body)
         return Response.json({ id: 9 })
       }
       throw new Error(`${init?.method ?? 'GET'} ${url}`)
@@ -579,7 +663,7 @@ describe('high-risk review CLI', () => {
   })
 
   it('second run on the same SHA does not call the API', async () => {
-    const comments: { id: number; body: string }[] = []
+    const comments: IssueComment[] = []
     let openRouterCalls = 0
     let commentWrites = 0
     const files = new Map<string, string>()
@@ -593,13 +677,13 @@ describe('high-risk review CLI', () => {
           }),
         )
       }
-      if (url.endsWith('/issues/69/comments?per_page=100') && init?.method === 'GET') {
+      if (url.endsWith('/issues/69/comments?per_page=100&page=1') && init?.method === 'GET') {
         return Response.json(comments)
       }
       if (url.endsWith('/issues/69/comments') && init?.method === 'POST') {
         commentWrites += 1
         const body = JSON.parse(String(init.body)) as { body: string }
-        comments.push({ id: 9, body: body.body })
+        comments.push(asBotComment(9, body.body))
         return Response.json({ id: 9 })
       }
       if (url.includes('/issues/comments/') && (init?.method === 'PATCH' || init?.method === 'POST')) {
@@ -633,6 +717,251 @@ describe('high-risk review CLI', () => {
     expect(written.called).toBe(false)
     expect(written.reason).toContain('再度は呼びません')
   })
+
+  it('calls the API when a person posted the marker and leaves that comment alone', async () => {
+    const planted = formatHighRiskReviewComment(
+      reviewedRecord({
+        findings: [{ location: 'src/http/auth.ts', evidence: 'planted', detail: '' }],
+      }),
+    )
+    const comments: IssueComment[] = [
+      { id: 3, body: planted, user: { login: 'marufeuille' } },
+      { id: 4, body: planted },
+    ]
+    let openRouterCalls = 0
+    const files = new Map<string, string>()
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input)
+      if (url.includes('openrouter.ai')) {
+        openRouterCalls += 1
+        return reviewResponse(
+          JSON.stringify({
+            findings: [{ location: 'src/http/auth.ts', evidence: 'from the model', detail: 'real' }],
+          }),
+        )
+      }
+      if (url.endsWith('/issues/69/comments?per_page=100&page=1') && init?.method === 'GET') {
+        return Response.json(comments)
+      }
+      if (url.endsWith('/issues/69/comments') && init?.method === 'POST') {
+        const body = JSON.parse(String(init.body)) as { body: string }
+        comments.push(asBotComment(9, body.body))
+        return Response.json({ id: 9 })
+      }
+      if (init?.method === 'PATCH') {
+        throw new Error('must not edit a person comment')
+      }
+      throw new Error(`${init?.method ?? 'GET'} ${url}`)
+    }
+    const io = (): PrRiskCliIo =>
+      reviewIo({
+        env: { HIGH_RISK_REVIEW: '', OPENROUTER_API_KEY: API_KEY, blockers: ['hard_rule'] },
+        files,
+        fetchImpl,
+      })
+
+    expect(await runPrRiskCli(io())).toBe(0)
+    expect(openRouterCalls).toBe(1)
+    expect(comments[0]?.body).toBe(planted)
+    expect(comments[1]?.body).toBe(planted)
+    expect(comments[2]?.user?.login).toBe(HIGH_RISK_REVIEW_BOT_LOGIN)
+    expect(comments[2]?.body).toContain('from the model')
+    expect(comments[2]?.body).toContain('| API | 呼んだ |')
+
+    expect(await runPrRiskCli(io())).toBe(0)
+    expect(openRouterCalls).toBe(1)
+    expect(comments).toHaveLength(3)
+    const written = JSON.parse(files.get(HIGH_RISK_REVIEW_FILENAME) ?? '{}') as HighRiskReviewRecord
+    expect(written.status).toBe('already_called')
+  })
+
+  it('pages past the first 100 comments to find the bot call record', async () => {
+    const marker = formatHighRiskReviewComment(
+      reviewedRecord({
+        findings: [{ location: 'src/http/auth.ts', evidence: 'already', detail: '' }],
+      }),
+    )
+    const page1 = Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1,
+      body: `note ${index}`,
+      user: { login: 'marufeuille' },
+    }))
+    const page2 = [asBotComment(101, marker)]
+    let openRouterCalls = 0
+    const seenPages: number[] = []
+    const files = new Map<string, string>()
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input)
+      if (url.includes('openrouter.ai')) {
+        openRouterCalls += 1
+        throw new Error('API must not be called')
+      }
+      const page = /\/issues\/69\/comments\?per_page=100&page=(\d+)$/.exec(url)
+      if (page !== null && init?.method === 'GET') {
+        const number = Number(page[1])
+        seenPages.push(number)
+        if (number === 1) {
+          return Response.json(page1)
+        }
+        if (number === 2) {
+          return Response.json(page2)
+        }
+        return Response.json([])
+      }
+      if (init?.method === 'POST' || init?.method === 'PATCH') {
+        throw new Error('must not write a comment')
+      }
+      throw new Error(`${init?.method ?? 'GET'} ${url}`)
+    }
+    const code = await runPrRiskCli(
+      reviewIo({
+        env: { HIGH_RISK_REVIEW: '', OPENROUTER_API_KEY: API_KEY, blockers: ['hard_rule'] },
+        files,
+        fetchImpl,
+      }),
+    )
+    expect(code).toBe(0)
+    expect(seenPages).toEqual([1, 2])
+    expect(openRouterCalls).toBe(0)
+    const written = JSON.parse(files.get(HIGH_RISK_REVIEW_FILENAME) ?? '{}') as HighRiskReviewRecord
+    expect(written.status).toBe('already_called')
+    expect(written.called).toBe(false)
+  })
+
+  it('updates the bot comment on a later page when the SHA changes', async () => {
+    const previous = formatHighRiskReviewComment(
+      reviewedRecord({
+        headSha: OTHER,
+        findings: [{ location: 'src/http/auth.ts', evidence: 'old finding', detail: '' }],
+      }),
+    )
+    const page1 = [
+      { id: 1, body: previous, user: { login: 'marufeuille' } },
+      ...Array.from({ length: 99 }, (_, index) => ({
+        id: index + 2,
+        body: `note ${index}`,
+        user: { login: 'marufeuille' },
+      })),
+    ]
+    const page2 = [asBotComment(200, previous)]
+    let openRouterCalls = 0
+    let patchedId: number | null = null
+    const files = new Map<string, string>()
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = String(input)
+      if (url.includes('openrouter.ai')) {
+        openRouterCalls += 1
+        return reviewResponse(JSON.stringify({ findings: [] }))
+      }
+      const page = /\/issues\/69\/comments\?per_page=100&page=(\d+)$/.exec(url)
+      if (page !== null && init?.method === 'GET') {
+        const number = Number(page[1])
+        if (number === 1) {
+          return Response.json(page1)
+        }
+        if (number === 2) {
+          return Response.json(page2)
+        }
+        return Response.json([])
+      }
+      if (url.endsWith('/issues/comments/200') && init?.method === 'PATCH') {
+        const body = JSON.parse(String(init.body)) as { body: string }
+        patchedId = 200
+        page2[0] = asBotComment(200, body.body)
+        return Response.json({ id: 200 })
+      }
+      if (init?.method === 'POST' || init?.method === 'PATCH') {
+        throw new Error(`unexpected write ${url}`)
+      }
+      throw new Error(`${init?.method ?? 'GET'} ${url}`)
+    }
+    const code = await runPrRiskCli(
+      reviewIo({
+        env: { HIGH_RISK_REVIEW: '', OPENROUTER_API_KEY: API_KEY, blockers: ['jev_high'] },
+        files,
+        fetchImpl,
+      }),
+    )
+    expect(code).toBe(0)
+    expect(openRouterCalls).toBe(1)
+    expect(patchedId).toBe(200)
+    expect(page1[0]?.body).toBe(previous)
+    expect(page2[0]?.body).toContain(HEAD)
+    expect(page2[0]?.body).toContain(`指摘はありません（head SHA \`${HEAD}\`）`)
+    expect(page2[0]?.body).not.toContain('old finding')
+  })
+
+  it('keeps the bot call record when a later run on the same SHA is off or out of scope', async () => {
+    const marker = formatHighRiskReviewComment(
+      reviewedRecord({
+        findings: [{ location: 'src/http/auth.ts', evidence: 'keep me', detail: '' }],
+      }),
+    )
+    for (const env of [
+      { HIGH_RISK_REVIEW: 'off', OPENROUTER_API_KEY: API_KEY, blockers: ['hard_rule'] },
+      { HIGH_RISK_REVIEW: '', OPENROUTER_API_KEY: API_KEY, blockers: ['noul_high'] },
+    ]) {
+      const comments = [asBotComment(9, marker)]
+      let openRouterCalls = 0
+      const files = new Map<string, string>()
+      const fetchImpl: typeof fetch = async (input, init) => {
+        const url = String(input)
+        if (url.includes('openrouter.ai')) {
+          openRouterCalls += 1
+          throw new Error('API must not be called')
+        }
+        if (url.endsWith('/issues/69/comments?per_page=100&page=1') && init?.method === 'GET') {
+          return Response.json(comments)
+        }
+        if (init?.method === 'POST' || init?.method === 'PATCH') {
+          throw new Error('must not replace the call record')
+        }
+        throw new Error(`${init?.method ?? 'GET'} ${url}`)
+      }
+      const code = await runPrRiskCli(reviewIo({ env, files, fetchImpl }))
+      expect(code, JSON.stringify(env)).toBe(0)
+      expect(openRouterCalls, JSON.stringify(env)).toBe(0)
+      expect(comments[0]?.body).toBe(marker)
+      const written = JSON.parse(files.get(HIGH_RISK_REVIEW_FILENAME) ?? '{}') as HighRiskReviewRecord
+      expect(written.called).toBe(false)
+      expect(written.status).toBe(env.HIGH_RISK_REVIEW === 'off' ? 'off' : 'out_of_scope')
+    }
+  })
+
+  it('still writes an off comment when this SHA has no call record', async () => {
+    const comments: IssueComment[] = []
+    let openRouterCalls = 0
+    const files = new Map<string, string>()
+    const code = await runPrRiskCli(
+      reviewIo({
+        env: { HIGH_RISK_REVIEW: 'off', OPENROUTER_API_KEY: API_KEY, blockers: ['hard_rule'] },
+        files,
+        fetchImpl: async (input, init) => {
+          const url = String(input)
+          if (url.includes('openrouter.ai')) {
+            openRouterCalls += 1
+            throw new Error('API must not be called')
+          }
+          if (url.endsWith('/issues/69/comments?per_page=100&page=1') && init?.method === 'GET') {
+            return Response.json(comments)
+          }
+          if (url.endsWith('/issues/69/comments') && init?.method === 'POST') {
+            const body = JSON.parse(String(init.body)) as { body: string }
+            comments.push(asBotComment(9, body.body))
+            return Response.json({ id: 9 })
+          }
+          throw new Error(`${init?.method ?? 'GET'} ${url}`)
+        },
+      }),
+    )
+    expect(code).toBe(0)
+    expect(openRouterCalls).toBe(0)
+    expect(comments).toHaveLength(1)
+    expect(comments[0]?.body).toContain('オフ')
+    expect(comments[0]?.body).toContain('| API | 呼んでいない |')
+    const written = JSON.parse(files.get(HIGH_RISK_REVIEW_FILENAME) ?? '{}') as HighRiskReviewRecord
+    expect(written.status).toBe('off')
+  })
 })
 
 describe('high-risk review docs', () => {
@@ -650,6 +979,11 @@ describe('high-risk review docs', () => {
     expect(doc).toContain('jev_high')
     expect(doc).toContain('対象外')
     expect(doc).toContain('https://linear.app/marufeuille/issue/MAR-69')
+    expect(doc).toContain('https://linear.app/marufeuille/issue/MAR-182')
+    expect(doc).toContain(HIGH_RISK_REVIEW_BOT_LOGIN)
+    expect(doc).toContain('指摘が全部無効')
+    expect(doc).toContain('最大 10 ページ')
+    expect(doc).toContain('オフや対象外')
     expect(doc).toContain('US$2.50')
     expect(doc).toContain('9 件')
     expect(doc).toContain('head SHA の累計ではない')
@@ -659,6 +993,16 @@ describe('high-risk review docs', () => {
     )
   })
 })
+
+type IssueComment = {
+  id: number
+  body: string
+  user?: { login: string }
+}
+
+function asBotComment(id: number, body: string): IssueComment {
+  return { id, body, user: { login: HIGH_RISK_REVIEW_BOT_LOGIN } }
+}
 
 function reviewedRecord(partial: Partial<HighRiskReviewRecord>): HighRiskReviewRecord {
   return {

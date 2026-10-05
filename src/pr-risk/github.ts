@@ -4,6 +4,7 @@ import { formatPrRiskComment, isPrRiskComment } from './comment.ts'
 export type GitHubComment = {
   readonly id: number
   readonly body: string
+  readonly authorLogin: string | null
 }
 
 export type GitHubIssueCommentApi = {
@@ -190,12 +191,54 @@ function filesFromGitHubFiles(payload: unknown): readonly PrChangedFile[] {
   })
 }
 
+function authorLoginFrom(entry: Record<string, unknown>): string | null {
+  if (!isRecord(entry.user)) {
+    return null
+  }
+  const login = asString(entry.user.login)
+  return login === null || login.length === 0 ? null : login
+}
+
 function commentsFromGitHub(payload: unknown): readonly GitHubComment[] {
   return records(payload).flatMap((entry) => {
     const id = asNumber(entry.id)
     const body = asString(entry.body)
-    return id === null || body === null ? [] : [{ id, body }]
+    if (id === null || body === null) {
+      return []
+    }
+    return [{ id, body, authorLogin: authorLoginFrom(entry) }]
   })
+}
+
+const GITHUB_COMMENTS_PER_PAGE = 100
+const GITHUB_COMMENTS_MAX_PAGES = 10
+
+async function listIssueComments(
+  fetchImpl: typeof fetch,
+  token: string,
+  owner: string,
+  repo: string,
+  issue: number,
+): Promise<readonly GitHubComment[]> {
+  const comments: GitHubComment[] = []
+  for (let page = 1; page <= GITHUB_COMMENTS_MAX_PAGES; page += 1) {
+    const batch = commentsFromGitHub(
+      await githubJson(
+        fetchImpl,
+        token,
+        repoUrl(
+          owner,
+          repo,
+          `issues/${issue}/comments?per_page=${GITHUB_COMMENTS_PER_PAGE}&page=${page}`,
+        ),
+      ),
+    )
+    comments.push(...batch)
+    if (batch.length < GITHUB_COMMENTS_PER_PAGE) {
+      return comments
+    }
+  }
+  return comments
 }
 
 export function createGitHubIssueCommentApi(
@@ -204,9 +247,7 @@ export function createGitHubIssueCommentApi(
 ): GitHubIssueCommentApi {
   return {
     async list(owner, repo, issue) {
-      return commentsFromGitHub(
-        await githubJson(fetchImpl, token, repoUrl(owner, repo, `issues/${issue}/comments?per_page=100`)),
-      )
+      return listIssueComments(fetchImpl, token, owner, repo, issue)
     },
     async create(owner, repo, issue, body) {
       await githubFetch(fetchImpl, token, repoUrl(owner, repo, `issues/${issue}/comments`), commentBody('POST', body))
@@ -294,9 +335,9 @@ export async function upsertMatchingComment(
   repo: string,
   issue: number,
   body: string,
-  matches: (body: string) => boolean,
+  matches: (comment: GitHubComment) => boolean,
 ): Promise<'created' | 'updated'> {
-  const existing = (await api.list(owner, repo, issue)).find((comment) => matches(comment.body))
+  const existing = (await api.list(owner, repo, issue)).find((comment) => matches(comment))
   if (existing === undefined) {
     await api.create(owner, repo, issue, body)
     return 'created'
@@ -312,5 +353,7 @@ export async function upsertPrRiskComment(
   issue: number,
   judgment: PrRiskJudgment,
 ): Promise<'created' | 'updated'> {
-  return upsertMatchingComment(api, owner, repo, issue, formatPrRiskComment(judgment), isPrRiskComment)
+  return upsertMatchingComment(api, owner, repo, issue, formatPrRiskComment(judgment), (comment) =>
+    isPrRiskComment(comment.body),
+  )
 }
