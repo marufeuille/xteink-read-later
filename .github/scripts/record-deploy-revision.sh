@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
-# Record github.sha and the Worker version id after wrangler deploy.
+# Record a Worker version id from the deployments API.
+#   record-deploy-revision.sh before   # production version immediately before deploy
+#   record-deploy-revision.sh after    # version this deploy left live (default)
 # The API body can contain email. This script prints only the sha and version id.
+# Do not call `wrangler rollback` without the recorded id. A secret put also uploads a version.
 set -euo pipefail
+
+mode="${1:-after}"
+case "$mode" in
+  before | after) ;;
+  *)
+    echo "usage: record-deploy-revision.sh [before|after]" >&2
+    exit 2
+    ;;
+esac
 
 sha="${GITHUB_SHA:-unknown}"
 sha="$(printf '%s' "$sha" | tr '[:upper:]' '[:lower:]')"
@@ -31,17 +43,33 @@ if [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
 fi
 
 echo "github.sha=${sha}"
-echo "workerVersion=${version}"
+if [[ "$mode" == "before" ]]; then
+  echo "previousWorkerVersion=${version}"
+else
+  echo "workerVersion=${version}"
+fi
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  {
-    echo "github_sha=${sha}"
-    echo "worker_version=${version}"
-  } >> "$GITHUB_OUTPUT"
+  if [[ "$mode" == "before" ]]; then
+    echo "previous_worker_version=${version}" >> "$GITHUB_OUTPUT"
+  else
+    {
+      echo "github_sha=${sha}"
+      echo "worker_version=${version}"
+    } >> "$GITHUB_OUTPUT"
+  fi
 fi
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
-  {
-    echo "### Deploy revision"
-    echo "- github.sha: \`${sha}\`"
-    echo "- workerVersion: \`${version}\`"
-  } >> "$GITHUB_STEP_SUMMARY"
+  if [[ "$mode" == "before" ]]; then
+    {
+      echo "### Worker version before deploy"
+      echo "- github.sha: \`${sha}\`"
+      echo "- previousWorkerVersion: \`${version}\`"
+    } >> "$GITHUB_STEP_SUMMARY"
+  else
+    {
+      echo "### Deploy revision"
+      echo "- github.sha: \`${sha}\`"
+      echo "- workerVersion: \`${version}\`"
+    } >> "$GITHUB_STEP_SUMMARY"
+  fi
 fi

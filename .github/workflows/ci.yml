@@ -129,6 +129,7 @@ jobs:
     outputs:
       github_sha: ${{ steps.revision.outputs.github_sha }}
       worker_version: ${{ steps.revision.outputs.worker_version }}
+      previous_worker_version: ${{ steps.previous.outputs.previous_worker_version }}
     env:
       WRANGLER_SEND_METRICS: 'false'
     steps:
@@ -164,6 +165,12 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: bash .github/scripts/ensure-d1-database.sh
+      - name: Record previous worker version
+        id: previous
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bash .github/scripts/record-deploy-revision.sh before
       - name: Deploy Worker
         uses: cloudflare/wrangler-action@v4
         with:
@@ -176,7 +183,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: bash .github/scripts/record-deploy-revision.sh
+        run: bash .github/scripts/record-deploy-revision.sh after
 
   # Post-deploy only. A path-filter skip or a failed deploy leaves this job skipped.
   # Re-running the deploy job re-runs this job because it needs: deploy.
@@ -186,9 +193,14 @@ jobs:
     needs: [deploy]
     if: ${{ always() && needs.deploy.result == 'success' }}
     runs-on: ubuntu-latest
-    # Step timeouts: checkout 1 + setup 1 + install 3 + run 8 + delete 2 + notify 1 = 16.
-    # The job allows 18 so a full wait, delete, and notify can all finish.
+    # Step timeouts: checkout 1 + setup 1 + install 3 + run 8 + delete 2 + notify 1 + export 1 = 17.
+    # The job allows 18 so a full wait, delete, notify, and export can all finish.
     timeout-minutes: 18
+    outputs:
+      outcome: ${{ steps.result.outputs.outcome }}
+      failedStep: ${{ steps.result.outputs.failedStep }}
+      errorKind: ${{ steps.result.outputs.errorKind }}
+      cleanupErrorKind: ${{ steps.result.outputs.cleanupErrorKind }}
     steps:
       - uses: actions/checkout@v4
         timeout-minutes: 1
@@ -231,3 +243,59 @@ jobs:
           SMOKE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SMOKE_STATE_PATH: smoke-state.json
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts notify
+      - name: Export smoke result
+        id: result
+        if: always()
+        timeout-minutes: 1
+        env:
+          SMOKE_STATE_PATH: smoke-state.json
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts export-outputs
+
+  # always() so a failed or cancelled smoke does not skip this job.
+  # A successful deploy on main is required. Success and unset skip do not enter.
+  # Rollback uses the version id recorded before this deploy. Never id-less wrangler rollback.
+  # One attempt. A failing verify smoke does not roll back again. Token is CLOUDFLARE_API_TOKEN.
+  # Step timeouts: checkout 1 + setup 1 + install 3 + rollback 12 = 17. Job allows 18.
+  deploy-rollback:
+    name: deploy rollback
+    needs: [deploy, deploy-smoke]
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.deploy.result == 'success' && (needs.deploy-smoke.result == 'failure' || needs.deploy-smoke.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        timeout-minutes: 1
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        timeout-minutes: 3
+        run: npm ci
+      - name: Roll back to the previous worker version
+        timeout-minutes: 12
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PREVIOUS_WORKER_VERSION: ${{ needs.deploy.outputs.previous_worker_version }}
+          WORKER_VERSION: ${{ needs.deploy.outputs.worker_version }}
+          SMOKE_OUTCOME: ${{ needs.deploy-smoke.outputs.outcome }}
+          SMOKE_FAILED_STEP: ${{ needs.deploy-smoke.outputs.failedStep }}
+          SMOKE_ERROR_KIND: ${{ needs.deploy-smoke.outputs.errorKind }}
+          SMOKE_CLEANUP_ERROR_KIND: ${{ needs.deploy-smoke.outputs.cleanupErrorKind }}
+          SMOKE_JOB_RESULT: ${{ needs.deploy-smoke.result }}
+          DEPLOY_BEFORE_SHA: ${{ github.event.before }}
+          SMOKE_CLIP_TOKEN: ${{ secrets.SMOKE_CLIP_TOKEN }}
+          SMOKE_OPDS_USERNAME: ${{ secrets.SMOKE_OPDS_USERNAME }}
+          SMOKE_OPDS_PASSWORD: ${{ secrets.SMOKE_OPDS_PASSWORD }}
+          SMOKE_SLACK_WEBHOOK_URL: ${{ secrets.SMOKE_SLACK_WEBHOOK_URL }}
+          SMOKE_ARTICLE_URL: ${{ vars.SMOKE_ARTICLE_URL }}
+          SMOKE_ORIGIN: https://xteink-read-later.marufeuille.workers.dev
+          SMOKE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SMOKE_STATE_PATH: rollback-smoke-state.json
+        run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts rollback

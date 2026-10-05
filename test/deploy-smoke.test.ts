@@ -603,10 +603,10 @@ describe('deploy smoke script', () => {
     expect(ci).toContain('secrets.SMOKE_SLACK_WEBHOOK_URL')
     expect(ci).toContain('if: always()')
     expect(ci).toContain('if: ${{ failure() || cancelled() }}')
-    const smokeJob = ci.split('\n  deploy-smoke:')[1] ?? ''
+    const smokeJob = (ci.split('\n  deploy-smoke:')[1] ?? '').split('\n  deploy-rollback:')[0] ?? ''
     const jobTimeout = Number(/^    timeout-minutes: (\d+)/m.exec(smokeJob)?.[1])
     const stepTimeouts = [...smokeJob.matchAll(/\n        timeout-minutes: (\d+)/g)].map((match) => Number(match[1]))
-    expect(stepTimeouts).toEqual([1, 1, 3, 8, 2, 1])
+    expect(stepTimeouts).toEqual([1, 1, 3, 8, 2, 1, 1])
     expect(stepTimeouts.reduce((sum, minutes) => sum + minutes, 0)).toBeLessThanOrEqual(jobTimeout)
     expect(jobTimeout).toBe(18)
     expect(ci).not.toMatch(/secrets\.CLIP_TOKEN/)

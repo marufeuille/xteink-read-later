@@ -17,6 +17,7 @@ import {
 import { verifySmokeEpub } from './epub.ts'
 import {
   buildSmokeSlackMessage,
+  isDeployNotification,
   sanitizeGithubSha,
   sanitizeKind,
   sanitizeRunUrl,
@@ -293,7 +294,7 @@ export function failureFields(state: SmokeStateFile): SmokeFailureFields {
 }
 
 export async function postSmokeSlack(webhookUrl: string, message: string, fetchImpl: typeof fetch): Promise<void> {
-  if (!message.startsWith('[deploy-smoke]')) {
+  if (!isDeployNotification(message)) {
     throw new Error('slack message rejected')
   }
   const response = await fetchImpl(webhookUrl, {

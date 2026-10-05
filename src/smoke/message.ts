@@ -43,6 +43,11 @@ export function sanitizeKind(value: string | null | undefined): string {
   return field(value, KIND, '-')
 }
 
+/** Ops routes on these prefixes. Anything else is rejected before Slack sees it. */
+export function isDeployNotification(message: string): boolean {
+  return message.startsWith('[deploy-smoke]') || message.startsWith('[deploy-rollback]')
+}
+
 /** One line. Ops routes on the `[deploy-smoke]` prefix. Only allowlisted fields are interpolated. */
 export function buildSmokeSlackMessage(input: SmokeFailureFields): string {
   const sha = sanitizeGithubSha(input.githubSha)
