@@ -2,6 +2,8 @@
 
 ステータスだけで切るのは朝晩と、Access の外形監視と、Access の経路を変えたあと。Cronitor の Job 監視（定期収集、クリップ、日次ダイジェスト）は同じ文書の後半で、ステータススモークではない。カタログの中身、秘密の値、ダッシュボードのクリック手順は書かない。
 
+デプロイ直後の受付から EPUB までは [deploy-smoke.md](deploy-smoke.md)。朝晩、Access の外形監視、Cronitor の Job 監視とは別で、それらを置き換えない。
+
 本番 origin は `https://xteink-read-later.marufeuille.workers.dev`。末尾スラッシュは付けない。リダイレクトは追わない。最初のステータスを見る。
 
 パスの正本は [access-as-code.md](access-as-code.md)。ログの日次は [workers-logs.md](workers-logs.md)。OPDS の識別子は [daily-opds.md](daily-opds.md)。

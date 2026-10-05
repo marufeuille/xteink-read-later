@@ -74,3 +74,59 @@ export async function opdsBasicAuthorized(
   const passOk = await secretsEqual(presented?.password ?? '', expectedPassword ?? '')
   return userOk && passOk
 }
+
+/** Blank and whitespace-only values are unset. They never match, including the empty string. */
+export function configuredSmokeSecret(value: string | undefined): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return null
+  }
+  return value
+}
+
+export type CredentialPrincipal = 'production' | 'smoke'
+
+export async function resolveClipPrincipal(
+  header: string | undefined,
+  productionToken: string | undefined,
+  smokeToken: string | undefined,
+): Promise<CredentialPrincipal | null> {
+  if (await clipTokenAuthorized(header, productionToken)) {
+    return 'production'
+  }
+  const smoke = configuredSmokeSecret(smokeToken)
+  if (smoke === null) {
+    return null
+  }
+  if (await clipTokenAuthorized(header, smoke)) {
+    return 'smoke'
+  }
+  return null
+}
+
+export async function resolveOpdsPrincipal(
+  header: string | undefined,
+  productionUser: string | undefined,
+  productionPassword: string | undefined,
+  smokeUser: string | undefined,
+  smokePassword: string | undefined,
+): Promise<CredentialPrincipal | null> {
+  if (await opdsBasicAuthorized(header, productionUser, productionPassword)) {
+    return 'production'
+  }
+  const user = configuredSmokeSecret(smokeUser)
+  const password = configuredSmokeSecret(smokePassword)
+  if (user === null || password === null) {
+    return null
+  }
+  if (await opdsBasicAuthorized(header, user, password)) {
+    return 'smoke'
+  }
+  return null
+}
+
+export function forbiddenResponse(): Response {
+  return Response.json(
+    { error: { status: 403, code: 'forbidden', message: 'Forbidden' } },
+    { status: 403 },
+  )
+}
