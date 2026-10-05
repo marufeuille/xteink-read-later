@@ -27,11 +27,19 @@ deploy が path filter で skip されたとき、このジョブも skip する
 
 切り分け、DELETE が残した記事の人手削除、手動の rollback は Ops の runbook が正本である。手順はこの文書に複製しない。
 
+## 未設定の skip
+
+GitHub Actions の secret が空または未作成のとき、`SMOKE_ARTICLE_URL` が不正または届かないとき、`SMOKE_ORIGIN` が origin として使えないときは、`未設定: <名前>` とログして skip する。`outcome` は `skipped`。失敗の Slack 通知は出さない。
+
+同じ skip で、GitHub Actions の warning annotation と、そのステップの job summary に、足りない名前だけを並べる。値、token、パスワード、値の一部は出さない。
+
+リポジトリ変数 `SMOKE_REQUIRED` が `true`、`1`、`yes` のとき（大文字小文字は無視し、前後の空白も無視する）、この skip はジョブを失敗にする。未設定、空、それ以外の値では失敗にしない。本番でこの変数を有効にするかは、secret が揃ったあとに Ops / PM が決める。有効にしてジョブが赤になっても `outcome` は `skipped` のままなので、自動 rollback は skip を戻さない。
+
 ## 自動 rollback
 
 deploy の直前に、本番の Worker version id を `previous_worker_version` として記録する。同じ応答から、その version を出した git SHA を `previous_worker_sha` として記録する。deploy は `wrangler deploy --message deploy-sha=<github.sha>` で、その SHA を deployment の message に残す。message が version 側にしか無いときは、その version の annotation を読む。`github.event.before` は使わない。失敗した deploy や、concurrency でキャンセルされた run のコミットは本番に出ていないことがあり、その範囲で差分を取ると `migrations/` を見落とす。SHA が message からも annotation からも取れないときは `skipped:unknown_diff` で通知だけし、戻さない。deploy のあと、この run の `worker_version` も記録する。id なしの `wrangler rollback` は使わない。`wrangler secret put` も version を作るので、直前にアップロードされた版は、この deploy の直前とは限らない。version には secret の値も入っている。古すぎる版に戻すと、その日入れたスモーク用ハッシュが落ちることがある。戻すときは、記録した id を指定する。
 
-`deploy rollback` は `deploy` と `deploy smoke` の両方を `needs` に持ち、`if: always()` でスモークが失敗またはキャンセルしたあとにも判定する。対象は、`main` への push で deploy が成功し、スモークが失敗またはキャンセルされたときだけである。成功と、未設定による skip では戻さない。
+`deploy rollback` は `deploy` と `deploy smoke` の両方を `needs` に持ち、`if: always()` でスモークが失敗またはキャンセルしたあとにも判定する。対象は、`main` への push で deploy が成功し、スモークが失敗またはキャンセルされたときだけである。成功と、未設定による skip では戻さない。`SMOKE_REQUIRED` でその skip のジョブが失敗になっても、`outcome` が `skipped` なら判定は変わらず戻さない。
 
 戻すのは、次をすべて満たすときだけ。
 
@@ -80,7 +88,7 @@ D1 のスキーマとデータは戻らない。main の revert も、マージ�
 
 `pages/smoke/article.html`。タイトルは `[smoke]` で始まる。GitHub Pages の URL は既定で `https://marufeuille.github.io/xteink-read-later/smoke/article.html`。workers.dev と Wikipedia は使わない。
 
-Pages のソースが GitHub Actions になるまで、この URL は届かない。届かないあいだスモークは `未設定: SMOKE_ARTICLE_URL` と記録して成功扱いで skip する。失敗通知は出さない。
+Pages のソースが GitHub Actions になるまで、この URL は届かない。届かないあいだスモークは `未設定: SMOKE_ARTICLE_URL` と記録して skip する。見え方と `SMOKE_REQUIRED` は「未設定の skip」。失敗通知は出さない。
 
 有効化は所有者が 1 回だけ行う。このリポジトリは Pages を自分では有効にしない。
 
@@ -98,7 +106,7 @@ URL を変えるときは、GitHub Actions の Variable `SMOKE_ARTICLE_URL` と�
 
 ### GitHub Actions の secret（生の値）
 
-値が空、または未作成のあいだは `未設定` と記録して skip する。失敗にしない。
+値が空、または未作成のあいだは `未設定` と記録して skip する。見え方と `SMOKE_REQUIRED` は「未設定の skip」。
 
 | 名前 | 用途 |
 | --- | --- |
