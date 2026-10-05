@@ -86,7 +86,7 @@ describe('pr-risk CLI', () => {
       },
       fetch: async (input, init) => {
         const url = String(input)
-        if (url.endsWith('/issues/60/comments?per_page=100') && init?.method === 'GET') {
+        if (url.endsWith('/issues/60/comments?per_page=100&page=1') && init?.method === 'GET') {
           return Response.json(comments)
         }
         if (url.endsWith('/issues/60/comments') && init?.method === 'POST') {

@@ -13,6 +13,7 @@ export const HIGH_RISK_REVIEW_FRAMING_TOKENS = 32
 export const HIGH_RISK_REVIEW_VARIABLE = 'HIGH_RISK_REVIEW'
 export const HIGH_RISK_REVIEW_FILENAME = 'high-risk-review.json'
 export const HIGH_RISK_REVIEW_COMMENT_MARKER = '<!-- high-risk-review'
+export const HIGH_RISK_REVIEW_BOT_LOGIN = 'github-actions[bot]'
 export const HIGH_RISK_REVIEW_TIMEOUT_MS = 60_000
 export const OPENROUTER_CHAT_COMPLETIONS_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
@@ -104,6 +105,11 @@ export type FittedReviewPrompt = {
   readonly skip: boolean
 }
 
+export type ReviewCallComment = {
+  readonly body: string
+  readonly authorLogin: string | null
+}
+
 export type HighRiskReviewRun = {
   readonly judgment: ReviewJudgment | null
   readonly eventHeadSha: string | null
@@ -114,7 +120,7 @@ export type HighRiskReviewRun = {
   readonly recordedAt: string
   readonly budget: ReviewBudget
   readonly fetchImpl: typeof fetch
-  readonly priorComments?: readonly string[]
+  readonly priorComments?: readonly ReviewCallComment[]
 }
 
 type CallResult =
@@ -164,8 +170,23 @@ export function isHighRiskReviewTarget(blockers: readonly string[]): boolean {
   return blockers.includes('hard_rule') || blockers.includes('jev_high')
 }
 
-export function commentRecordsReviewCall(body: string, headSha: string): boolean {
-  return body.includes(`${HIGH_RISK_REVIEW_COMMENT_MARKER} sha=${headSha} `) && body.includes('| API | 呼んだ |')
+export function commentRecordsReviewCall(comment: ReviewCallComment, headSha: string): boolean {
+  return (
+    comment.authorLogin === HIGH_RISK_REVIEW_BOT_LOGIN &&
+    comment.body.includes(`${HIGH_RISK_REVIEW_COMMENT_MARKER} sha=${headSha} `) &&
+    comment.body.includes('| API | 呼んだ |')
+  )
+}
+
+export function keepsEarlierReviewCall(
+  status: HighRiskReviewStatus,
+  headSha: string,
+  priorComments: readonly ReviewCallComment[],
+): boolean {
+  if (status !== 'off' && status !== 'out_of_scope') {
+    return false
+  }
+  return priorComments.some((comment) => commentRecordsReviewCall(comment, headSha))
 }
 
 export function estimateTextTokens(text: string, charsPerToken: number): number {
@@ -392,6 +413,9 @@ function parseFindings(content: string): { readonly findings: readonly HighRiskF
       break
     }
   }
+  if (findings.length === 0 && payload.findings.length > 0) {
+    return { findings: [], unparsed: true }
+  }
   return { findings, unparsed: false }
 }
 
@@ -531,7 +555,7 @@ export async function executeHighRiskReview(run: HighRiskReviewRun): Promise<Hig
   }
 
   const judgment = run.judgment
-  if ((run.priorComments ?? []).some((body) => commentRecordsReviewCall(body, judgment.headSha))) {
+  if ((run.priorComments ?? []).some((comment) => commentRecordsReviewCall(comment, judgment.headSha))) {
     return idle(
       run,
       judgment.headSha,

@@ -22,14 +22,17 @@ import { classifyRequestFromPull } from './input.ts'
 import { trialSummary } from './replay.ts'
 import {
   DEFAULT_REVIEW_BUDGET,
+  HIGH_RISK_REVIEW_BOT_LOGIN,
   HIGH_RISK_REVIEW_FILENAME,
   HIGH_RISK_REVIEW_VARIABLE,
   executeHighRiskReview,
   formatHighRiskReviewComment,
   highRiskReviewJson,
   isHighRiskReviewComment,
+  keepsEarlierReviewCall,
   reviewJudgmentFromJson,
   type HighRiskReviewRecord,
+  type ReviewCallComment,
 } from './review.ts'
 
 const execFileAsync = promisify(execFile)
@@ -343,7 +346,7 @@ async function commentHighRiskReview(io: PrRiskCliIo, record: HighRiskReviewReco
       repository.repo,
       issue,
       formatHighRiskReviewComment(record),
-      isHighRiskReviewComment,
+      (comment) => comment.authorLogin === HIGH_RISK_REVIEW_BOT_LOGIN && isHighRiskReviewComment(comment.body),
     )
     io.stdout.write(`review comment ${action}\n`)
   } catch (cause) {
@@ -372,7 +375,7 @@ async function runReview(io: PrRiskCliIo, args: ReviewCommand): Promise<number> 
   const changed =
     judgment === null ? { paths: [], diff: null } : await reviewDiff(io, baseSha, eventHeadSha ?? judgment.headSha)
   const paths = changed.paths.length > 0 ? changed.paths : (judgment?.files ?? [])
-  const priorComments = await listReviewCommentBodies(io, issue, args.noComment)
+  const priorComments = await listReviewComments(io, issue, args.noComment)
   const record = await executeHighRiskReview({
     judgment,
     eventHeadSha,
@@ -390,16 +393,20 @@ async function runReview(io: PrRiskCliIo, args: ReviewCommand): Promise<number> 
     `${record.status} sha=${record.headSha} called=${record.called} cost=${record.estimatedCostUsd ?? 'none'}\n`,
   )
   if (!args.noComment && record.status !== 'already_called') {
-    await commentHighRiskReview(io, record, issue)
+    if (keepsEarlierReviewCall(record.status, record.headSha, priorComments)) {
+      io.stdout.write('review comment kept\n')
+    } else {
+      await commentHighRiskReview(io, record, issue)
+    }
   }
   return 0
 }
 
-async function listReviewCommentBodies(
+async function listReviewComments(
   io: PrRiskCliIo,
   issue: number | null,
   noComment: boolean,
-): Promise<readonly string[]> {
+): Promise<readonly ReviewCallComment[]> {
   if (noComment || issue === null) {
     return []
   }
@@ -410,7 +417,7 @@ async function listReviewCommentBodies(
   }
   try {
     const comments = await createGitHubIssueCommentApi(token, io.fetch).list(repository.owner, repository.repo, issue)
-    return comments.map((comment) => comment.body)
+    return comments.map((comment) => ({ body: comment.body, authorLogin: comment.authorLogin }))
   } catch (cause) {
     io.stderr.write(
       `既存のレビューコメントを読めなかったので、呼び出し済みかは見ていません。${cause instanceof Error ? cause.message : String(cause)}\n`,

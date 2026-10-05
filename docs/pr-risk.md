@@ -155,7 +155,7 @@ npm run pr-risk:review -- --no-comment
 
 ジョブ名は `high-risk-review`（`.github/workflows/pr-risk.yml`）。`pr-risk-trial` が成功した `pull_request` の `opened` / `synchronize` / `reopened` / `ready_for_review` だけで走る。本文やタイトルの `edited` では workflow 自体を走らせない。
 
-費用上限 US$0.30 は、API を呼ぶその 1 回の見積もり上限である。head SHA の累計ではない。同じ head SHA で、会話コメントにその SHA の呼び出し記録（`<!-- high-risk-review sha=` と「API を呼んだ」）が既にあるときは、もう呼ばない。コメントは上書きしないので、その記録は残る。新しいコミットは head SHA が変わるので、high ならもう一度呼び、コメントをその SHA の結果で置き換える。判定ファイルの head SHA がイベントの head SHA と違うときも、古い結果は無効として API を呼ばない。
+費用上限 US$0.30 は、API を呼ぶその 1 回の見積もり上限である。head SHA の累計ではない。同じ head SHA で、`github-actions[bot]` が書いた会話コメントにその SHA の呼び出し記録（`<!-- high-risk-review sha=` と「API を呼んだ」）があるときは、もう呼ばない（[MAR-182](https://linear.app/marufeuille/issue/MAR-182)）。人が同じ印を貼っても、そのコメントは呼び出し記録にしない。人のコメントは書き換えず、`github-actions[bot]` のコメントが無ければ新しく書く。呼び出し記録のあるコメントは上書きしない。同じ SHA のあとの run がオフや対象外で終わっても、その記録は置き換えない。会話コメントは 1 ページ 100 件で、最大 10 ページまで読む。新しいコミットは head SHA が変わるので、high ならもう一度呼び、`github-actions[bot]` のコメントをその SHA の結果で置き換える。判定ファイルの head SHA がイベントの head SHA と違うときも、古い結果は無効として API を呼ばない。
 
 ### high とみなす条件
 
@@ -193,7 +193,7 @@ workflow の replay 既定 13 件（#7, #10, #13, #14, #18, #21, #31, #33, #34, 
 | 1 回の上限 | US$0.30（この呼び出しの見積もり。head SHA の累計ではない） |
 | `max_tokens` | 2048 |
 | reasoning | `effort: low`（このモデルは reasoning が必須で、対応する最も低い effort。既定は medium） |
-| 同じ SHA | その SHA で API を呼んだコメントがあれば、もう呼ばない |
+| 同じ SHA | `github-actions[bot]` がその SHA で API を呼んだコメントがあるときだけ、もう呼ばない |
 | 呼び出し | 通信のリトライはしない |
 
 同じ公開単価（入力 US$2 / 100万、出力 US$10 / 100万）の Sol 級には `openai/gpt-5.6-sol` と `openai/gpt-6-sol` もある。コーディング向けの新しい `openai/gpt-6.1-sol` を選んだ。`openai/gpt-5.6-sol-pro` はトークン単価が同じでも reasoning が増え、上限に当たりやすいので使わない。
@@ -218,4 +218,4 @@ workflow の replay 既定 13 件（#7, #10, #13, #14, #18, #21, #31, #33, #34, 
 
 ### 指摘
 
-指摘には箇所（パス）と、diff にある根拠を書く。根拠のある指摘が無ければ、その旨を head SHA 付きで書く。モデル出力が空のとき、または指摘の JSON として読めないときは「指摘はありません」にはしない。空ならその旨、読めなければ読めなかった旨を head SHA 付きで書く。API が失敗してもジョブは成功のままにし、失敗したことと head SHA を残す。
+指摘には箇所（パス）と、diff にある根拠を書く。根拠のある指摘が無ければ、その旨を head SHA 付きで書く。モデル出力が空のとき、指摘の JSON として読めないとき、または JSON としては読めても指摘が全部無効（箇所か根拠が空、または形が違う）で捨てられたときは「指摘はありません」にはしない。空ならその旨、読めなければ読めなかった旨を head SHA 付きで書く。有効な指摘が残ったときは、無効なものを捨てて残りを記録する。API が失敗してもジョブは成功のままにし、失敗したことと head SHA を残す。
