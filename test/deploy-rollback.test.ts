@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,12 +14,16 @@ import {
   fetchLiveWorkerVersion,
   formatGithubOutput,
   readDeployDiff,
+  rollbackCommandFailure,
   runDeployRollback,
+  safeStderrHead,
   smokeResultOutputs,
   wranglerRollbackInvocation,
   type DeployDiff,
+  type RollbackAttempt,
   type RollbackContext,
 } from '../src/smoke/rollback'
+import { parseWorkerDeploymentIdentity, parseWorkerVersionSourceSha } from '../src/smoke/worker-version'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const TOKEN = 'smoke-clip-token-value'
@@ -69,9 +73,12 @@ async function decide(input: {
   readonly diff?: DeployDiff
   readonly live?: string
   readonly rollbackOk?: boolean
+  readonly rollbackResult?: boolean | RollbackAttempt
   readonly verify?: () => Promise<'passed' | 'failed' | 'skipped'>
+  readonly verifyDeadlineMs?: number
+  readonly log?: (line: string) => void
 }) {
-  const rollback = vi.fn(async () => input.rollbackOk ?? true)
+  const rollback = vi.fn(async () => input.rollbackResult ?? input.rollbackOk ?? true)
   const verify = vi.fn(input.verify ?? (async () => 'passed' as const))
   const notify = vi.fn(async () => {})
   const summarize = vi.fn()
@@ -83,6 +90,8 @@ async function decide(input: {
     verify,
     notify,
     summarize,
+    ...(input.verifyDeadlineMs === undefined ? {} : { verifyDeadlineMs: input.verifyDeadlineMs }),
+    ...(input.log === undefined ? {} : { log: input.log }),
   })
   return { result, rollback, verify, notify, summarize }
 }
@@ -315,6 +324,184 @@ describe('deploy rollback', () => {
     }
   })
 
+  it('blocks rollback when the live version sha includes a migration that event.before misses', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'rollback-diff-'))
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'test',
+      GIT_AUTHOR_EMAIL: 'dev@localhost',
+      GIT_COMMITTER_NAME: 'test',
+      GIT_COMMITTER_EMAIL: 'dev@localhost',
+    }
+    const git = (args: readonly string[]) => {
+      const run = spawnSync('git', [...args], { cwd: repo, env: gitEnv, encoding: 'utf8' })
+      expect(run.status, run.stderr).toBe(0)
+      return run.stdout.trim()
+    }
+    git(['init', '-b', 'main'])
+    writeFileSync(join(repo, 'src.txt'), 'a\n')
+    git(['add', 'src.txt'])
+    git(['commit', '-m', 'A'])
+    const live = git(['rev-parse', 'HEAD'])
+    mkdirSync(join(repo, 'migrations'))
+    writeFileSync(join(repo, 'migrations', '0001_example.sql'), '-- b\n')
+    git(['add', 'migrations/0001_example.sql'])
+    git(['commit', '-m', 'B'])
+    const eventBefore = git(['rev-parse', 'HEAD'])
+    writeFileSync(join(repo, 'src.txt'), 'c\n')
+    git(['add', 'src.txt'])
+    git(['commit', '-m', 'C'])
+    const head = git(['rev-parse', 'HEAD'])
+
+    const fromLive = readDeployDiff(live, head, repo)
+    const fromEventBefore = readDeployDiff(eventBefore, head, repo)
+    expect(fromLive.diffKnown).toBe(true)
+    expect(diffHasMigrations(fromLive.paths)).toBe(true)
+    expect(fromEventBefore.diffKnown).toBe(true)
+    expect(diffHasMigrations(fromEventBefore.paths)).toBe(false)
+
+    const blocked = await decide({ diff: fromLive })
+    expect(blocked.rollback).not.toHaveBeenCalled()
+    expect(blocked.result.result).toBe('skipped:migration')
+    expect(blocked.result.notified).toBe(true)
+
+    const missed = await decide({ diff: fromEventBefore })
+    expect(missed.rollback).toHaveBeenCalledOnce()
+    expect(missed.result.result).toBe('rolled_back')
+  })
+
+  it('skips rollback when the live version sha cannot be resolved', async () => {
+    const identity = parseWorkerDeploymentIdentity({
+      result: {
+        latest: {
+          author_email: 'person@example.com',
+          annotations: { 'workers/message': `https://example.test/${TOKEN}` },
+          versions: [{ version_id: PREV, percentage: 100 }],
+        },
+      },
+    })
+    expect(identity.versionId).toBe(PREV)
+    expect(identity.sourceSha).toBe('unknown')
+    expect(JSON.stringify(identity)).not.toContain(TOKEN)
+    expect(JSON.stringify(identity)).not.toContain('person@example.com')
+    expect(JSON.stringify(identity)).not.toContain('https://')
+
+    const diff = readDeployDiff(identity.sourceSha, SHA)
+    expect(diff.diffKnown).toBe(false)
+    const { result, rollback } = await decide({ diff })
+    expect(rollback).not.toHaveBeenCalled()
+    expect(result.result).toBe('skipped:unknown_diff')
+    expect(result.notified).toBe(true)
+    expect(result.exitCode).toBe(0)
+    assertNoLeak(result.message ?? '')
+  })
+
+  it('reads the sha stamped on the deployment that produced the live version', () => {
+    const liveSha = 'fedcba9876543210fedcba9876543210fedcba98'
+    const identity = parseWorkerDeploymentIdentity({
+      result: {
+        latest: {
+          author_email: 'person@example.com',
+          annotations: { 'workers/message': `deploy-sha=${liveSha}` },
+          versions: [{ version_id: PREV, percentage: 100 }],
+        },
+      },
+    })
+    expect(identity).toEqual({ versionId: PREV, sourceSha: liveSha })
+    expect(parseWorkerVersionSourceSha({
+      result: {
+        author_email: 'person@example.com',
+        annotations: { 'workers/message': `deploy-sha=${liveSha}` },
+      },
+    })).toBe(liveSha)
+    expect(parseWorkerDeploymentIdentity({
+      result: {
+        deployments: [
+          {
+            annotations: { 'workers/commit_sha': liveSha.toUpperCase() },
+            versions: [{ version_id: CUR, percentage: 100 }],
+          },
+        ],
+      },
+    })).toEqual({ versionId: CUR, sourceSha: liveSha })
+    expect(parseWorkerDeploymentIdentity({
+      result: {
+        latest: {
+          versions: [
+            {
+              version_id: PREV,
+              percentage: 100,
+              annotations: { 'workers/message': `deploy-sha=${liveSha}` },
+            },
+          ],
+        },
+      },
+    }).sourceSha).toBe(liveSha)
+    expect(parseWorkerVersionSourceSha({
+      result: { annotations: { 'workers/message': `note ${TOKEN}` } },
+    })).toBe('unknown')
+  })
+
+  it('notifies rolled_back with verify - when verify misses the deadline', async () => {
+    const { result, rollback, verify, notify } = await decide({
+      verify: () => new Promise(() => {}),
+      verifyDeadlineMs: 30,
+    })
+    expect(rollback).toHaveBeenCalledOnce()
+    expect(verify).toHaveBeenCalledOnce()
+    expect(result.result).toBe('rolled_back')
+    expect(result.verify).toBe('-')
+    expect(result.exitCode).toBe(0)
+    expect(result.message).toContain('verify=-')
+    expect(result.message).toContain(ROLLBACK_REVERT_NOTE)
+    expect(notify).toHaveBeenCalledOnce()
+    expect(notify).toHaveBeenCalledWith(result.message)
+  })
+
+  it('logs the wrangler exit code and drops stderr that can hold a token', async () => {
+    expect(safeStderrHead('✘ [ERROR] Worker version not found\nhttps://example.test/secret')).toBe(
+      '[ERROR] Worker version not found',
+    )
+    expect(safeStderrHead(`Bearer ${TOKEN}`)).toBeNull()
+    expect(safeStderrHead('The following secrets have changed: CLIP_TOKEN')).toBeNull()
+    expect(rollbackCommandFailure({ status: 1, stderr: '✘ [ERROR] Worker version not found\n' })).toEqual({
+      exitCode: 1,
+      stderrHead: '[ERROR] Worker version not found',
+    })
+    expect(rollbackCommandFailure({ status: 1, stderr: `authorization ${TOKEN}` }).stderrHead).toBeNull()
+
+    const logs: string[] = []
+    const leaked = await decide({
+      rollbackResult: {
+        ok: false,
+        exitCode: 1,
+        stderrHead: `Bearer ${TOKEN}\n[ERROR] Worker version not found`,
+      },
+      log: (line) => {
+        logs.push(line)
+      },
+    })
+    expect(leaked.result.exitCode).toBe(1)
+    expect(leaked.result.result).toBe('rollback_failed')
+    expect(logs[0]).toBe('rollback_failed exit=1 stderr=-')
+    expect(logs[1]).toBe(leaked.result.message)
+    expect(leaked.result.message).not.toContain('stderr')
+    expect(leaked.result.message).not.toContain(TOKEN)
+    expect(leaked.summarize).toHaveBeenCalledWith(leaked.result.message)
+    assertNoLeak(logs.join('\n'))
+
+    const safeLogs: string[] = []
+    const safe = await decide({
+      rollbackResult: { ok: false, exitCode: 2, stderrHead: '[ERROR] Worker version not found' },
+      log: (line) => {
+        safeLogs.push(line)
+      },
+    })
+    expect(safeLogs[0]).toBe('rollback_failed exit=2 stderr=[ERROR] Worker version not found')
+    expect(safe.result.message).not.toContain('stderr')
+    expect(safe.result.message).not.toContain('Worker version')
+  })
+
   it('does not let an old run or a manual re-run roll back a newer release', async () => {
     const { result, rollback } = await decide({ live: NEWER })
     expect(rollback).not.toHaveBeenCalled()
@@ -536,6 +723,9 @@ describe('deploy rollback', () => {
     expect(before).toBeLessThan(deployCommand)
     expect(deployCommand).toBeLessThan(after)
     expect(deploy).toContain('previous_worker_version: ${{ steps.previous.outputs.previous_worker_version }}')
+    expect(deploy).toContain('previous_worker_sha: ${{ steps.previous.outputs.previous_worker_sha }}')
+    expect(deploy).toContain('command: deploy --message deploy-sha=${{ github.sha }}')
+    expect(workflow).not.toContain('github.event.before')
 
     const rollback = workflow.split('\n  deploy-rollback:')[1] ?? ''
     expect(rollback).toContain('needs: [deploy, deploy-smoke]')
@@ -547,6 +737,8 @@ describe('deploy rollback', () => {
     expect(rollback).toContain('src/smoke/cli.ts rollback')
     expect(rollback).toContain('secrets.CLOUDFLARE_API_TOKEN')
     expect(rollback).toContain('needs.deploy.outputs.previous_worker_version')
+    expect(rollback).toContain('needs.deploy.outputs.previous_worker_sha')
+    expect(rollback).toContain('PREVIOUS_WORKER_SHA:')
     expect(rollback).toContain('needs.deploy.outputs.worker_version')
     expect(rollback).toContain('needs.deploy-smoke.outputs.outcome')
     expect(rollback).toContain('needs.deploy-smoke.outputs.failedStep')
@@ -563,6 +755,9 @@ describe('deploy rollback', () => {
     expect(doc).not.toContain('自動 rollback はしない')
     expect(doc).toContain('[deploy-rollback]')
     expect(doc).toContain('previous_worker_version')
+    expect(doc).toContain('previous_worker_sha')
+    expect(doc).toContain('deploy-sha=')
+    expect(doc).toContain('unknown_diff')
     expect(doc).toContain('CLOUDFLARE_API_TOKEN')
     expect(doc).toContain('Ops の runbook')
     expect(doc).toContain('手順はこの文書に複製しない')
@@ -583,9 +778,11 @@ describe('deploy rollback', () => {
     expect(beforeRun.status).toBe(0)
     const beforeOutput = readFileSync(output, 'utf8')
     expect(beforeOutput).toContain('previous_worker_version=unknown')
+    expect(beforeOutput).toContain('previous_worker_sha=unknown')
     expect(beforeOutput).not.toMatch(/^worker_version=/m)
     expect(beforeRun.stdout).toContain(`github.sha=${SHA}`)
     expect(beforeRun.stdout).toContain('previousWorkerVersion=unknown')
+    expect(beforeRun.stdout).toContain('previousWorkerSha=unknown')
     expect(beforeRun.stdout).not.toMatch(/https?:\/\//)
 
     const afterOutput = join(dirname(output), 'after')

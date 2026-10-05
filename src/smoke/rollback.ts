@@ -8,6 +8,9 @@ const GIT_SHA = /^[0-9a-f]{40}$/
 const RESULT = /^(?:rolled_back|rollback_failed|skipped:[a-z][a-z0-9_]{0,40})$/
 const ROLLBACK_MESSAGE = /^deploy-rollback sha=(?:[0-9a-f]{40}|unknown) run=(?:\d{1,20}|-)$/
 const WORKER_SCRIPT = 'xteink-read-later'
+/** Shorter than the 12 minute rollback step, so notify still runs if verify hangs. */
+export const VERIFY_DEADLINE_MS = 9 * 60 * 1000
+const STDERR_HEAD = /^[A-Za-z0-9 .,;:_[\]()'"/+-]{1,120}$/
 
 /** Fixed sentence. No deploy data is interpolated into it. */
 export const ROLLBACK_REVERT_NOTE = 'main には変更が残っています。revert PR が要ります'
@@ -413,12 +416,81 @@ export function wranglerRollbackInvocation(
   }
 }
 
-/** Runs wrangler. Stdout and stderr are discarded so emails, URLs, and secret names stay out of the job log. */
-export function runWranglerRollback(versionId: string, message: string): boolean {
+export type RollbackAttempt = {
+  readonly ok: boolean
+  readonly exitCode: number | null
+  readonly stderrHead: string | null
+}
+
+/**
+ * First stderr line, only when it cannot hold a token, URL, or secret.
+ * ANSI and a leading error mark are removed. Anything else is dropped.
+ */
+export function safeStderrHead(stderr: string): string | null {
+  const plain = stderr.replace(/\u001b\[[0-9;]*m/g, '')
+  const line = plain
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .find((item) => item.length > 0)
+  if (line === undefined) {
+    return null
+  }
+  const clipped = line.replace(/^[✘×]\s*/, '').slice(0, 120)
+  if (!STDERR_HEAD.test(clipped)) {
+    return null
+  }
+  if (/https?:\/\/|@|bearer|token|secret|password|authorization|api[_-]?key|=/i.test(clipped)) {
+    return null
+  }
+  if (/[A-Za-z0-9+/_-]{20,}/.test(clipped)) {
+    return null
+  }
+  return clipped
+}
+
+function exitCodeOf(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null || !('status' in error)) {
+    return null
+  }
+  const status = error.status
+  if (typeof status !== 'number' || !Number.isInteger(status) || status < 0 || status > 255) {
+    return null
+  }
+  return status
+}
+
+function stderrOf(error: unknown): string {
+  if (typeof error !== 'object' || error === null || !('stderr' in error)) {
+    return ''
+  }
+  const stderr = error.stderr
+  if (typeof stderr === 'string') {
+    return stderr
+  }
+  if (stderr instanceof Uint8Array) {
+    return new TextDecoder().decode(stderr)
+  }
+  return ''
+}
+
+/** Exit code plus a token-free stderr head. Does not include the raw error. */
+export function rollbackCommandFailure(error: unknown): Pick<RollbackAttempt, 'exitCode' | 'stderrHead'> {
+  return {
+    exitCode: exitCodeOf(error),
+    stderrHead: safeStderrHead(stderrOf(error)),
+  }
+}
+
+/**
+ * Runs wrangler. Stdout is discarded.
+ * On failure, returns the exit code and a stderr head that cannot contain a token.
+ */
+export function runWranglerRollback(versionId: string, message: string): RollbackAttempt {
   const invocation = wranglerRollbackInvocation(versionId, message)
   try {
     execFileSync(invocation.command, [...invocation.args], {
-      stdio: 'ignore',
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
       timeout: 60_000,
       env: {
         ...process.env,
@@ -427,9 +499,9 @@ export function runWranglerRollback(versionId: string, message: string): boolean
         WRANGLER_WRITE_LOGS: 'false',
       },
     })
-    return true
-  } catch {
-    return false
+    return { ok: true, exitCode: 0, stderrHead: null }
+  } catch (error) {
+    return { ok: false, ...rollbackCommandFailure(error) }
   }
 }
 
@@ -461,9 +533,10 @@ function emptyUnknownDiff(): DeployDiff {
   return { paths: [], wranglerBefore: null, wranglerAfter: null, diffKnown: false }
 }
 
-function gitShow(spec: string): string | null {
+function gitShow(spec: string, cwd: string): string | null {
   try {
     return execFileSync('git', ['show', spec], {
+      cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     })
@@ -472,8 +545,11 @@ function gitShow(spec: string): string | null {
   }
 }
 
-/** Diff of this deploy (`before`..`head`). Unknown history fails closed. */
-export function readDeployDiff(before: string, head: string): DeployDiff {
+/**
+ * Diff from the SHA that produced the live version to this deploy.
+ * `github.event.before` is not that SHA. An unreadable base fails closed.
+ */
+export function readDeployDiff(before: string, head: string, cwd = process.cwd()): DeployDiff {
   const beforeSha = before.trim().toLowerCase()
   const headSha = head.trim().toLowerCase()
   if (!GIT_SHA.test(beforeSha) || !GIT_SHA.test(headSha) || /^0+$/.test(beforeSha)) {
@@ -481,6 +557,7 @@ export function readDeployDiff(before: string, head: string): DeployDiff {
   }
   try {
     const names = execFileSync('git', ['diff', '--name-only', beforeSha, headSha], {
+      cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     })
@@ -494,8 +571,8 @@ export function readDeployDiff(before: string, head: string): DeployDiff {
     }
     return {
       paths,
-      wranglerBefore: gitShow(`${beforeSha}:${configPath}`),
-      wranglerAfter: gitShow(`${headSha}:${configPath}`),
+      wranglerBefore: gitShow(`${beforeSha}:${configPath}`, cwd),
+      wranglerAfter: gitShow(`${headSha}:${configPath}`, cwd),
       diffKnown: true,
     }
   } catch {
@@ -517,6 +594,7 @@ export async function fetchLiveWorkerVersion(input: {
       {
         headers: { authorization: `Bearer ${input.apiToken}` },
         redirect: 'manual',
+        signal: AbortSignal.timeout(20_000),
       },
     )
     if (!response.ok) {
@@ -542,15 +620,49 @@ function verifyLabel(outcome: 'passed' | 'failed' | 'skipped'): RollbackVerify {
   return outcome === 'passed' ? 'verified' : 'still_failing'
 }
 
+function normalizeAttempt(value: boolean | RollbackAttempt): RollbackAttempt {
+  if (typeof value === 'boolean') {
+    return { ok: value, exitCode: null, stderrHead: null }
+  }
+  return value
+}
+
+function exitLabel(exitCode: number | null): string {
+  if (exitCode === null || !Number.isInteger(exitCode) || exitCode < 0 || exitCode > 255) {
+    return '-'
+  }
+  return String(exitCode)
+}
+
+async function verifyWithinDeadline(
+  verify: () => Promise<'passed' | 'failed' | 'skipped'>,
+  deadlineMs: number,
+): Promise<'passed' | 'failed' | 'skipped' | 'deadline'> {
+  return await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve('deadline'), deadlineMs)
+    verify().then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      () => {
+        clearTimeout(timer)
+        resolve('failed')
+      },
+    )
+  })
+}
+
 export async function runDeployRollback(deps: {
   readonly context: RollbackContext
   readonly diff: DeployDiff
   readonly liveWorkerVersion: string
-  readonly rollback: (versionId: string, message: string) => Promise<boolean>
+  readonly rollback: (versionId: string, message: string) => Promise<boolean | RollbackAttempt>
   readonly verify: () => Promise<'passed' | 'failed' | 'skipped'>
   readonly notify: (message: string) => Promise<void>
   readonly summarize: (message: string) => void
   readonly log?: (line: string) => void
+  readonly verifyDeadlineMs?: number
 }): Promise<RollbackRunResult> {
   const smoke = classifySmokeForRollback(deps.context)
   if (smoke.kind === 'ignore') {
@@ -578,24 +690,21 @@ export async function runDeployRollback(deps: {
   let exitCode = 0
 
   if (guarded.action === 'rollback') {
-    let ok = false
+    let attempt: RollbackAttempt = { ok: false, exitCode: null, stderrHead: null }
     try {
-      ok = await deps.rollback(guarded.to, annotation)
-    } catch {
-      ok = false
+      attempt = normalizeAttempt(await deps.rollback(guarded.to, annotation))
+    } catch (error) {
+      attempt = { ok: false, ...rollbackCommandFailure(error) }
     }
-    if (!ok) {
+    if (!attempt.ok) {
       result = 'rollback_failed'
       exitCode = 1
+      const stderrHead = attempt.stderrHead === null ? null : safeStderrHead(attempt.stderrHead)
+      deps.log?.(`rollback_failed exit=${exitLabel(attempt.exitCode)} stderr=${stderrHead ?? '-'}`)
     } else {
       rolledBack = true
-      let verified: 'passed' | 'failed' | 'skipped' = 'failed'
-      try {
-        verified = await deps.verify()
-      } catch {
-        verified = 'failed'
-      }
-      verify = verifyLabel(verified)
+      const verified = await verifyWithinDeadline(deps.verify, deps.verifyDeadlineMs ?? VERIFY_DEADLINE_MS)
+      verify = verified === 'deadline' ? '-' : verifyLabel(verified)
       result = 'rolled_back'
     }
   }

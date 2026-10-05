@@ -209,7 +209,7 @@ async function rollback(): Promise<number> {
   const early = classifySmokeForRollback(context)
   const diff =
     early.kind === 'candidate'
-      ? readDeployDiff(envValue('DEPLOY_BEFORE_SHA') ?? '', envValue('GITHUB_SHA') ?? '')
+      ? readDeployDiff(envValue('PREVIOUS_WORKER_SHA') ?? '', envValue('GITHUB_SHA') ?? '')
       : knownDiff()
   const accountId = envValue('CLOUDFLARE_ACCOUNT_ID') ?? ''
   const apiToken = envValue('CLOUDFLARE_API_TOKEN') ?? ''

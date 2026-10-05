@@ -130,6 +130,7 @@ jobs:
       github_sha: ${{ steps.revision.outputs.github_sha }}
       worker_version: ${{ steps.revision.outputs.worker_version }}
       previous_worker_version: ${{ steps.previous.outputs.previous_worker_version }}
+      previous_worker_sha: ${{ steps.previous.outputs.previous_worker_sha }}
     env:
       WRANGLER_SEND_METRICS: 'false'
     steps:
@@ -177,7 +178,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: npm
-          command: deploy
+          command: deploy --message deploy-sha=${{ github.sha }}
       - name: Record deployed revision
         id: revision
         env:
@@ -254,7 +255,9 @@ jobs:
   # always() so a failed or cancelled smoke does not skip this job.
   # A successful deploy on main is required. Success and unset skip do not enter.
   # Rollback uses the version id recorded before this deploy. Never id-less wrangler rollback.
+  # The migration diff base is previous_worker_sha, the SHA that produced that version.
   # One attempt. A failing verify smoke does not roll back again. Token is CLOUDFLARE_API_TOKEN.
+  # Verify has a 9 minute deadline inside the 12 minute step so the notify still runs.
   # Step timeouts: checkout 1 + setup 1 + install 3 + rollback 12 = 17. Job allows 18.
   deploy-rollback:
     name: deploy rollback
@@ -289,7 +292,7 @@ jobs:
           SMOKE_ERROR_KIND: ${{ needs.deploy-smoke.outputs.errorKind }}
           SMOKE_CLEANUP_ERROR_KIND: ${{ needs.deploy-smoke.outputs.cleanupErrorKind }}
           SMOKE_JOB_RESULT: ${{ needs.deploy-smoke.result }}
-          DEPLOY_BEFORE_SHA: ${{ github.event.before }}
+          PREVIOUS_WORKER_SHA: ${{ needs.deploy.outputs.previous_worker_sha }}
           SMOKE_CLIP_TOKEN: ${{ secrets.SMOKE_CLIP_TOKEN }}
           SMOKE_OPDS_USERNAME: ${{ secrets.SMOKE_OPDS_USERNAME }}
           SMOKE_OPDS_PASSWORD: ${{ secrets.SMOKE_OPDS_PASSWORD }}

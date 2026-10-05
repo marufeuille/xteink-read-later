@@ -29,7 +29,7 @@ deploy が path filter で skip されたとき、このジョブも skip する
 
 ## 自動 rollback
 
-deploy の直前に、本番の Worker version id を `previous_worker_version` として記録する。deploy のあと、この run の `worker_version` も記録する。id なしの `wrangler rollback` は使わない。`wrangler secret put` も version を作るので、直前にアップロードされた版は、この deploy の直前とは限らない。version には secret の値も入っている。古すぎる版に戻すと、その日入れたスモーク用ハッシュが落ちることがある。戻すときは、記録した id を指定する。
+deploy の直前に、本番の Worker version id を `previous_worker_version` として記録する。同じ応答から、その version を出した git SHA を `previous_worker_sha` として記録する。deploy は `wrangler deploy --message deploy-sha=<github.sha>` で、その SHA を deployment の message に残す。message が version 側にしか無いときは、その version の annotation を読む。`github.event.before` は使わない。失敗した deploy や、concurrency でキャンセルされた run のコミットは本番に出ていないことがあり、その範囲で差分を取ると `migrations/` を見落とす。SHA が message からも annotation からも取れないときは `skipped:unknown_diff` で通知だけし、戻さない。deploy のあと、この run の `worker_version` も記録する。id なしの `wrangler rollback` は使わない。`wrangler secret put` も version を作るので、直前にアップロードされた版は、この deploy の直前とは限らない。version には secret の値も入っている。古すぎる版に戻すと、その日入れたスモーク用ハッシュが落ちることがある。戻すときは、記録した id を指定する。
 
 `deploy rollback` は `deploy` と `deploy smoke` の両方を `needs` に持ち、`if: always()` でスモークが失敗またはキャンセルしたあとにも判定する。対象は、`main` への push で deploy が成功し、スモークが失敗またはキャンセルされたときだけである。成功と、未設定による skip では戻さない。
 
@@ -48,7 +48,7 @@ deploy の直前に、本番の Worker version id を `previous_worker_version` 
 
 - `previous_worker_version` と、この run の `worker_version` が両方取れている。`unknown` ではない
 - いまの本番 version が、この run の `worker_version` と一致する。古い run や手動の再実行で、より新しいリリースを戻さない
-- この deploy の差分に `migrations/` が無く、`wrangler.jsonc` の bindings と triggers も変わっていない
+- `previous_worker_sha` からこの run の SHA までの差分に `migrations/` が無く、`wrangler.jsonc` の bindings と triggers も変わっていない
 
 コマンドは、インストール済みの wrangler が受ける形で、version id と `--message` と `--yes` を付ける。
 
@@ -56,7 +56,9 @@ deploy の直前に、本番の Worker version id を `previous_worker_version` 
 wrangler rollback <previous_worker_version> --message "deploy-rollback sha=… run=…" --yes
 ```
 
-戻したあと、スモークを 1 回だけ再実行する。結果は `verified` か `still_failing`。再スモークが失敗しても、もう一度は戻さない。
+戻したあと、スモークを 1 回だけ再実行する。結果は `verified` か `still_failing`。再スモークが失敗しても、もう一度は戻さない。再スモークの内部期限は 9 分で、rollback ステップの 12 分より短い。期限までに終わらなければ `verify=-` で通知し、ジョブ summary にも同じ行を書く。
+
+rollback コマンド自体が失敗したときは、終了コードと、token を含み得ない stderr の先頭だけをジョブのログに出す。その行は Slack にも job summary の本文にも入れない。
 
 D1 のスキーマとデータは戻らない。main の revert も、マージの停止もしない。戻したときは「main には変更が残っています。revert PR が要ります」と通知する。
 
@@ -68,7 +70,7 @@ D1 のスキーマとデータは戻らない。main の revert も、マージ�
 
 入れるもの: `sha`、`from`、`to`、`trigger`（failedStep / errorKind）、`result`（`rolled_back` / `rollback_failed` / `skipped:<理由>`）、`verify`（`verified` / `still_failing` / `-`）、Actions の run URL。戻したときだけ、main に変更が残っていること。入れないもの: 記事 URL、token、パスワード、ハッシュの入力にした生の値、記事本文。
 
-`result` が `skipped:` になる例: `migration`（`migrations/`、または bindings / triggers）、`version_mismatch`（本番がこの run の version ではない。古い run や手動の再実行を含む）、`external`（`network` / `fetch_failed` / `http_401` / `http_403` / `interrupted`）、`unknown_version`。`poll-job` の `timeout`、`article-preflight`、DELETE だけの失敗、表に無い失敗も戻さない。
+`result` が `skipped:` になる例: `migration`（`migrations/`、または bindings / triggers）、`unknown_diff`（本番 version の SHA が取れない）、`version_mismatch`（本番がこの run の version ではない。古い run や手動の再実行を含む）、`external`（`network` / `fetch_failed` / `http_401` / `http_403` / `interrupted`）、`unknown_version`。`poll-job` の `timeout`、`article-preflight`、DELETE だけの失敗、表に無い失敗も戻さない。
 
 トークンは既存の GitHub Actions secret `CLOUDFLARE_API_TOKEN` を使う。新しい secret は作らない。
 
