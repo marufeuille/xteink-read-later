@@ -4,6 +4,12 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
+function jobBody(workflow: string, name: string): string {
+  const body = workflow.split(`\n  ${name}:`)[1] ?? ''
+  const next = body.search(/\n {2}[a-z0-9-]+:\n/)
+  return next < 0 ? body : body.slice(0, next)
+}
+
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const workflow = readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8')
 const ruleset = JSON.parse(
@@ -24,7 +30,11 @@ describe('GitHub merge gates', () => {
     const header = workflow.split('\njobs:')[0] ?? ''
     expect(header).not.toMatch(/\n\s+paths:/)
     expect(header).not.toMatch(/\n\s+paths-ignore:/)
-    expect(workflow).not.toMatch(/continue-on-error:\s*true/)
+    expect(workflow.match(/continue-on-error:\s*true/g)).toEqual(['continue-on-error: true'])
+    for (const name of ['changes', 'check', 'simulator-images', 'merge-gate', 'deploy', 'deploy-smoke', 'deploy-rollback']) {
+      expect(jobBody(workflow, name), name).not.toMatch(/continue-on-error/)
+    }
+    expect(jobBody(workflow, 'diff-coverage')).toContain('continue-on-error: true')
     expect(workflow).toContain('name: typecheck, unit, e2e')
     expect(workflow).toContain('npm run typecheck')
     expect(workflow).toContain('npm run test:unit')
@@ -123,6 +133,7 @@ describe('GitHub merge gates', () => {
       'verify-merge-gates.sh',
       'ci-changed-paths.sh',
       'ci-merge-gate.sh',
+      'ci-diff-coverage.sh',
     ]) {
       execFileSync('bash', ['-n', join(root, '.github/scripts', script)])
     }

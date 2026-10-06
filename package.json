@@ -8,6 +8,7 @@
     "typecheck": "wrangler types && tsc --noEmit",
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "vitest run",
+    "test:unit:coverage": "vitest run --coverage",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:e2e:live": "E2E_LIVE=1 vitest run --config vitest.e2e.config.ts",
     "clip:status": "node --experimental-strip-types --disable-warning=ExperimentalWarning src/cli/clip-status.ts",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "@vitest/coverage-v8": "5.0.1",
     "typescript": "^5.9.2",
     "vitest": "^5.0.1",
     "wrangler": "^4.37.1"

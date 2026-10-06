@@ -40,6 +40,14 @@ Access Terraform（`.github/workflows/access-terraform.yml`）は必須チェッ
 
 `merge-gate` は `if: always()` なので、依存ジョブが skipped でも失敗でも実行される。`classify changes` が失敗したときはゲートも失敗する。GitHub はジョブの `if` による skipped を必須チェックの成功として扱う。GitHub がマージを受け付けるのは、常に実行する `merge-gate` の結論が `success` のときである。それだけでは、このリポジトリの手順としてマージしてよいことにはならない。条件は「マージしてよいとき」。
 
+## 差分カバレッジ（表示のみ）
+
+`diff coverage`（`.github/workflows/ci.yml` の `diff-coverage`）は、unit テストの行と分岐のカバレッジを取り、変更された `src/**/*.ts` のうち未実行の行と分岐をそのジョブの summary に書く。分類は `check` と同じ `needs.changes.outputs.check == 'true'` なので、docs だけの差分では skipped になる。skipped は `merge-gate` を落とさない。
+
+このジョブは `merge-gate` の `needs` に入っていない。`continue-on-error: true` で、計測スクリプトも終了コード 0 で終わる。取得や表示が失敗しても `merge-gate` は落ちない。必須チェック名（`typecheck, unit, e2e`、`simulator images`、`merge-gate`）は変えていない。閾値は無い。外部サービスも追加の secret も使わない。
+
+測り方と、測った全体の行・分岐、CI の所要時間の増分は [coverage.md](coverage.md)。
+
 ## 最新 main との組合せ
 
 複数エージェントが同時に PR を出す前提なので、利用できるなら merge queue を使う。queue は最新 `main` との合成に対して `merge_group` で `merge-gate` を再実行し、`ALLGREEN` なので失敗した PR は落ちて止まる。
