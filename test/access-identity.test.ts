@@ -56,6 +56,7 @@ describe('Access identity', () => {
       executionContext(TEST_ACCESS_EMAIL),
     )
     expect(logout.status).toBe(303)
+    expect(logout.headers.get('location')).toBe('/cdn-cgi/access/logout')
     expect(logout.headers.get('location')).toBe(ACCESS_LOGOUT_PATH)
   })
 

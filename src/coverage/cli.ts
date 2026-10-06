@@ -114,7 +114,11 @@ export function formatCoverageFailure(error: unknown, vitestStatus: number | nul
   return `### 差分カバレッジ（unit）\n\n表示に失敗しました: ${errorName(error)}\n\n${status}`
 }
 
-export function reportInputFromArgv(argv: readonly string[], env: NodeJS.ProcessEnv, cwd: string): ReportInput {
+type CoverageCliEnv = {
+  readonly [key: string]: string | undefined
+}
+
+export function reportInputFromArgv(argv: readonly string[], env: CoverageCliEnv, cwd: string): ReportInput {
   const elapsed = argument('--elapsed-seconds', argv)
   const elapsedSeconds = elapsed !== null && /^\d+$/.test(elapsed) ? Number(elapsed) : null
   return {
@@ -133,7 +137,7 @@ export function reportInputFromArgv(argv: readonly string[], env: NodeJS.Process
   }
 }
 
-export function runCoverageCli(argv: readonly string[], env: NodeJS.ProcessEnv, cwd: string): number {
+export function runCoverageCli(argv: readonly string[], env: CoverageCliEnv, cwd: string): number {
   const vitestStatus = readVitestStatus(argv)
   try {
     publishCoverageSummary(reportInputFromArgv(argv, env, cwd))
