@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,11 +11,19 @@ import {
   SMOKE_MAX_WAIT_MS,
   SMOKE_PAGE_TITLE,
   SMOKE_PHRASE,
+  SMOKE_PREFLIGHT_RETRY_DELAY_MS,
   SMOKE_SECRET_NAMES,
 } from '../src/smoke/constants'
 import { verifySmokeEpub } from '../src/smoke/epub'
 import { buildSmokeSlackMessage } from '../src/smoke/message'
+import {
+  articleUnreachableSummary,
+  preflightStatusErrorKind,
+  preflightTransportErrorKind,
+} from '../src/smoke/preflight'
 import { redactSmokeText } from '../src/smoke/redact'
+import { recordDeploySmokeResult } from '../src/smoke/report'
+import { runDeployRollback } from '../src/smoke/rollback'
 import {
   cleanupSmokeArticle,
   missingSmokeSecrets,
@@ -48,6 +56,8 @@ const NOW = Date.parse('2026-10-05T00:00:00.000Z')
 const HTML = `<!DOCTYPE html><html lang="ja"><head><title>${SMOKE_PAGE_TITLE}</title></head><body><article><p>${SMOKE_PHRASE}</p></article></body></html>`
 
 const secrets = [TOKEN, USER, PASS, WEBHOOK, ARTICLE, SMOKE_PHRASE, DEFAULT_SMOKE_ARTICLE_URL]
+const MARKER = 'body-marker-not-a-secret'
+const PREVIOUS_VERSION = '89abcdef-0123-4567-89ab-cdef01234567'
 
 function settings(overrides: Partial<SmokeSettings> = {}): SmokeSettings {
   return {
@@ -68,6 +78,50 @@ function assertNoLeak(text: string) {
   for (const secret of secrets) {
     expect(text).not.toContain(secret)
   }
+}
+
+async function expectNoArticleRollback(state: SmokeStateFile): Promise<void> {
+  const rollback = vi.fn(async () => true)
+  const verify = vi.fn(async () => 'passed' as const)
+  const decided = await runDeployRollback({
+    context: {
+      jobResult: 'failure',
+      outcome: state.outcome,
+      failedStep: state.failedStep ?? '',
+      errorKind: state.errorKind ?? '',
+      cleanupErrorKind: '-',
+      previousWorkerVersion: PREVIOUS_VERSION,
+      workerVersion: VERSION,
+      githubSha: SHA,
+      runUrl: RUN,
+      runId: '123',
+    },
+    diff: { paths: ['src/smoke/run.ts'], wranglerBefore: null, wranglerAfter: null, diffKnown: true },
+    liveWorkerVersion: VERSION,
+    rollback,
+    verify,
+    notify: async () => {},
+    summarize: () => {},
+  })
+  expect(rollback).not.toHaveBeenCalled()
+  expect(verify).not.toHaveBeenCalled()
+  expect(decided.rolledBack).toBe(false)
+  expect(decided.result).toBe('skipped:preflight')
+}
+
+async function expectNoDelete(state: SmokeStateFile): Promise<void> {
+  const fetchImpl = vi.fn(async () => new Response('no'))
+  const logs: string[] = []
+  const cleaned = await cleanupSmokeArticle({
+    state,
+    settings: settings(),
+    fetch: fetchImpl,
+    log: (line) => logs.push(line),
+  })
+  expect(cleaned.ok).toBe(true)
+  expect(fetchImpl).not.toHaveBeenCalled()
+  expect(logs.join('\n')).toContain('cleanup: nothing to delete')
+  expect(smokeMayHavePosted(state)).toBe(false)
 }
 
 function assertFixedLine(message: string, prefix: string, keys: readonly string[], runUrl: string) {
@@ -433,43 +487,474 @@ describe('deploy smoke script', () => {
     expect(resolveSmokeArticleUrl('notaurl')).toBeNull()
   })
 
-  it('skips an unreachable article URL without posting a clip', async () => {
-    for (const response of [async () => new Response('missing', { status: 404 }), async () => {
-      throw new TypeError('connect ECONNREFUSED')
-    }]) {
-      const logs: string[] = []
-      const calls: string[] = []
-      const result = await runDeploySmoke({
-        settings: settings(),
-        fetch: async (input) => {
-          calls.push(requestTarget(input))
-          return response()
-        },
-        log: (line) => logs.push(line),
-        now: () => NOW,
-      })
-      expect(result.kind).toBe('skipped')
-      expect(logs.join('\n')).toContain('未設定: SMOKE_ARTICLE_URL')
-      assertNoLeak(logs.join('\n'))
-      expect(calls).toEqual([ARTICLE])
-    }
+  it('classifies preflight timeouts without reading the error message', () => {
+    expect(preflightTransportErrorKind(new TypeError(`timeout ${ARTICLE} ${MARKER}`))).toBe('network')
+    const timeout = new Error(`The operation was aborted ${ARTICLE} ${MARKER}`)
+    timeout.name = 'TimeoutError'
+    expect(preflightTransportErrorKind(timeout)).toBe('timeout')
+    expect(preflightTransportErrorKind({ name: 'AbortError', code: 23, message: ARTICLE })).toBe('timeout')
+    expect(preflightTransportErrorKind({ name: 'TypeError', message: ARTICLE, cause: timeout })).toBe('timeout')
+    expect(preflightTransportErrorKind({ name: 'TypeError', code: 'UND_ERR_CONNECT_TIMEOUT' })).toBe('timeout')
+    expect(preflightStatusErrorKind(404)).toBe('http_404')
+    expect(preflightStatusErrorKind(503)).toBe('http_503')
+    expect(preflightStatusErrorKind(599)).toBe('http_599')
+    expect(preflightStatusErrorKind(99)).toBe('network')
+    const poisoned = articleUnreachableSummary(`${TOKEN} ${ARTICLE} ${MARKER}`)
+    expect(poisoned).not.toContain(TOKEN)
+    expect(poisoned).not.toContain(ARTICLE)
+    expect(poisoned).not.toContain(MARKER)
+    expect(poisoned).not.toContain('未設定')
+    expect(poisoned).toContain('errorKind=-')
+    expect(SMOKE_PREFLIGHT_RETRY_DELAY_MS).toBe(12_000)
+    expect(SMOKE_PREFLIGHT_RETRY_DELAY_MS).toBeGreaterThanOrEqual(10_000)
+    expect(SMOKE_PREFLIGHT_RETRY_DELAY_MS).toBeLessThanOrEqual(15_000)
   })
 
-  it('skips when the default Pages URL is unreachable', async () => {
-    const logs: string[] = []
-    const calls: string[] = []
-    const result = await runDeploySmoke({
-      settings: settings({ articleUrl: '' }),
-      fetch: async (input) => {
-        calls.push(requestTarget(input))
-        return new Response('missing', { status: 404 })
-      },
-      log: (line) => logs.push(line),
+  it('uses different log and job summary reasons for an unset URL and an unreachable article', async () => {
+    const unsetLogs: string[] = []
+    const unsetFetch = vi.fn(async () => new Response(MARKER, { status: 404 }))
+    const unset = await runDeploySmoke({
+      settings: settings({ articleUrl: 'not a url' }),
+      fetch: unsetFetch,
+      log: (line) => unsetLogs.push(line),
+      preflightRetryDelayMs: 0,
     })
-    expect(result.kind).toBe('skipped')
-    expect(logs.join('\n')).toContain('未設定: SMOKE_ARTICLE_URL')
-    expect(logs.join('\n')).not.toContain('github.io')
-    expect(calls).toEqual([DEFAULT_SMOKE_ARTICLE_URL])
+    expect(unset.kind).toBe('skipped')
+    if (unset.kind !== 'skipped') {
+      return
+    }
+    expect(unset.state.outcome).toBe('skipped')
+    expect(unset.missing).toEqual(['SMOKE_ARTICLE_URL'])
+    const unsetText = unsetLogs.join('\n')
+    expect(unsetText).toContain('未設定: SMOKE_ARTICLE_URL')
+    expect(unsetText).not.toContain('article-preflight')
+    expect(unsetText).not.toContain('届きませんでした')
+    expect(unsetFetch).not.toHaveBeenCalled()
+    assertNoLeak(unsetText)
+
+    const originLogs: string[] = []
+    const originFetch = vi.fn(async () => new Response(MARKER, { status: 404 }))
+    const origin = await runDeploySmoke({
+      settings: settings({ origin: 'https://example.com/not-an-origin' }),
+      fetch: originFetch,
+      log: (line) => originLogs.push(line),
+      preflightRetryDelayMs: 0,
+    })
+    expect(origin.kind).toBe('skipped')
+    if (origin.kind !== 'skipped') {
+      return
+    }
+    expect(origin.missing).toEqual(['SMOKE_ORIGIN'])
+    expect(originLogs.join('\n')).toContain('未設定: SMOKE_ORIGIN')
+    expect(originLogs.join('\n')).not.toContain('article-preflight')
+    expect(originFetch).not.toHaveBeenCalled()
+
+    const dir = mkdtempSync(join(tmpdir(), 'smoke-unset-reach-'))
+    const unsetOff = join(dir, 'unset-off')
+    const unsetOn = join(dir, 'unset-on')
+    const unsetWarnings: string[] = []
+    expect(
+      recordDeploySmokeResult({
+        result: unset,
+        smokeRequired: 'false',
+        summaryPath: unsetOff,
+        warn: (line) => unsetWarnings.push(line),
+      }),
+    ).toBe(0)
+    expect(
+      recordDeploySmokeResult({
+        result: unset,
+        smokeRequired: 'true',
+        summaryPath: unsetOn,
+        warn: (line) => unsetWarnings.push(line),
+      }),
+    ).toBe(1)
+    expect(
+      recordDeploySmokeResult({
+        result: origin,
+        smokeRequired: undefined,
+        summaryPath: join(dir, 'origin-off'),
+      }),
+    ).toBe(0)
+    expect(
+      recordDeploySmokeResult({
+        result: origin,
+        smokeRequired: 'yes',
+        summaryPath: join(dir, 'origin-on'),
+      }),
+    ).toBe(1)
+    const unsetOffText = `${unsetWarnings[0]}\n${readFileSync(unsetOff, 'utf8')}`
+    const unsetOnText = `${unsetWarnings[1]}\n${readFileSync(unsetOn, 'utf8')}`
+    expect(unsetOffText).toContain('未設定: SMOKE_ARTICLE_URL')
+    expect(unsetOffText).toContain('未設定のため skip しました。')
+    expect(unsetOnText).toContain('未設定のためジョブを失敗にしました。')
+    expect(unsetOnText).toContain('SMOKE_REQUIRED')
+    for (const text of [unsetOffText, unsetOnText, readFileSync(join(dir, 'origin-on'), 'utf8')]) {
+      expect(text).toContain('未設定')
+      expect(text).not.toContain('届きませんでした')
+      expect(text).not.toContain('article-preflight')
+      expect(text).not.toContain(MARKER)
+      assertNoLeak(text)
+    }
+
+    const downLogs: string[] = []
+    const downCalls: string[] = []
+    const down = await runDeploySmoke({
+      settings: settings(),
+      preflightRetryDelayMs: 0,
+      sleep: async () => {},
+      now: () => NOW,
+      log: (line) => downLogs.push(line),
+      fetch: async (input, init) => {
+        downCalls.push(`${init?.method ?? 'GET'} ${requestTarget(input)}`)
+        return new Response(`${MARKER} ${ARTICLE} ${TOKEN} ${SMOKE_PHRASE}`, { status: 404 })
+      },
+    })
+    expect(down.kind).toBe('failed')
+    if (down.kind !== 'failed') {
+      return
+    }
+    expect(down.state.outcome).toBe('failed')
+    expect(down.state.failedStep).toBe('article-preflight')
+    expect(down.state.errorKind).toBe('http_404')
+    expect(down.state.missing).toEqual([])
+    expect(downCalls).toEqual([`GET ${ARTICLE}`, `GET ${ARTICLE}`])
+    const downText = downLogs.join('\n')
+    expect(downText).not.toContain('未設定')
+    expect(downText).not.toContain('SMOKE_ARTICLE_URL')
+    expect(downText).toContain('article-preflight retry errorKind=http_404')
+    expect(downText).toContain('failed step=article-preflight errorKind=http_404')
+    expect(downText).not.toContain(MARKER)
+    assertNoLeak(downText)
+
+    const downWarnings: string[] = []
+    for (const required of ['false', 'true', undefined] as const) {
+      const summaryPath = join(dir, `down-${required ?? 'missing'}`)
+      expect(
+        recordDeploySmokeResult({
+          result: down,
+          smokeRequired: required,
+          summaryPath,
+          warn: (line) => downWarnings.push(line),
+        }),
+      ).toBe(1)
+      const summary = readFileSync(summaryPath, 'utf8')
+      expect(summary).toContain('記事に届きませんでした。failedStep=article-preflight errorKind=http_404')
+      expect(summary).not.toContain('未設定')
+      expect(summary).not.toContain('SMOKE_ARTICLE_URL')
+      expect(summary).not.toContain('SMOKE_REQUIRED')
+      expect(summary).not.toContain(MARKER)
+      assertNoLeak(summary)
+    }
+    expect(downWarnings).toEqual([])
+
+    const notify = vi.fn(async (_message: string) => {})
+    expect(await notifyIfSmokeFailed(down, notify)).toBe(true)
+    const message = notify.mock.calls[0]?.[0] ?? ''
+    expect(message).toBe(
+      `[deploy-smoke] sha=${SHA} workerVersion=${VERSION} failedStep=article-preflight errorKind=http_404 lastStage=- jobId=- runUrl=${RUN}`,
+    )
+    assertFixedLine(
+      message,
+      '[deploy-smoke]',
+      ['sha', 'workerVersion', 'failedStep', 'errorKind', 'lastStage', 'jobId', 'runUrl'],
+      RUN,
+    )
+    expect(message).not.toContain('未設定')
+    expect(message).not.toContain(MARKER)
+    assertNoLeak(message)
+    const fields = notificationForState(down.state, {})
+    if (fields === null) {
+      throw new Error('fields')
+    }
+    expect(buildSmokeSlackMessage(fields)).toBe(message)
+    await expectNoDelete(down.state)
+    await expectNoArticleRollback(down.state)
+
+    const pagesLogs: string[] = []
+    const pagesCalls: string[] = []
+    const pages = await runDeploySmoke({
+      settings: settings({ articleUrl: '' }),
+      preflightRetryDelayMs: 0,
+      sleep: async () => {},
+      log: (line) => pagesLogs.push(line),
+      fetch: async (input) => {
+        pagesCalls.push(requestTarget(input))
+        return new Response(`${MARKER} ${DEFAULT_SMOKE_ARTICLE_URL}`, { status: 404 })
+      },
+    })
+    expect(pages.kind).toBe('failed')
+    if (pages.kind !== 'failed') {
+      return
+    }
+    expect(pages.state.failedStep).toBe('article-preflight')
+    expect(pages.state.errorKind).toBe('http_404')
+    expect(pagesCalls).toEqual([DEFAULT_SMOKE_ARTICLE_URL, DEFAULT_SMOKE_ARTICLE_URL])
+    const pagesText = pagesLogs.join('\n')
+    expect(pagesText).not.toContain('未設定')
+    expect(pagesText).not.toContain('github.io')
+    expect(pagesText).not.toContain(MARKER)
+    assertNoLeak(pagesText)
+    expect(
+      recordDeploySmokeResult({
+        result: pages,
+        smokeRequired: 'true',
+        summaryPath: join(dir, 'pages'),
+      }),
+    ).toBe(1)
+    expect(readFileSync(join(dir, 'pages'), 'utf8')).toContain('errorKind=http_404')
+    expect(readFileSync(join(dir, 'pages'), 'utf8')).not.toContain('未設定')
+  })
+
+  it('retries an unreachable article once, then continues when a fetch succeeds', async () => {
+    const failures: Array<{
+      readonly name: string
+      readonly errorKind: string
+      readonly respond: () => Promise<Response>
+    }> = [
+      {
+        name: 'http_500',
+        errorKind: 'http_500',
+        respond: async () => new Response(`${MARKER} ${ARTICLE}`, { status: 500 }),
+      },
+      {
+        name: 'http_403',
+        errorKind: 'http_403',
+        respond: async () => new Response(MARKER, { status: 403 }),
+      },
+      {
+        name: 'network',
+        errorKind: 'network',
+        respond: async () => {
+          throw new TypeError(`connect ECONNREFUSED ${ARTICLE} ${MARKER}`)
+        },
+      },
+      {
+        name: 'timeout',
+        errorKind: 'timeout',
+        respond: async () => {
+          const error = new Error(`aborted ${ARTICLE} ${MARKER}`)
+          error.name = 'TimeoutError'
+          throw error
+        },
+      },
+    ]
+    for (const failure of failures) {
+      const logs: string[] = []
+      const calls: string[] = []
+      const sleeps: number[] = []
+      const result = await runDeploySmoke({
+        settings: settings(),
+        preflightRetryDelayMs: 0,
+        sleep: async (ms) => {
+          sleeps.push(ms)
+        },
+        now: () => NOW,
+        log: (line) => logs.push(line),
+        fetch: async (input, init) => {
+          calls.push(`${init?.method ?? 'GET'} ${requestTarget(input)}`)
+          return failure.respond()
+        },
+      })
+      expect(result.kind, failure.name).toBe('failed')
+      if (result.kind !== 'failed') {
+        continue
+      }
+      expect(result.state.failedStep, failure.name).toBe('article-preflight')
+      expect(result.state.errorKind, failure.name).toBe(failure.errorKind)
+      expect(calls, failure.name).toEqual([`GET ${ARTICLE}`, `GET ${ARTICLE}`])
+      expect(sleeps, failure.name).toEqual([0])
+      const text = logs.join('\n')
+      expect(text, failure.name).not.toContain('未設定')
+      expect(text, failure.name).toContain(`article-preflight retry errorKind=${failure.errorKind}`)
+      expect(text, failure.name).toContain(`failed step=article-preflight errorKind=${failure.errorKind}`)
+      expect(text, failure.name).not.toContain(MARKER)
+      assertNoLeak(text)
+      const summaryPath = join(mkdtempSync(join(tmpdir(), 'smoke-reach-')), 'summary')
+      expect(recordDeploySmokeResult({ result, smokeRequired: 'false', summaryPath }), failure.name).toBe(1)
+      expect(recordDeploySmokeResult({ result, smokeRequired: ' YES ', summaryPath: `${summaryPath}-on` }), failure.name).toBe(1)
+      const summary = readFileSync(summaryPath, 'utf8')
+      expect(summary, failure.name).toContain(`errorKind=${failure.errorKind}`)
+      expect(summary, failure.name).not.toContain('未設定')
+      expect(summary, failure.name).not.toContain(MARKER)
+      assertNoLeak(summary)
+      const notify = vi.fn(async (_message: string) => {})
+      expect(await notifyIfSmokeFailed(result, notify), failure.name).toBe(true)
+      const message = notify.mock.calls[0]?.[0] ?? ''
+      expect(message, failure.name).toContain('failedStep=article-preflight')
+      expect(message, failure.name).toContain(`errorKind=${failure.errorKind}`)
+      expect(message, failure.name).not.toContain('未設定')
+      expect(message, failure.name).not.toContain(MARKER)
+      assertNoLeak(message)
+      await expectNoDelete(result.state)
+      await expectNoArticleRollback(result.state)
+    }
+
+    const mixedLogs: string[] = []
+    let mixedGets = 0
+    const mixedSleeps: number[] = []
+    const mixed = await runDeploySmoke({
+      settings: settings(),
+      preflightRetryDelayMs: 0,
+      sleep: async (ms) => {
+        mixedSleeps.push(ms)
+      },
+      now: () => NOW,
+      log: (line) => mixedLogs.push(line),
+      fetch: async (input, init) => {
+        const url = requestTarget(input)
+        const method = init?.method ?? 'GET'
+        if (url === ARTICLE && method === 'GET') {
+          mixedGets += 1
+          if (mixedGets === 1) {
+            const error = new Error(`aborted ${ARTICLE} ${MARKER}`)
+            error.name = 'TimeoutError'
+            throw error
+          }
+          return new Response(`${MARKER} ${TOKEN}`, { status: 500 })
+        }
+        throw new Error(`unexpected ${method} ${url}`)
+      },
+    })
+    expect(mixedGets).toBe(2)
+    expect(mixedSleeps).toEqual([0])
+    expect(mixed.kind).toBe('failed')
+    if (mixed.kind === 'failed') {
+      expect(mixed.state.errorKind).toBe('http_500')
+      expect(mixed.state.failedStep).toBe('article-preflight')
+    }
+    expect(mixedLogs.join('\n')).toContain('article-preflight retry errorKind=timeout')
+    expect(mixedLogs.join('\n')).toContain('failed step=article-preflight errorKind=http_500')
+    expect(mixedLogs.join('\n')).not.toContain('未設定')
+    expect(mixedLogs.join('\n')).not.toContain(MARKER)
+    assertNoLeak(mixedLogs.join('\n'))
+
+    const defaultSleeps: number[] = []
+    let defaultGets = 0
+    await runDeploySmoke({
+      settings: settings(),
+      sleep: async (ms) => {
+        defaultSleeps.push(ms)
+      },
+      now: () => NOW,
+      log: () => {},
+      fetch: async (input) => {
+        if (requestTarget(input) === ARTICLE) {
+          defaultGets += 1
+          return new Response(MARKER, { status: 404 })
+        }
+        throw new Error('unexpected')
+      },
+    })
+    expect(defaultGets).toBe(2)
+    expect(defaultSleeps).toEqual([SMOKE_PREFLIGHT_RETRY_DELAY_MS])
+
+    let readyGets = 0
+    let posts = 0
+    const readySleeps: number[] = []
+    const readyLogs: string[] = []
+    const ready = await runDeploySmoke({
+      settings: settings(),
+      preflightRetryDelayMs: 7,
+      sleep: async (ms) => {
+        readySleeps.push(ms)
+      },
+      now: () => NOW,
+      log: (line) => readyLogs.push(line),
+      fetch: async (input, init) => {
+        const url = requestTarget(input)
+        const method = init?.method ?? 'GET'
+        if (url === ARTICLE && method === 'GET') {
+          readyGets += 1
+          if (readyGets === 1) {
+            return new Response(MARKER, { status: 503 })
+          }
+          return new Response(HTML, { status: 200 })
+        }
+        if (method === 'POST') {
+          posts += 1
+          return new Response(MARKER, { status: 500 })
+        }
+        throw new Error(`unexpected ${method} ${url}`)
+      },
+    })
+    expect(readyGets).toBe(2)
+    expect(posts).toBe(1)
+    expect(readySleeps).toEqual([7])
+    expect(ready.kind).toBe('failed')
+    if (ready.kind === 'failed') {
+      expect(ready.state.failedStep).toBe('post-clip')
+      expect(ready.state.errorKind).toBe('http_500')
+    }
+    expect(readyLogs.join('\n')).toContain('article-preflight retry errorKind=http_503')
+    expect(readyLogs.join('\n')).not.toContain('未設定')
+    expect(readyLogs.join('\n')).not.toContain(MARKER)
+    assertNoLeak(readyLogs.join('\n'))
+
+    let firstGets = 0
+    const firstSleeps: number[] = []
+    const first = await runDeploySmoke({
+      settings: settings(),
+      preflightRetryDelayMs: 0,
+      sleep: async (ms) => {
+        firstSleeps.push(ms)
+      },
+      now: () => NOW,
+      fetch: async (input, init) => {
+        const url = requestTarget(input)
+        const method = init?.method ?? 'GET'
+        if (url === ARTICLE && method === 'GET') {
+          firstGets += 1
+          return new Response(HTML, { status: 200 })
+        }
+        if (method === 'POST') {
+          return new Response('no', { status: 500 })
+        }
+        throw new Error(`unexpected ${method} ${url}`)
+      },
+    })
+    expect(firstGets).toBe(1)
+    expect(firstSleeps).toEqual([])
+    expect(first.kind).toBe('failed')
+    if (first.kind === 'failed') {
+      expect(first.state.failedStep).toBe('post-clip')
+    }
+
+    const phraseLogs: string[] = []
+    let phraseGets = 0
+    const phraseSleeps: number[] = []
+    const phrase = await runDeploySmoke({
+      settings: settings(),
+      preflightRetryDelayMs: 0,
+      sleep: async (ms) => {
+        phraseSleeps.push(ms)
+      },
+      now: () => NOW,
+      log: (line) => phraseLogs.push(line),
+      fetch: async (input) => {
+        phraseGets += 1
+        return new Response(`no phrase ${MARKER} ${ARTICLE}`, { status: 200 })
+      },
+    })
+    expect(phraseGets).toBe(1)
+    expect(phraseSleeps).toEqual([])
+    expect(phrase.kind).toBe('failed')
+    if (phrase.kind !== 'failed') {
+      return
+    }
+    expect(phrase.state.failedStep).toBe('article-preflight')
+    expect(phrase.state.errorKind).toBe('phrase_missing')
+    expect(phraseLogs.join('\n')).not.toContain('未設定')
+    expect(phraseLogs.join('\n')).not.toContain('retry')
+    expect(phraseLogs.join('\n')).not.toContain(MARKER)
+    assertNoLeak(phraseLogs.join('\n'))
+    const phraseSummary = join(mkdtempSync(join(tmpdir(), 'smoke-phrase-')), 'summary')
+    expect(recordDeploySmokeResult({ result: phrase, smokeRequired: 'false', summaryPath: phraseSummary })).toBe(1)
+    expect(recordDeploySmokeResult({ result: phrase, smokeRequired: 'true', summaryPath: `${phraseSummary}-on` })).toBe(1)
+    expect(existsSync(phraseSummary)).toBe(false)
+    expect(existsSync(`${phraseSummary}-on`)).toBe(false)
+    await expectNoDelete(phrase.state)
+    await expectNoArticleRollback(phrase.state)
   })
 
   it('waits at most five minutes and posts the clip once', async () => {
@@ -847,6 +1332,11 @@ describe('deploy smoke script', () => {
     expect(doc).toContain('SMOKE_REQUIRED')
     expect(doc).toContain('warning annotation')
     expect(doc).toContain('job summary')
+    expect(doc).toContain('記事に届きませんでした。failedStep=article-preflight errorKind=http_404')
+    expect(doc).toContain('12 秒')
+    expect(doc).toContain('が無効でもジョブは失敗する')
+    expect(doc).not.toContain('不正または届かないとき')
+    expect(doc).not.toContain('届かないあいだスモークは `未設定: SMOKE_ARTICLE_URL`')
     expect(doc).toContain('SMOKE_CLIP_TOKEN_SHA256')
     expect(doc).toContain('SMOKE_OPDS_BASIC_SHA256')
     expect(doc).toContain("printf '%s'")
