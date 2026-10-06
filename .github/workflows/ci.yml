@@ -20,6 +20,8 @@ permissions:
 # branch protection; merge-gate still runs and accepts success or skipped
 # for check and simulator images. failure and cancelled fail the gate.
 # Unknown paths run the heavy jobs. See docs/github-merge-gates.md.
+# diff coverage reuses the check output. It is display-only and is not a
+# merge-gate input. A failure there must not fail merge-gate.
 
 jobs:
   changes:
@@ -307,3 +309,28 @@ jobs:
           SMOKE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SMOKE_STATE_PATH: rollback-smoke-state.json
         run: node --experimental-strip-types --disable-warning=ExperimentalWarning src/smoke/cli.ts rollback
+
+  diff-coverage:
+    # Display only. Same path filter as check. Not a merge-gate input.
+    name: diff coverage
+    needs: changes
+    if: ${{ needs.changes.outputs.check == 'true' }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Unit diff coverage
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: bash .github/scripts/ci-diff-coverage.sh
