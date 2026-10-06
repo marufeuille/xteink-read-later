@@ -1,0 +1,24 @@
+name: Mutation auth
+
+# Manual only (MAR-192). Not a pull_request or push job, and not a merge-gate input.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation:
+    name: mutation auth
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Mutation test auth
+        run: npm run test:mutation

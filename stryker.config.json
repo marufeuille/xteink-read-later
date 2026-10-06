@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "coverageAnalysis": "perTest",
+  "mutate": [
+    "src/http/auth.ts",
+    "src/http/access-identity.ts",
+    "src/http/candidate-session.ts",
+    "src/http/clip-web-auth.ts",
+    "src/digest/confirm-link.ts"
+  ],
+  "reporters": ["clear-text", "json", "progress"],
+  "thresholds": {
+    "break": null
+  },
+  "concurrency": 4,
+  "timeoutMS": 20000,
+  "timeoutFactor": 2.5,
+  "dryRunTimeoutMinutes": 10,
+  "vitest": {
+    "configFile": "vitest.config.ts",
+    "related": true
+  },
+  "ignorePatterns": ["/coverage", "/dist", "/.wrangler", "/simulator/out"],
+  "tempDirName": ".stryker-tmp",
+  "cleanTempDir": true,
+  "symlinkNodeModules": true
+}

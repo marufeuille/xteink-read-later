@@ -322,6 +322,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # pull_request の github.sha は base との合成マージコミット。
+          # カバレッジを取る木と diff の右側を PR head にそろえないと、行番号が PR のファイルとずれる。
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -331,6 +334,6 @@ jobs:
       - name: Unit diff coverage
         env:
           EVENT_NAME: ${{ github.event_name }}
-          HEAD_SHA: ${{ github.sha }}
+          HEAD_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: bash .github/scripts/ci-diff-coverage.sh

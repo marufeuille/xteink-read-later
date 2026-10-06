@@ -104,10 +104,22 @@ function argument(name: string, argv: readonly string[]): string | null {
   return value && !value.startsWith('--') ? value : null
 }
 
-export function reportInputFromArgv(argv: readonly string[], env: NodeJS.ProcessEnv, cwd: string): ReportInput {
+export function readVitestStatus(argv: readonly string[]): number | null {
   const status = argument('--vitest-status', argv)
+  return status !== null && /^-?\d+$/.test(status) ? Number(status) : null
+}
+
+export function formatCoverageFailure(error: unknown, vitestStatus: number | null): string {
+  const status = vitestStatus === null ? '' : `vitest_exit_status=${vitestStatus}\n`
+  return `### 差分カバレッジ（unit）\n\n表示に失敗しました: ${errorName(error)}\n\n${status}`
+}
+
+type CoverageCliEnv = {
+  readonly [key: string]: string | undefined
+}
+
+export function reportInputFromArgv(argv: readonly string[], env: CoverageCliEnv, cwd: string): ReportInput {
   const elapsed = argument('--elapsed-seconds', argv)
-  const vitestStatus = status !== null && /^-?\d+$/.test(status) ? Number(status) : null
   const elapsedSeconds = elapsed !== null && /^\d+$/.test(elapsed) ? Number(elapsed) : null
   return {
     cwd,
@@ -115,7 +127,7 @@ export function reportInputFromArgv(argv: readonly string[], env: NodeJS.Process
     coverageFile: resolve(cwd, argument('--coverage-file', argv) ?? 'coverage/coverage-final.json'),
     summaryFile: resolve(cwd, argument('--summary-file', argv) ?? 'coverage/coverage-summary.json'),
     summaryOut: argument('--summary-out', argv) ?? env['GITHUB_STEP_SUMMARY'] ?? null,
-    vitestStatus,
+    vitestStatus: readVitestStatus(argv),
     elapsedSeconds,
     eventName: env['EVENT_NAME'] ?? env['GITHUB_EVENT_NAME'] ?? '',
     headSha: env['HEAD_SHA'] ?? env['GITHUB_SHA'] ?? '',
@@ -125,16 +137,21 @@ export function reportInputFromArgv(argv: readonly string[], env: NodeJS.Process
   }
 }
 
-function main(): number {
+export function runCoverageCli(argv: readonly string[], env: CoverageCliEnv, cwd: string): number {
+  const vitestStatus = readVitestStatus(argv)
   try {
-    publishCoverageSummary(reportInputFromArgv(process.argv.slice(2), process.env, process.cwd()))
+    publishCoverageSummary(reportInputFromArgv(argv, env, cwd))
   } catch (error) {
-    const message = `### 差分カバレッジ（unit）\n\n表示に失敗しました: ${errorName(error)}\n\nvitest_exit_status=0\n`
-    const summaryOut = process.env['GITHUB_STEP_SUMMARY']
+    const message = formatCoverageFailure(error, vitestStatus)
+    const summaryOut = env['GITHUB_STEP_SUMMARY']
     if (summaryOut && summaryOut.length > 0) appendFileSync(summaryOut, message)
     console.log(message)
   }
   return 0
+}
+
+function main(): number {
+  return runCoverageCli(process.argv.slice(2), process.env, process.cwd())
 }
 
 const entry = process.argv[1]

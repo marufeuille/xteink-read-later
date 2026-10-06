@@ -13,7 +13,7 @@ export default defineConfig({
     exclude: ['test/e2e/**'],
     coverage: {
       provider: 'v8',
-      reporter: ['text', 'json-summary', 'json'],
+      reporter: ['text-summary', 'json-summary', 'json'],
       reportsDirectory: './coverage',
       include: ['src/**/*.ts'],
       exclude: [...coverageConfigDefaults.exclude, '**/*.d.ts'],

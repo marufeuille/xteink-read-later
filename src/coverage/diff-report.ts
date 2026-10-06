@@ -76,7 +76,9 @@ export function parseUnifiedDiff(diff: string): Map<string, Set<number>> {
       inHunk = false
       continue
     }
-    if (line.startsWith('+++ ')) {
+    // A source line that starts with "++ " is an added line "+++ …" inside a hunk.
+    // Only a +++ header before the hunk names the new file.
+    if (!inHunk && line.startsWith('+++ ')) {
       path = workerPath(parseDiffPath(line.slice(4)))
       inHunk = false
       continue
@@ -350,14 +352,53 @@ function parseDiffPath(raw: string): string | null {
   return path
 }
 
+const GIT_C_ESCAPES: Readonly<Record<string, number>> = {
+  '\\': 0x5c,
+  '"': 0x22,
+  n: 0x0a,
+  t: 0x09,
+  r: 0x0d,
+  a: 0x07,
+  b: 0x08,
+  v: 0x0b,
+  f: 0x0c,
+}
+
 function unescapeGitPath(quoted: string): string {
   const body = quoted.endsWith('"') ? quoted.slice(1, -1) : quoted.slice(1)
-  return body.replace(/\\([\\"ntr])/g, (_match, ch: string) => {
-    if (ch === 'n') return '\n'
-    if (ch === 't') return '\t'
-    if (ch === 'r') return '\r'
-    return ch
-  })
+  const bytes: number[] = []
+  for (let i = 0; i < body.length; i += 1) {
+    const current = body[i] ?? ''
+    if (current !== '\\') {
+      bytes.push(current.charCodeAt(0))
+      continue
+    }
+    const next = body[i + 1]
+    if (next === undefined) {
+      bytes.push(0x5c)
+      break
+    }
+    const simple = GIT_C_ESCAPES[next]
+    if (simple !== undefined) {
+      bytes.push(simple)
+      i += 1
+      continue
+    }
+    if (next >= '0' && next <= '7') {
+      let octal = ''
+      for (let j = 1; j <= 3 && i + j < body.length; j += 1) {
+        const digit = body[i + j] ?? ''
+        if (digit < '0' || digit > '7') break
+        octal += digit
+      }
+      bytes.push(Number.parseInt(octal, 8))
+      i += octal.length
+      continue
+    }
+    bytes.push(next.charCodeAt(0))
+    i += 1
+  }
+  return new TextDecoder().decode(Uint8Array.from(bytes))
 }
 
 function parseFileCoverage(value: unknown, fallbackPath: string): FileCoverageData | null {
