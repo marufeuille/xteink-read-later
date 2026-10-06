@@ -20,19 +20,42 @@ PR で Worker のコード（`src/**/*.ts`）が変わると、`diff coverage` �
 
 ## いまの全体
 
-数値は推測で置かない。この変更の CI で `vitest run --coverage` が書いた全体値を、run のあとでこの表に入れる。
+1回測った。commit `320683c18005871c04201a1d923457f50a5d3e89`、workflow run [37397456092](https://github.com/marufeuille/xteink-read-later/actions/runs/37397456092) の `diff coverage` ジョブ（[112056750185](https://github.com/marufeuille/xteink-read-later/actions/runs/37397456092/job/112056750185)）。数値は、そのジョブが `coverage-summary.json` の `total` から job summary とログに書いたもの。
 
 | | 行 | 分岐 | 計測 |
 | --- | ---: | ---: | --- |
-| unit | 未計測 | 未計測 | CI run の job summary を転記する |
+| unit | 7480/8984 (83.25%) | 5798/7932 (73.09%) | 上の run。`vitest_exit_status=0` |
+
+同じ summary の変更箇所は、行 280/310 (90.32%)、分岐 228/335 (68.05%)。未検証は行 15 件、分岐 110 件で、いずれも `src/coverage/cli.ts`、`src/coverage/diff-report.ts`、`src/coverage/git-diff.ts`。比較は pull request の three-dot。ログに出た summary の先頭:
+
+```text
+### 差分カバレッジ（unit）
+
+表示のみ。閾値では失敗させない。対象は `src/**/*.ts`（`.d.ts` を除く）の追加・変更行。行は文の開始行。分岐は、その行か条件の行が変更に含まれる未実行の分岐。
+
+| | 行 | 分岐 |
+| --- | ---: | ---: |
+| 変更箇所 | 280/310 (90.32%) | 228/335 (68.05%) |
+| 全体 | 7480/8984 (83.25%) | 5798/7932 (73.09%) |
+
+比較: pull request の three-dot
+
+#### 未検証の行
+
+- `src/coverage/cli.ts:80`
+- `src/coverage/cli.ts:98`
+- `src/coverage/cli.ts:102-104`
+```
+
+続きは同じジョブのログにある。`coverage_elapsed_seconds=13`、`vitest_exit_status=0` で終わっている。
 
 ## CI の所要時間
 
-同じ workflow run で、`typecheck, unit, e2e` の Unit tests（`npm run test:unit`、カバレッジなし）と、`diff coverage` の `npm run test:unit:coverage` の秒数を比べる。ジョブは並列なので、workflow の待ち時間は「カバレッジ job が check job より何秒長かったか」も同じ run から書く。
+上と同じ run で比べる。カバレッジ付き unit はカバレッジなしより 0.14 秒長い。ジョブは並列で、`diff coverage` は `typecheck, unit, e2e` より先に終わった。workflow の待ち時間は増えていない。
 
 | | 秒 | 出典 |
 | --- | ---: | --- |
-| unit（カバレッジなし） | 未計測 | |
-| unit（カバレッジあり） | 未計測 | |
-| 差（カバレッジ付き unit − カバレッジなし unit） | 未計測 | |
-| 並列での待ち増分（coverage job − check job、0 未満は 0） | 未計測 | |
+| unit（カバレッジなし） | 12.06 | `typecheck, unit, e2e`（[112056750200](https://github.com/marufeuille/xteink-read-later/actions/runs/37397456092/job/112056750200)）の Vitest Duration。ステップ `Unit tests` は 2026-10-06T01:06:49Z から 2026-10-06T01:07:02Z（Actions API の秒精度で 13 秒） |
+| unit（カバレッジあり） | 12.20 | `diff coverage` の Vitest Duration。スクリプトが出した `coverage_elapsed_seconds=13` は `date +%s` の整数差（`npm run test:unit:coverage`）。ステップ `Unit diff coverage` は 2026-10-06T01:06:36Z から 2026-10-06T01:06:49Z（同じく 13 秒） |
+| 差（カバレッジ付き unit − カバレッジなし unit） | 0.14 | 12.20 − 12.06。API の秒精度では 13 − 13 = 0 |
+| 並列での待ち増分（coverage job − check job、0 未満は 0） | 0 | `diff coverage` は 2026-10-06T01:06:29Z から 2026-10-06T01:06:51Z（22 秒）。`typecheck, unit, e2e` は 2026-10-06T01:06:31Z から 2026-10-06T01:07:10Z（39 秒）。カバレッジ job の方が 17 秒短い |
