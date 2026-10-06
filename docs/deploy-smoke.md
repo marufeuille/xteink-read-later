@@ -31,13 +31,34 @@ deploy が path filter で skip されたとき、このジョブも skip する
 
 ## 未設定の skip
 
-GitHub Actions の secret が空または未作成のとき、`SMOKE_ARTICLE_URL` が不正または届かないとき、`SMOKE_ORIGIN` が origin として使えないときは、`未設定: <名前>` とログして skip する。`outcome` は `skipped`。失敗の Slack 通知は出さない。
+GitHub Actions の secret が空または未作成のとき、`SMOKE_ARTICLE_URL` の形が不正なとき、`SMOKE_ORIGIN` が origin として使えないときは、`未設定: <名前>` とログして skip する。`outcome` は `skipped`。失敗の Slack 通知は出さない。URL の形は正しいが記事に届かないときは、未設定にしない。「記事に届かない」を見る。
 
 同じ skip で、GitHub Actions の warning annotation と、そのステップの job summary に、足りない名前だけを並べる。値、token、パスワード、値の一部は出さない。
 
 リポジトリ変数 `SMOKE_REQUIRED` が `true`、`1`、`yes` のとき（大文字小文字は無視し、前後の空白も無視する）、この skip はジョブを失敗にする。未設定、空、それ以外の値では失敗にしない。置く場所は GitHub Actions の Variables で、Secrets ではない。Settings → Secrets and variables → Actions → Variables。workflow は `vars.SMOKE_REQUIRED` を読む。本番でこの変数を有効にするかは、secret が揃ったあとに Ops / PM が決める。
 
-有効にしてジョブが赤になっても、記録した `outcome` は `skipped` のままなので、自動 rollback は skip を戻さない。Slack にも届かない。`skipped` は失敗通知を出さない。見えるのは GitHub の失敗表示と warning annotation、それに job summary だけ。
+有効にしてジョブが赤になっても、記録した `outcome` は `skipped` のままなので、自動 rollback は skip を戻さない。Slack にも届かない。`skipped` は失敗通知を出さない。見えるのは GitHub の失敗表示と warning annotation、それに job summary だけ。`SMOKE_REQUIRED` が効くのは、この未設定の skip だけである。
+
+## 記事に届かない
+
+`SMOKE_ARTICLE_URL` が空なら既定の Pages URL を使う。形が正しい URL へ article-preflight で届かないとき（ネットワークエラー、タイムアウト、HTTP 4xx / 5xx）は「未設定」にしない。12 秒待って 1 回だけ再試行する。1 回目で届けば、待たずにそのまま続行する。再試行の前に、ログへ `article-preflight retry errorKind=<1回目の種類>` を 1 行出す。2 回目も届かなければ `outcome=failed`、`failedStep=article-preflight`。ログは他の失敗と同じく `failed step=article-preflight errorKind=<種類>` を含む。
+
+`errorKind` は既存の語だけを使う。ネットワークエラーは `network`、時間切れは `timeout`、HTTP 4xx / 5xx は `http_404` や `http_500` のように `http_` とステータスを付ける。2xx 以外の応答も同じ語で、未設定にはしない。新しい語は足さない。時間切れかどうかは例外の名前とコードだけで決め、例外メッセージは見ない。メッセージには記事 URL が入り得る。
+
+`POST /clip` より前なので DELETE は走らない。`article-preflight` は戻す対象外で、下の条件表は変えない。失敗通知は `[deploy-smoke]` の 1 行で、`failedStep=article-preflight` と `errorKind` を含む。この失敗は `SMOKE_REQUIRED` の有無で変わらない。ジョブはどちらでも失敗する。
+
+job summary は次の文にする。`未設定` も `SMOKE_ARTICLE_URL` も入れない。`errorKind` は届かなかった理由に置き換える。
+
+```text
+記事に届きませんでした。failedStep=article-preflight errorKind=http_404
+```
+
+ログ、job summary、Slack のどれにも、記事 URL、記事本文、token は出さない。
+
+| 状態 | `SMOKE_REQUIRED` が無効 | `SMOKE_REQUIRED` が有効 |
+| --- | --- | --- |
+| 未設定。secret が空または未作成、`SMOKE_ARTICLE_URL` の形が不正、`SMOKE_ORIGIN` が origin として使えない | `outcome=skipped`。ジョブは成功する。ログと job summary は `未設定`。Slack は出さない | `outcome=skipped` のままジョブを失敗にする。ログと job summary は `未設定`。Slack は出さない。`skipped` は戻さない |
+| 記事に届かない。形は正しい。ネットワークエラー、タイムアウト、HTTP 4xx / 5xx。12 秒待って 1 回再試行したあと | `outcome=failed`、`failedStep=article-preflight`。ジョブは失敗する。ログと job summary は届かなかった理由で、`未設定: SMOKE_ARTICLE_URL` は出さない。Slack に `[deploy-smoke]` を出す。DELETE は走らない。戻す対象外である | 左と同じ。`SMOKE_REQUIRED` は見ない |
 
 ## 自動 rollback
 
@@ -92,7 +113,7 @@ D1 のスキーマとデータは戻らない。main の revert も、マージ�
 
 `pages/smoke/article.html`。タイトルは `[smoke]` で始まる。GitHub Pages の URL は既定で `https://marufeuille.github.io/xteink-read-later/smoke/article.html`。workers.dev と Wikipedia は使わない。
 
-Pages のソースが GitHub Actions になるまで、この URL は届かない。届かないあいだスモークは `未設定: SMOKE_ARTICLE_URL` と記録して skip する。見え方と `SMOKE_REQUIRED` は「未設定の skip」。失敗通知は出さない。
+Pages のソースが GitHub Actions になるまで、この URL は届かない。届かないあいだスモークは失敗する（`outcome=failed`、`failedStep=article-preflight`）。「未設定」にはしない。`SMOKE_REQUIRED` が無効でもジョブは失敗する。見え方は「記事に届かない」。失敗通知は出す。DELETE は走らない。戻す対象外である。
 
 有効化は所有者が 1 回だけ行う。このリポジトリは Pages を自分では有効にしない。
 

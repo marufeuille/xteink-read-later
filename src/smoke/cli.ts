@@ -21,7 +21,7 @@ import {
   type SmokeSettings,
   type SmokeStateFile,
 } from './run.ts'
-import { publishUnsetSkip } from './unset.ts'
+import { recordDeploySmokeResult } from './report.ts'
 
 function envValue(name: string): string | undefined {
   const value = process.env[name]
@@ -96,14 +96,12 @@ async function run(): Promise<number> {
     },
   })
   writeState(path, result.state)
-  if (result.kind === 'skipped') {
-    return publishUnsetSkip({
-      missing: result.missing,
-      smokeRequired: envValue('SMOKE_REQUIRED'),
-      summaryPath: envValue('GITHUB_STEP_SUMMARY'),
-    })
-  }
-  return result.kind === 'failed' ? 1 : 0
+  const summaryPath = envValue('GITHUB_STEP_SUMMARY')
+  return recordDeploySmokeResult({
+    result,
+    smokeRequired: envValue('SMOKE_REQUIRED'),
+    ...(summaryPath === undefined ? {} : { summaryPath }),
+  })
 }
 
 async function cleanup(): Promise<number> {

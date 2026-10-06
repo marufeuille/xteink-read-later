@@ -219,6 +219,30 @@ describe('deploy rollback', () => {
         notify: true,
       },
       {
+        name: 'article-preflight network',
+        context: { failedStep: 'article-preflight', errorKind: 'network' },
+        reason: 'preflight',
+        notify: true,
+      },
+      {
+        name: 'article-preflight timeout',
+        context: { failedStep: 'article-preflight', errorKind: 'timeout' },
+        reason: 'preflight',
+        notify: true,
+      },
+      {
+        name: 'article-preflight http_404',
+        context: { failedStep: 'article-preflight', errorKind: 'http_404' },
+        reason: 'preflight',
+        notify: true,
+      },
+      {
+        name: 'article-preflight http_503',
+        context: { failedStep: 'article-preflight', errorKind: 'http_503' },
+        reason: 'preflight',
+        notify: true,
+      },
+      {
         name: 'poll-job timeout',
         context: { failedStep: 'poll-job', errorKind: 'timeout' },
         reason: 'timeout',

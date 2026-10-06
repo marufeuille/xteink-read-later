@@ -143,4 +143,123 @@ describe('deploy smoke against a mock worker', () => {
     expect(calls.some((url) => url.includes('workers.dev'))).toBe(false)
     expect(calls.filter((url) => url.endsWith('/clip'))).toHaveLength(1)
   })
+
+  it('fails when Pages stays down and does not clip or delete', async () => {
+    const logs: string[] = []
+    const calls: string[] = []
+    const marker = 'pages-down-marker'
+    const result = await runDeploySmoke({
+      settings: settings(),
+      preflightRetryDelayMs: 0,
+      sleep: async () => {},
+      log: (line) => logs.push(line),
+      fetch: async (input) => {
+        const url = requestTarget(input)
+        calls.push(url)
+        if (url === DEFAULT_SMOKE_ARTICLE_URL) {
+          return new Response(`${marker}\n${html}`, { status: 503 })
+        }
+        throw new Error(`unexpected ${url}`)
+      },
+    })
+    expect(result.kind).toBe('failed')
+    if (result.kind !== 'failed') {
+      return
+    }
+    expect(result.state.outcome).toBe('failed')
+    expect(result.state.failedStep).toBe('article-preflight')
+    expect(result.state.errorKind).toBe('http_503')
+    expect(result.state.missing).toEqual([])
+    expect(calls).toEqual([DEFAULT_SMOKE_ARTICLE_URL, DEFAULT_SMOKE_ARTICLE_URL])
+    const text = logs.join('\n')
+    expect(text).not.toContain('未設定')
+    expect(text).not.toContain(marker)
+    expect(text).not.toContain(DEFAULT_SMOKE_ARTICLE_URL)
+    expect(text).not.toContain(TOKEN)
+    expect(text).not.toContain(SMOKE_PHRASE)
+    expect(text).toContain('failed step=article-preflight errorKind=http_503')
+    expect(text).toContain('article-preflight retry errorKind=http_503')
+    const notify = vi.fn(async (message: string) => {
+      expect(message.startsWith('[deploy-smoke] ')).toBe(true)
+      expect(message).toContain('failedStep=article-preflight')
+      expect(message).toContain('errorKind=http_503')
+      expect(message).not.toContain('\n')
+      expect(message).not.toContain('未設定')
+      expect(message).not.toContain(marker)
+      expect(message).not.toContain(DEFAULT_SMOKE_ARTICLE_URL)
+      expect(message).not.toContain(TOKEN)
+      expect(message).not.toContain(PASS)
+      expect(message).not.toContain(WEBHOOK)
+      expect(message).not.toContain(SMOKE_PHRASE)
+    })
+    expect(await notifyIfSmokeFailed(result, notify)).toBe(true)
+    expect(notify).toHaveBeenCalledOnce()
+    const cleaned = await cleanupSmokeArticle({
+      state: result.state,
+      settings: settings(),
+      fetch: async () => {
+        throw new Error('delete should not run')
+      },
+    })
+    expect(cleaned.ok).toBe(true)
+  })
+
+  it('clips once when the second Pages fetch succeeds', async () => {
+    const network = installNetworkMock({
+      pages: { [DEFAULT_SMOKE_ARTICLE_URL]: { html } },
+    })
+    const store = createMemoryStore()
+    const queue = createFakeQueue()
+    const clipPipeline = createClipPipeline()
+    const app = createApp({ store, queue })
+    const env = {
+      ...TEST_BINDINGS,
+      SMOKE_CLIP_TOKEN_SHA256: createHash('sha256').update(TOKEN, 'utf8').digest('hex'),
+      SMOKE_OPDS_BASIC_SHA256: createHash('sha256').update(`${USER}:${PASS}`, 'utf8').digest('hex'),
+      SMOKE_ARTICLE_URL: DEFAULT_SMOKE_ARTICLE_URL,
+      CLIP_QUEUE: queue,
+    } as Cloudflare.Env
+    let pageGets = 0
+    let posts = 0
+    const logs: string[] = []
+    const result = await runDeploySmoke({
+      settings: settings(),
+      preflightRetryDelayMs: 0,
+      sleep: async () => {},
+      log: (line) => logs.push(line),
+      fetch: async (input, init) => {
+        const url = requestTarget(input)
+        const method = init?.method ?? (input instanceof Request ? input.method : 'GET')
+        if (url === DEFAULT_SMOKE_ARTICLE_URL) {
+          pageGets += 1
+          if (pageGets === 1) {
+            return new Response('pages-down-marker', { status: 503 })
+          }
+          return new Response(html, {
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+          })
+        }
+        const target = new URL(url)
+        if (target.origin !== ORIGIN) {
+          throw new Error(`unexpected origin ${target.origin}`)
+        }
+        const response = await app.request(url, { ...init, method }, env)
+        if (method === 'POST' && target.pathname === '/clip') {
+          posts += 1
+          await queue.drain(env, { clipPipeline, store })
+        }
+        return response
+      },
+    })
+    expect(result.kind).toBe('passed')
+    expect(pageGets).toBe(2)
+    expect(posts).toBe(1)
+    expect(network.fetchedUrls).toEqual([DEFAULT_SMOKE_ARTICLE_URL])
+    expect(logs.join('\n')).not.toContain('未設定')
+    expect(logs.join('\n')).not.toContain('pages-down-marker')
+    expect(logs.join('\n')).not.toContain(DEFAULT_SMOKE_ARTICLE_URL)
+    expect(logs.join('\n')).not.toContain(TOKEN)
+    expect(logs.join('\n')).toContain('article-preflight retry errorKind=http_503')
+  })
 })

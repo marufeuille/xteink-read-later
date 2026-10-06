@@ -6,6 +6,8 @@ export const DEFAULT_SMOKE_ORIGIN = 'https://xteink-read-later.marufeuille.worke
 export const SMOKE_MAX_WAIT_MS = 5 * 60 * 1000
 export const SMOKE_POLL_INTERVAL_MS = 5_000
 export const SMOKE_PREFLIGHT_TIMEOUT_MS = 15_000
+/** Pause before the single article-preflight retry. Inside the 10–15 second window. */
+export const SMOKE_PREFLIGHT_RETRY_DELAY_MS = 12_000
 export const SMOKE_MAX_PAGE_BYTES = 200_000
 export const SMOKE_MAX_EPUB_BYTES = 2_000_000
 export const SMOKE_MAX_CATALOG_BYTES = 1_000_000

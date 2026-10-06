@@ -10,6 +10,7 @@ import {
   SMOKE_MAX_WAIT_MS,
   SMOKE_PHRASE,
   SMOKE_POLL_INTERVAL_MS,
+  SMOKE_PREFLIGHT_RETRY_DELAY_MS,
   SMOKE_PREFLIGHT_TIMEOUT_MS,
   SMOKE_SECRET_NAMES,
   type SmokeSecretName,
@@ -25,6 +26,7 @@ import {
   sanitizeWorkerVersion,
   type SmokeFailureFields,
 } from './message.ts'
+import { preflightStatusErrorKind, preflightTransportErrorKind } from './preflight.ts'
 import { redactSmokeText } from './redact.ts'
 
 export type SmokeSettings = {
@@ -68,6 +70,8 @@ export type SmokeRunDeps = {
   readonly onProgress?: (state: SmokeStateFile) => void
   readonly maxWaitMs?: number
   readonly pollIntervalMs?: number
+  /** Replaces the 12 second pause before the one article-preflight retry. */
+  readonly preflightRetryDelayMs?: number
 }
 
 type JobView = {
@@ -307,6 +311,25 @@ export async function postSmokeSlack(webhookUrl: string, message: string, fetchI
   }
 }
 
+async function fetchArticlePreflight(
+  fetchImpl: typeof fetch,
+  articleUrl: string,
+): Promise<{ readonly ok: true; readonly response: Response } | { readonly ok: false; readonly errorKind: string }> {
+  try {
+    const response = await fetchImpl(articleUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: AbortSignal.timeout(SMOKE_PREFLIGHT_TIMEOUT_MS),
+    })
+    if (!response.ok) {
+      return { ok: false, errorKind: preflightStatusErrorKind(response.status) }
+    }
+    return { ok: true, response }
+  } catch (error) {
+    return { ok: false, errorKind: preflightTransportErrorKind(error) }
+  }
+}
+
 export async function runDeploySmoke(deps: SmokeRunDeps): Promise<SmokeRunResult> {
   const fetchImpl = deps.fetch ?? fetch
   const now = deps.now ?? (() => Date.now())
@@ -387,26 +410,17 @@ export async function runDeploySmoke(deps: SmokeRunDeps): Promise<SmokeRunResult
   }
 
   publish({ ...state, step: 'article-preflight' })
-  let preflight: Response
-  try {
-    preflight = await fetchImpl(articleUrl, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: AbortSignal.timeout(SMOKE_PREFLIGHT_TIMEOUT_MS),
-    })
-  } catch {
-    log('未設定: SMOKE_ARTICLE_URL')
-    const skipped: SmokeStateFile = { ...state, outcome: 'skipped', step: null, missing: ['SMOKE_ARTICLE_URL'] }
-    publish(skipped)
-    return { kind: 'skipped', missing: ['SMOKE_ARTICLE_URL'], state: skipped }
+  const preflightRetryDelayMs = deps.preflightRetryDelayMs ?? SMOKE_PREFLIGHT_RETRY_DELAY_MS
+  let preflight = await fetchArticlePreflight(fetchImpl, articleUrl)
+  if (!preflight.ok) {
+    log(`article-preflight retry errorKind=${sanitizeKind(preflight.errorKind)}`)
+    await sleep(preflightRetryDelayMs)
+    preflight = await fetchArticlePreflight(fetchImpl, articleUrl)
   }
   if (!preflight.ok) {
-    log('未設定: SMOKE_ARTICLE_URL')
-    const skipped: SmokeStateFile = { ...state, outcome: 'skipped', step: null, missing: ['SMOKE_ARTICLE_URL'] }
-    publish(skipped)
-    return { kind: 'skipped', missing: ['SMOKE_ARTICLE_URL'], state: skipped }
+    return fail({ failedStep: 'article-preflight', errorKind: preflight.errorKind })
   }
-  const page = await readLimitedText(preflight, SMOKE_MAX_PAGE_BYTES)
+  const page = await readLimitedText(preflight.response, SMOKE_MAX_PAGE_BYTES)
   if (page === null) {
     return fail({ failedStep: 'article-preflight', errorKind: 'too_large' })
   }
