@@ -45,7 +45,12 @@ GitHub Actions の secret が空または未作成のとき、`SMOKE_ARTICLE_URL
 
 `errorKind` は既存の語だけを使う。ネットワークエラーは `network`、時間切れは `timeout`、HTTP 4xx / 5xx は `http_404` や `http_500` のように `http_` とステータスを付ける。2xx 以外の応答も同じ語で、未設定にはしない。新しい語は足さない。時間切れかどうかは例外の名前とコードだけで決め、例外メッセージは見ない。メッセージには記事 URL が入り得る。
 
-`POST /clip` より前なので DELETE は走らない。`article-preflight` は戻す対象外で、下の条件表は変えない。失敗通知は `[deploy-smoke]` の 1 行で、`failedStep=article-preflight` と `errorKind` を含む。この失敗は `SMOKE_REQUIRED` の有無で変わらない。ジョブはどちらでも失敗する。
+`POST /clip` より前なので DELETE は走らない。`article-preflight` は戻す対象外で、下の条件表は変えない。smoke job が失敗するので rollback job も起動する。ロールバックも DELETE もしない。記録は `outcome=failed`、`failedStep=article-preflight`。Slack には次の 2 行が出る。`[deploy-smoke]` のキー順は上と同じで、`failedStep=article-preflight` と `errorKind` を含む。`[deploy-rollback]` は `to=-`、`trigger=article-preflight/<種類>`、`result=skipped:preflight`、`verify=-` で、`note` は付けない。この失敗は `SMOKE_REQUIRED` の有無で変わらない。ジョブはどちらでも失敗する。
+
+```text
+[deploy-smoke] sha=0123456789abcdef0123456789abcdef01234567 workerVersion=89abcdef-0123-4567-89ab-cdef01234567 failedStep=article-preflight errorKind=http_404 lastStage=- jobId=- runUrl=https://github.com/marufeuille/xteink-read-later/actions/runs/123
+[deploy-rollback] sha=0123456789abcdef0123456789abcdef01234567 from=89abcdef-0123-4567-89ab-cdef01234567 to=- trigger=article-preflight/http_404 result=skipped:preflight verify=- runUrl=https://github.com/marufeuille/xteink-read-later/actions/runs/123
+```
 
 job summary は次の文にする。`未設定` も `SMOKE_ARTICLE_URL` も入れない。`errorKind` は届かなかった理由に置き換える。
 
@@ -58,7 +63,7 @@ job summary は次の文にする。`未設定` も `SMOKE_ARTICLE_URL` も入�
 | 状態 | `SMOKE_REQUIRED` が無効 | `SMOKE_REQUIRED` が有効 |
 | --- | --- | --- |
 | 未設定。secret が空または未作成、`SMOKE_ARTICLE_URL` の形が不正、`SMOKE_ORIGIN` が origin として使えない | `outcome=skipped`。ジョブは成功する。ログと job summary は `未設定`。Slack は出さない | `outcome=skipped` のままジョブを失敗にする。ログと job summary は `未設定`。Slack は出さない。`skipped` は戻さない |
-| 記事に届かない。形は正しい。ネットワークエラー、タイムアウト、HTTP 4xx / 5xx。12 秒待って 1 回再試行したあと | `outcome=failed`、`failedStep=article-preflight`。ジョブは失敗する。ログと job summary は届かなかった理由で、`未設定: SMOKE_ARTICLE_URL` は出さない。Slack に `[deploy-smoke]` を出す。DELETE は走らない。戻す対象外である | 左と同じ。`SMOKE_REQUIRED` は見ない |
+| 記事に届かない。形は正しい。ネットワークエラー、タイムアウト、HTTP 4xx / 5xx。12 秒待って 1 回再試行したあと | `outcome=failed`、`failedStep=article-preflight`。ジョブは失敗する。ログと job summary は届かなかった理由で、`未設定: SMOKE_ARTICLE_URL` は出さない。Slack に `[deploy-smoke]`（`failedStep=article-preflight`）と `[deploy-rollback]`（`result=skipped:preflight`、`verify=-`）の 2 行を出す。ロールバックも DELETE もしない。戻す対象外である | 左と同じ。`SMOKE_REQUIRED` は見ない |
 
 ## 自動 rollback
 
@@ -103,7 +108,7 @@ D1 のスキーマとデータは戻らない。main の revert も、マージ�
 
 キーの順は `sha`（40 桁）、`from`（戻す前の version id）、`to`（戻し先。skip のときは `-`）、`trigger`（`failedStep/errorKind`）、`result`（`rolled_back` / `rollback_failed` / `skipped:<理由>`）、`verify`（`verified` / `still_failing` / `-`）、`runUrl`。戻したときだけ `note`（短い英語トークン。例は `revert_pr_needed`）。`sha` が無い、または 40 桁でなければ `unknown`。`from` と `to` が空なら `-`。形に合わない version id は `unknown`。`verify` が上の 2 つ以外なら `-`。`result` が上の形でなければ `skipped:unknown`。`runUrl` が Actions の run URL でなければ `-`。出してよい URL は GitHub Actions の `runUrl` だけ。出さないもの: 記事 URL、記事本文、token、パスワード、ハッシュの入力にした生の値。
 
-`result` が `skipped:` になる例: `migration`（`migrations/`、または bindings / triggers）、`unknown_diff`（本番 version の SHA が取れない）、`version_mismatch`（本番がこの run の version ではない。古い run や手動の再実行を含む）、`external`（`network` / `fetch_failed` / `http_401` / `http_403` / `interrupted`）、`unknown_version`。`poll-job` の `timeout`、`article-preflight`、DELETE だけの失敗、表に無い失敗も戻さない。
+`result` が `skipped:` になる例: `migration`（`migrations/`、または bindings / triggers）、`unknown_diff`（本番 version の SHA が取れない）、`version_mismatch`（本番がこの run の version ではない。古い run や手動の再実行を含む）、`external`（`network` / `fetch_failed` / `http_401` / `http_403` / `interrupted`）、`unknown_version`、`preflight`（`failedStep=article-preflight`。記事に届かない）。`poll-job` の `timeout`、`article-preflight`、DELETE だけの失敗、表に無い失敗も戻さない。
 
 トークンは既存の GitHub Actions secret `CLOUDFLARE_API_TOKEN` を使う。新しい secret は作らない。
 
