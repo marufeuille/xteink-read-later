@@ -1,5 +1,8 @@
 node_modules/
 /coverage/
+.stryker-tmp/
+reports/mutation/
+stryker.log
 .dev.vars
 .wrangler/
 dist/

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { publishCoverageSummary } from '../src/coverage/cli.ts'
+import { publishCoverageSummary, runCoverageCli } from '../src/coverage/cli.ts'
 import {
   diffCoverage,
   formatMetric,
@@ -107,6 +107,42 @@ describe('diff coverage report', () => {
     expect([...(lines.get('src/new name.ts') ?? [])]).toEqual([1])
     expect(lines.has('src/gone.ts')).toBe(false)
     expect(lines.has('src/bin.ts')).toBe(false)
+  })
+
+  it('counts an added line that starts with ++ as source, not a new file header', () => {
+    const diff = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1 +1,3 @@',
+      ' export const keep = 1',
+      '+++ still added',
+      ' export const tail = 2',
+      '',
+    ].join('\n')
+    expect([...(parseUnifiedDiff(diff).get('src/a.ts') ?? [])]).toEqual([2])
+  })
+
+  it('decodes git octal and C-style escapes in non-ascii paths', () => {
+    const octal = [...new TextEncoder().encode('あ')]
+      .map((byte) => `\\${byte.toString(8).padStart(3, '0')}`)
+      .join('')
+    const quoted = [
+      `diff --git "a/src/${octal}.ts" "b/src/${octal}.ts"`,
+      `--- "a/src/${octal}.ts"`,
+      `+++ "b/src/${octal}.ts"`,
+      '@@ -0,0 +1 @@',
+      '+export const a = 1',
+      'diff --git "a/src/a\\"b.ts" "b/src/a\\"b.ts"',
+      '--- "a/src/a\\"b.ts"',
+      '+++ "b/src/a\\"b.ts"',
+      '@@ -0,0 +1 @@',
+      '+export const quoted = 1',
+      '',
+    ].join('\n')
+    const lines = parseUnifiedDiff(quoted)
+    expect([...(lines.get('src/あ.ts') ?? [])]).toEqual([1])
+    expect([...(lines.get('src/a"b.ts') ?? [])]).toEqual([1])
   })
 
   it('lists uncovered changed lines and branches with file and line', () => {
@@ -373,6 +409,58 @@ describe('diff base', () => {
     expect(push.mode).toBe('two-dot')
     expect([...push.lines.keys()]).toEqual(['src/b.ts'])
   })
+
+  it('keeps a non-ascii path when git would quote it', () => {
+    const repo = initRepo()
+    writeRepoFile(repo, 'src/あ.ts', 'export const a = 1\n')
+    const base = commitAll(repo, 'base')
+    writeRepoFile(repo, 'src/あ.ts', 'export const a = 2\n')
+    const head = commitAll(repo, 'change')
+    const diff = changedSourceLines({
+      cwd: repo,
+      eventName: 'push',
+      headSha: head,
+      baseSha: '',
+      eventBefore: base,
+    })
+    expect(diff.note).toBeNull()
+    expect([...diff.lines.keys()]).toEqual(['src/あ.ts'])
+    expect(diff.lines.get('src/あ.ts')?.has(1)).toBe(true)
+  })
+
+  it('reports pull request line numbers from the head, not a merge with newer main', () => {
+    const repo = initRepo()
+    writeRepoFile(repo, 'src/a.ts', 'export const a = 1\nexport const b = 1\n')
+    const base = commitAll(repo, 'base')
+    execGit(repo, ['checkout', '-b', 'feature'])
+    writeRepoFile(repo, 'src/a.ts', 'export const a = 1\nexport const changed = 1\n')
+    const feature = commitAll(repo, 'feature')
+    execGit(repo, ['checkout', 'main'])
+    writeRepoFile(repo, 'src/a.ts', 'export const inserted = 1\nexport const a = 1\nexport const b = 1\n')
+    const main = commitAll(repo, 'main inserts a line')
+    execGit(repo, ['merge', '--no-ff', '--no-edit', 'feature'])
+    const merge = execGit(repo, ['rev-parse', 'HEAD'])
+
+    const head = changedSourceLines({
+      cwd: repo,
+      eventName: 'pull_request',
+      headSha: feature,
+      baseSha: main,
+      eventBefore: null,
+    })
+    expect(head.note).toBeNull()
+    expect([...head.lines.get('src/a.ts') ?? []]).toEqual([2])
+
+    const merged = changedSourceLines({
+      cwd: repo,
+      eventName: 'pull_request',
+      headSha: merge,
+      baseSha: main,
+      eventBefore: null,
+    })
+    expect([...merged.lines.get('src/a.ts') ?? []]).toEqual([3])
+    expect(base).not.toBe(feature)
+  })
 })
 
 describe('coverage summary command', () => {
@@ -450,6 +538,41 @@ describe('coverage summary command', () => {
     expect(summary).toContain('| 全体 | 1/5 (20%) | 1/2 (50%) |')
     expect(summary).toContain('coverage_elapsed_seconds=9')
   })
+
+  it('prints the real vitest status when publishing the summary throws', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'coverage-fail-'))
+    repos.push(dir)
+    const captured = join(dir, 'captured.md')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const code = runCoverageCli(
+      ['--vitest-status', '2', '--summary-out', join(dir, 'missing', 'summary.md')],
+      { GITHUB_STEP_SUMMARY: captured },
+      dir,
+    )
+    const message = log.mock.calls.map((call) => String(call[0])).join('\n')
+    log.mockRestore()
+    expect(code).toBe(0)
+    expect(message).toContain('表示に失敗しました')
+    expect(message).toContain('vitest_exit_status=2')
+    expect(message).not.toContain('vitest_exit_status=0')
+    expect(readFileSync(captured, 'utf8')).toBe(message)
+  })
+
+  it('omits vitest status when the flag is not an integer', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'coverage-fail-'))
+    repos.push(dir)
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const code = runCoverageCli(
+      ['--vitest-status', 'nope', '--summary-out', join(dir, 'missing', 'summary.md')],
+      {},
+      dir,
+    )
+    const message = log.mock.calls.map((call) => String(call[0])).join('\n')
+    log.mockRestore()
+    expect(code).toBe(0)
+    expect(message).toContain('表示に失敗しました')
+    expect(message).not.toContain('vitest_exit_status=')
+  })
 })
 
 describe('CI wiring', () => {
@@ -467,6 +590,9 @@ describe('CI wiring', () => {
     expect(coverage).toContain('continue-on-error: true')
     expect(coverage).toContain('fetch-depth: 0')
     expect(coverage).toContain('bash .github/scripts/ci-diff-coverage.sh')
+    expect(coverage).toContain('github.event.pull_request.head.sha')
+    expect(coverage).toContain("github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha")
+    expect(coverage).not.toContain('HEAD_SHA: ${{ github.sha }}')
     expect(coverage).not.toContain('codecov')
     expect(coverage).not.toContain('secrets.')
     expect(mergeGate).toContain('needs: [changes, check, simulator-images]')
@@ -484,6 +610,8 @@ describe('CI wiring', () => {
 
     const config = readFileSync(join(root, 'vitest.config.ts'), 'utf8')
     expect(config).toContain("provider: 'v8'")
+    expect(config).toContain("reporter: ['text-summary', 'json-summary', 'json']")
+    expect(config).not.toContain("reporter: ['text',")
     expect(config).toContain('reportOnFailure: true')
     expect(config).toContain("include: ['src/**/*.ts']")
     expect(config).not.toContain('thresholds')

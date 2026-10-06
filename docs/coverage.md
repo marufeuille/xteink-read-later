@@ -13,7 +13,8 @@ PR で Worker のコード（`src/**/*.ts`）が変わると、`diff coverage` �
 | 対象 | `src/**/*.ts`（`.d.ts` を除く）。テストが import していないファイルも含む |
 | 行 | Istanbul の行カバレッジ。文の開始行で、ヒットの最大が 0 の行が未検証 |
 | 分岐 | ヒット 0 の分岐。差分では、その行か条件の行が変更に含まれるもの |
-| 変更行 | `pull_request` は base との three-dot。`merge_group` と `push` は two-dot。削除行は含めない |
+| 変更行 | `pull_request` は PR head（`github.event.pull_request.head.sha`）と base の three-dot。`github.sha` は pull_request では合成マージコミットなので、base 側の変更で行番号が PR のファイルとずれる。`merge_group` と `push` は `github.sha` との two-dot。削除行は含めない |
+| ログ | reporter は `text-summary`。差分集計に使う `json` と `json-summary` は残す。ファイルごとの表は出さない |
 | 通常の unit | `npm run test:unit` はカバレッジなしのまま。成否は `typecheck, unit, e2e` が見る |
 
 全体の行・分岐は Vitest が書く `coverage-summary.json` の `total.lines` と `total.branches`。差分の行・分岐は上の定義で、変更された実行行と変更に含まれる分岐だけを数える。
@@ -26,7 +27,7 @@ PR で Worker のコード（`src/**/*.ts`）が変わると、`diff coverage` �
 | --- | ---: | ---: | --- |
 | unit | 7480/8984 (83.25%) | 5798/7932 (73.09%) | 上の run。`vitest_exit_status=0` |
 
-同じ summary の変更箇所は、行 280/310 (90.32%)、分岐 228/335 (68.05%)。未検証は行 15 件、分岐 110 件で、いずれも `src/coverage/cli.ts`、`src/coverage/diff-report.ts`、`src/coverage/git-diff.ts`。比較は pull request の three-dot。ログに出た summary の先頭:
+同じ summary の変更箇所は、行 280/310 (90.32%)、分岐 228/335 (68.05%)。未検証は行 30 行（15 範囲）、分岐 107 件で、いずれも `src/coverage/cli.ts`、`src/coverage/diff-report.ts`、`src/coverage/git-diff.ts`。比較は pull request の three-dot（この計測の `HEAD_SHA` は当時の `github.sha`）。ログに出た summary の先頭:
 
 ```text
 ### 差分カバレッジ（unit）

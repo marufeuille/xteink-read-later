@@ -98,7 +98,7 @@ function hasCommit(cwd: string, sha: string): boolean {
 }
 
 function git(cwd: string, args: string[]): { readonly status: number; readonly stdout: string } {
-  const result = spawnSync('git', args, {
+  const result = spawnSync('git', ['-c', 'core.quotePath=false', ...args], {
     cwd,
     encoding: 'utf8',
     env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
