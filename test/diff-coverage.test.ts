@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { publishCoverageSummary } from '../src/coverage/cli.ts'
 import {
   diffCoverage,
@@ -380,6 +380,7 @@ describe('coverage summary command', () => {
     const dir = mkdtempSync(join(tmpdir(), 'coverage-summary-'))
     repos.push(dir)
     const summaryPath = join(dir, 'summary.md')
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const summary = publishCoverageSummary({
       cwd: dir,
       diffFile: null,
@@ -394,6 +395,8 @@ describe('coverage summary command', () => {
       eventPath: undefined,
       allowFetch: false,
     })
+    expect(log).toHaveBeenCalledWith(summary)
+    log.mockRestore()
     expect(summary).toContain('カバレッジ結果を読めませんでした: ENOENT')
     expect(summary).toContain('全体カバレッジを読めませんでした: ENOENT')
     expect(summary).toContain('比較元の commit がありません')
@@ -426,6 +429,7 @@ describe('coverage summary command', () => {
         branches: { total: 2, covered: 1, skipped: 0, pct: 50 },
       },
     }))
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {})
     const summary = publishCoverageSummary({
       cwd: dir,
       diffFile,
@@ -440,6 +444,8 @@ describe('coverage summary command', () => {
       eventPath: undefined,
       allowFetch: false,
     })
+    expect(log).toHaveBeenCalledWith(summary)
+    log.mockRestore()
     expect(summary).toContain('- `src/a.ts:2`')
     expect(summary).toContain('| 全体 | 1/5 (20%) | 1/2 (50%) |')
     expect(summary).toContain('coverage_elapsed_seconds=9')

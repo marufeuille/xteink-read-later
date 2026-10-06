@@ -64,7 +64,7 @@ export function buildCoverageSummary(input: ReportInput): string {
 export function publishCoverageSummary(input: ReportInput): string {
   const summary = buildCoverageSummary(input)
   if (input.summaryOut && input.summaryOut.length > 0) appendFileSync(input.summaryOut, summary)
-  else console.log(summary)
+  console.log(summary)
   return summary
 }
 
@@ -132,7 +132,7 @@ function main(): number {
     const message = `### 差分カバレッジ（unit）\n\n表示に失敗しました: ${errorName(error)}\n\nvitest_exit_status=0\n`
     const summaryOut = process.env['GITHUB_STEP_SUMMARY']
     if (summaryOut && summaryOut.length > 0) appendFileSync(summaryOut, message)
-    else console.log(message)
+    console.log(message)
   }
   return 0
 }
