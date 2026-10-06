@@ -70,6 +70,23 @@ function assertNoLeak(text: string) {
   }
 }
 
+function assertFixedLine(message: string, prefix: string, keys: readonly string[], runUrl: string) {
+  expect(message).not.toMatch(/[\r\n]/)
+  const [head, ...parts] = message.split(' ')
+  expect(head).toBe(prefix)
+  expect(parts.map((part) => part.slice(0, part.indexOf('=')))).toEqual([...keys])
+  for (const part of parts) {
+    const value = part.slice(part.indexOf('=') + 1)
+    expect(value.length).toBeGreaterThan(0)
+    expect(value).not.toMatch(/\s/)
+    if (!part.startsWith('runUrl=')) {
+      expect(value).not.toMatch(/https?:\/\//)
+    }
+  }
+  const urls = message.match(/https?:\/\/\S+/g) ?? []
+  expect(urls).toEqual(runUrl === '-' ? [] : [runUrl])
+}
+
 async function epubWith(phrase: string): Promise<Uint8Array> {
   const url = parseHttpUrl(ARTICLE)
   if (url === null) {
@@ -99,25 +116,134 @@ describe('deploy smoke script', () => {
       runUrl: RUN,
     })
     expect(message).toBe(
-      `[deploy-smoke] github.sha=${SHA} workerVersion=${VERSION} failedStep=poll-job jobId=${JOB} lastStage=extract errorKind=fetch_failed runUrl=${RUN}`,
+      `[deploy-smoke] sha=${SHA} workerVersion=${VERSION} failedStep=poll-job errorKind=fetch_failed lastStage=extract jobId=${JOB} runUrl=${RUN}`,
     )
-    expect(message.startsWith('[deploy-smoke]')).toBe(true)
+    assertFixedLine(
+      message,
+      '[deploy-smoke]',
+      ['sha', 'workerVersion', 'failedStep', 'errorKind', 'lastStage', 'jobId', 'runUrl'],
+      RUN,
+    )
 
+    const hash = '0123456789abcdef'.repeat(4)
+    const slackToken = 'xoxb-123456789012-abcdefTOKEN'
     const leaked = buildSmokeSlackMessage({
-      githubSha: ARTICLE,
-      workerVersion: TOKEN,
-      failedStep: SMOKE_PHRASE,
-      jobId: WEBHOOK,
-      lastStage: PASS,
+      githubSha: `${ARTICLE}\n${SHA} ${hash}`,
+      workerVersion: `${TOKEN} ${VERSION}`,
+      failedStep: `${SMOKE_PHRASE}\npost-clip`,
+      jobId: `${WEBHOOK}\r${JOB}`,
+      lastStage: `${PASS}\nextract ${slackToken}`,
       errorKind: `fetch_failed ${ARTICLE}`,
-      runUrl: ARTICLE,
+      runUrl: `${ARTICLE}\n${RUN}`,
     })
-    expect(leaked.startsWith('[deploy-smoke]')).toBe(true)
+    expect(leaked).toBe(
+      '[deploy-smoke] sha=unknown workerVersion=unknown failedStep=unknown errorKind=- lastStage=- jobId=- runUrl=-',
+    )
+    assertFixedLine(
+      leaked,
+      '[deploy-smoke]',
+      ['sha', 'workerVersion', 'failedStep', 'errorKind', 'lastStage', 'jobId', 'runUrl'],
+      '-',
+    )
     assertNoLeak(leaked)
-    expect(leaked).toContain('github.sha=unknown')
-    expect(leaked).toContain('failedStep=unknown')
-    expect(leaked).toContain('jobId=-')
-    expect(leaked).toContain('runUrl=-')
+    expect(leaked).not.toContain(hash)
+    expect(leaked).not.toContain(slackToken)
+    expect(leaked).not.toContain('cleanupErrorKind')
+  })
+
+  it('formats failure, cancel, and cleanup lines in the fixed key order', () => {
+    const failure = buildSmokeSlackMessage({
+      githubSha: SHA,
+      workerVersion: VERSION,
+      failedStep: 'poll-job',
+      jobId: JOB,
+      lastStage: 'extract',
+      errorKind: 'extract_failed',
+      runUrl: RUN,
+    })
+    const failureLine = `[deploy-smoke] sha=${SHA} workerVersion=${VERSION} failedStep=poll-job errorKind=extract_failed lastStage=extract jobId=${JOB} runUrl=${RUN}`
+    expect(failure).toBe(failureLine)
+    assertFixedLine(
+      failure,
+      '[deploy-smoke]',
+      ['sha', 'workerVersion', 'failedStep', 'errorKind', 'lastStage', 'jobId', 'runUrl'],
+      RUN,
+    )
+    const doc = readFileSync(join(root, 'docs/deploy-smoke.md'), 'utf8')
+    expect(doc).toContain(failureLine)
+    expect(doc).not.toContain('[deploy-smoke] github.sha=')
+
+    const cancelled: SmokeStateFile = {
+      outcome: 'running',
+      githubSha: SHA,
+      workerVersion: VERSION,
+      runUrl: RUN,
+      step: 'poll-job',
+      failedStep: null,
+      jobId: null,
+      articleId: null,
+      lastStage: null,
+      errorKind: null,
+      missing: [],
+      cleanupErrorKind: null,
+    }
+    const cancelFields = notificationForState(cancelled, {})
+    if (cancelFields === null) {
+      throw new Error('cancel')
+    }
+    const cancel = buildSmokeSlackMessage(cancelFields)
+    expect(cancel).toBe(
+      `[deploy-smoke] sha=${SHA} workerVersion=${VERSION} failedStep=poll-job errorKind=interrupted lastStage=- jobId=- runUrl=${RUN}`,
+    )
+    assertFixedLine(
+      cancel,
+      '[deploy-smoke]',
+      ['sha', 'workerVersion', 'failedStep', 'errorKind', 'lastStage', 'jobId', 'runUrl'],
+      RUN,
+    )
+    expect(cancel).not.toContain('cleanupErrorKind')
+    expect(cancel).not.toContain(SMOKE_PHRASE)
+
+    const withCleanup = buildSmokeSlackMessage({
+      githubSha: SHA,
+      workerVersion: VERSION,
+      failedStep: 'poll-job',
+      jobId: JOB,
+      lastStage: 'fetch',
+      errorKind: 'timeout',
+      cleanupErrorKind: 'http_503',
+      runUrl: RUN,
+    })
+    expect(withCleanup).toBe(
+      `[deploy-smoke] sha=${SHA} workerVersion=${VERSION} failedStep=poll-job errorKind=timeout lastStage=fetch jobId=${JOB} runUrl=${RUN} cleanupErrorKind=http_503`,
+    )
+    assertFixedLine(
+      withCleanup,
+      '[deploy-smoke]',
+      ['sha', 'workerVersion', 'failedStep', 'errorKind', 'lastStage', 'jobId', 'runUrl', 'cleanupErrorKind'],
+      RUN,
+    )
+
+    const withoutCleanup = buildSmokeSlackMessage({
+      githubSha: SHA,
+      workerVersion: VERSION,
+      failedStep: 'poll-job',
+      jobId: JOB,
+      lastStage: 'fetch',
+      errorKind: 'timeout',
+      cleanupErrorKind: null,
+      runUrl: RUN,
+    })
+    expect(withoutCleanup).toBe(
+      `[deploy-smoke] sha=${SHA} workerVersion=${VERSION} failedStep=poll-job errorKind=timeout lastStage=fetch jobId=${JOB} runUrl=${RUN}`,
+    )
+    expect(withoutCleanup).not.toContain('cleanupErrorKind')
+    assertFixedLine(
+      withoutCleanup,
+      '[deploy-smoke]',
+      ['sha', 'workerVersion', 'failedStep', 'errorKind', 'lastStage', 'jobId', 'runUrl'],
+      RUN,
+    )
   })
 
   it('redacts secrets and article URLs in logs', () => {
@@ -648,10 +774,12 @@ describe('deploy smoke script', () => {
     expect(fields.errorKind).toBe('timeout')
     expect(fields.cleanupErrorKind).toBe('http_503')
     const message = buildSmokeSlackMessage(fields)
-    expect(message).toContain('errorKind=timeout')
-    expect(message).toContain('cleanupErrorKind=http_503')
-    expect(message.indexOf('errorKind=timeout')).toBeLessThan(message.indexOf('cleanupErrorKind=http_503'))
+    expect(message).toBe(
+      `[deploy-smoke] sha=${SHA} workerVersion=${VERSION} failedStep=poll-job errorKind=timeout lastStage=fetch jobId=${JOB} runUrl=${RUN} cleanupErrorKind=http_503`,
+    )
     assertNoLeak(message)
+    expect(message).not.toContain(ARTICLE)
+    expect(message).not.toContain(SMOKE_PHRASE)
 
     const deleteOnly = notificationForState({ ...failed, outcome: 'passed', failedStep: null, errorKind: null }, {})
     if (deleteOnly === null) {
@@ -660,7 +788,9 @@ describe('deploy smoke script', () => {
     expect(deleteOnly.failedStep).toBe('delete')
     expect(deleteOnly.errorKind).toBe('http_503')
     expect(deleteOnly.cleanupErrorKind).toBeUndefined()
-    expect(buildSmokeSlackMessage(deleteOnly)).not.toContain('cleanupErrorKind')
+    expect(buildSmokeSlackMessage(deleteOnly)).toBe(
+      `[deploy-smoke] sha=${SHA} workerVersion=${VERSION} failedStep=delete errorKind=http_503 lastStage=fetch jobId=${JOB} runUrl=${RUN}`,
+    )
   })
 
   it('matches the Pages article, the wrangler URL, and the workflow secrets', async () => {

@@ -43,23 +43,48 @@ export function sanitizeKind(value: string | null | undefined): string {
   return field(value, KIND, '-')
 }
 
+const FIELD_KEY = /^[A-Za-z][A-Za-z0-9]*$/
+
 /** Ops routes on these prefixes. Anything else is rejected before Slack sees it. */
 export function isDeployNotification(message: string): boolean {
   return message.startsWith('[deploy-smoke]') || message.startsWith('[deploy-rollback]')
 }
 
-/** One line. Ops routes on the `[deploy-smoke]` prefix. Only allowlisted fields are interpolated. */
+/**
+ * One line of `key=value` tokens. Values are already sanitized.
+ * A value with a space or newline is rejected here so it cannot reach Slack.
+ */
+export function joinNotificationLine(
+  prefix: '[deploy-smoke]' | '[deploy-rollback]',
+  fields: readonly (readonly [string, string])[],
+): string {
+  const parts = fields.map(([key, value]) => {
+    if (!FIELD_KEY.test(key) || value.length === 0 || /[\s]/.test(value)) {
+      throw new Error('notification field rejected')
+    }
+    return `${key}=${value}`
+  })
+  return `${prefix} ${parts.join(' ')}`
+}
+
+/**
+ * One line. Ops routes on the `[deploy-smoke]` prefix.
+ * Key order: sha, workerVersion, failedStep, errorKind, lastStage, jobId, runUrl,
+ * then cleanupErrorKind only when the caller recorded both failures.
+ * Missing lastStage, jobId, and errorKind are `-`. Only allowlisted fields are interpolated.
+ */
 export function buildSmokeSlackMessage(input: SmokeFailureFields): string {
-  const sha = sanitizeGithubSha(input.githubSha)
-  const version = sanitizeWorkerVersion(input.workerVersion)
-  const step = sanitizeStep(input.failedStep)
-  const jobId = field(input.jobId, JOB, '-')
-  const stage = sanitizeKind(input.lastStage)
-  const errorKind = sanitizeKind(input.errorKind)
-  const runUrl = sanitizeRunUrl(input.runUrl)
-  const cleanup =
-    input.cleanupErrorKind === undefined || input.cleanupErrorKind === null
-      ? ''
-      : ` cleanupErrorKind=${sanitizeKind(input.cleanupErrorKind)}`
-  return `[deploy-smoke] github.sha=${sha} workerVersion=${version} failedStep=${step} jobId=${jobId} lastStage=${stage} errorKind=${errorKind}${cleanup} runUrl=${runUrl}`
+  const fields: Array<readonly [string, string]> = [
+    ['sha', sanitizeGithubSha(input.githubSha)],
+    ['workerVersion', sanitizeWorkerVersion(input.workerVersion)],
+    ['failedStep', sanitizeStep(input.failedStep)],
+    ['errorKind', sanitizeKind(input.errorKind)],
+    ['lastStage', sanitizeKind(input.lastStage)],
+    ['jobId', field(input.jobId, JOB, '-')],
+    ['runUrl', sanitizeRunUrl(input.runUrl)],
+  ]
+  if (input.cleanupErrorKind !== undefined && input.cleanupErrorKind !== null) {
+    fields.push(['cleanupErrorKind', sanitizeKind(input.cleanupErrorKind)])
+  }
+  return joinNotificationLine('[deploy-smoke]', fields)
 }

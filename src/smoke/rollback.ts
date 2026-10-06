@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
-import { isDeployNotification, sanitizeGithubSha, sanitizeKind, sanitizeRunUrl, sanitizeStep, sanitizeWorkerVersion } from './message.ts'
+import { isDeployNotification, joinNotificationLine, sanitizeGithubSha, sanitizeKind, sanitizeRunUrl, sanitizeStep, sanitizeWorkerVersion } from './message.ts'
 import { parseWorkerDeploymentVersion } from './worker-version.ts'
 
 const VERSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -11,9 +11,10 @@ const WORKER_SCRIPT = 'xteink-read-later'
 /** Shorter than the 12 minute rollback step, so notify still runs if verify hangs. */
 export const VERIFY_DEADLINE_MS = 9 * 60 * 1000
 const STDERR_HEAD = /^[A-Za-z0-9 .,;:_[\]()'"/+-]{1,120}$/
+const NOTE = /^[a-z][a-z0-9_]{0,40}$/
 
-/** Fixed sentence. No deploy data is interpolated into it. */
-export const ROLLBACK_REVERT_NOTE = 'main には変更が残っています。revert PR が要ります'
+/** Fixed token. Means main still has the change and a revert PR is needed. No deploy data is interpolated. */
+export const ROLLBACK_REVERT_NOTE = 'revert_pr_needed'
 
 /**
  * Top-level wrangler keys that are bindings or triggers.
@@ -382,17 +383,33 @@ export type RollbackSlackFields = {
   readonly runUrl: string
 }
 
-/** One line. Only sha, from, to, trigger, result, verify, and runUrl are interpolated. */
+function sanitizeNote(value: string): string {
+  if (!NOTE.test(value)) {
+    throw new Error('rollback note rejected')
+  }
+  return value
+}
+
+/**
+ * One line. Key order: sha, from, to, trigger, result, verify, runUrl,
+ * then note only when the result is rolled_back.
+ * Missing to and verify are `-`. Only those fields are interpolated.
+ */
 export function buildRollbackSlackMessage(input: RollbackSlackFields): string {
-  const sha = sanitizeGithubSha(input.githubSha)
-  const from = versionField(input.fromVersion)
-  const to = versionField(input.toVersion)
-  const trigger = `${sanitizeStep(input.failedStep)}/${sanitizeKind(input.errorKind)}`
   const result = sanitizeResult(input.result)
-  const verify = sanitizeVerify(input.verify)
-  const runUrl = sanitizeRunUrl(input.runUrl)
-  const note = result === 'rolled_back' ? ` ${ROLLBACK_REVERT_NOTE}` : ''
-  const message = `[deploy-rollback] sha=${sha} from=${from} to=${to} trigger=${trigger} result=${result} verify=${verify} runUrl=${runUrl}${note}`
+  const fields: Array<readonly [string, string]> = [
+    ['sha', sanitizeGithubSha(input.githubSha)],
+    ['from', versionField(input.fromVersion)],
+    ['to', versionField(input.toVersion)],
+    ['trigger', `${sanitizeStep(input.failedStep)}/${sanitizeKind(input.errorKind)}`],
+    ['result', result],
+    ['verify', sanitizeVerify(input.verify)],
+    ['runUrl', sanitizeRunUrl(input.runUrl)],
+  ]
+  if (result === 'rolled_back') {
+    fields.push(['note', sanitizeNote(ROLLBACK_REVERT_NOTE)])
+  }
+  const message = joinNotificationLine('[deploy-rollback]', fields)
   if (!isDeployNotification(message)) {
     throw new Error('rollback message rejected')
   }
