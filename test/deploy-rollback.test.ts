@@ -68,6 +68,24 @@ function assertNoLeak(text: string) {
   expect(text).not.toContain('@')
 }
 
+function assertFixedLine(message: string, keys: readonly string[], runUrl: string) {
+  expect(message).not.toMatch(/[\r\n]/)
+  const [head, ...parts] = message.split(' ')
+  expect(head).toBe('[deploy-rollback]')
+  expect(parts.map((part) => part.slice(0, part.indexOf('=')))).toEqual([...keys])
+  for (const part of parts) {
+    const value = part.slice(part.indexOf('=') + 1)
+    expect(value.length).toBeGreaterThan(0)
+    expect(value).not.toMatch(/\s/)
+    if (!part.startsWith('runUrl=')) {
+      expect(value).not.toMatch(/https?:\/\//)
+      expect(value).not.toContain(SMOKE_PHRASE)
+    }
+  }
+  const urls = message.match(/https?:\/\/\S+/g) ?? []
+  expect(urls).toEqual(runUrl === '-' ? [] : [runUrl])
+}
+
 async function decide(input: {
   readonly context?: Partial<RollbackContext>
   readonly diff?: DeployDiff
@@ -105,10 +123,9 @@ describe('deploy rollback', () => {
     expect(failingVerify.result.result).toBe('rolled_back')
     expect(failingVerify.result.verify).toBe('still_failing')
     expect(failingVerify.result.exitCode).toBe(0)
-    expect(failingVerify.result.message).toContain(ROLLBACK_REVERT_NOTE)
-    expect(failingVerify.result.message).toContain('trigger=verify-epub/epub_phrase')
-    expect(failingVerify.result.message).toContain(`from=${CUR}`)
-    expect(failingVerify.result.message).toContain(`to=${PREV}`)
+    expect(failingVerify.result.message).toBe(
+      `[deploy-rollback] sha=${SHA} from=${CUR} to=${PREV} trigger=verify-epub/epub_phrase result=rolled_back verify=still_failing runUrl=${RUN} note=${ROLLBACK_REVERT_NOTE}`,
+    )
     expect(failingVerify.notify).toHaveBeenCalledWith(failingVerify.result.message)
     expect(failingVerify.summarize).toHaveBeenCalledWith(failingVerify.result.message)
 
@@ -124,7 +141,10 @@ describe('deploy rollback', () => {
     expect(result.result).toBe('rollback_failed')
     expect(result.verify).toBe('-')
     expect(result.rolledBack).toBe(false)
-    expect(result.message).not.toContain(ROLLBACK_REVERT_NOTE)
+    expect(result.message).toBe(
+      `[deploy-rollback] sha=${SHA} from=${CUR} to=${PREV} trigger=verify-epub/epub_phrase result=rollback_failed verify=- runUrl=${RUN}`,
+    )
+    expect(result.message).not.toContain('note=')
     expect(rollback).toHaveBeenCalledOnce()
     expect(verify).not.toHaveBeenCalled()
   })
@@ -596,36 +616,71 @@ describe('deploy rollback', () => {
       verify: 'verified',
       runUrl: RUN,
     })
-    expect(message).toBe(
-      `[deploy-rollback] sha=${SHA} from=${CUR} to=${PREV} trigger=post-clip/http_500 result=rolled_back verify=verified runUrl=${RUN} ${ROLLBACK_REVERT_NOTE}`,
+    const rolledBack = `[deploy-rollback] sha=${SHA} from=${CUR} to=${PREV} trigger=post-clip/http_500 result=rolled_back verify=verified runUrl=${RUN} note=${ROLLBACK_REVERT_NOTE}`
+    expect(message).toBe(rolledBack)
+    assertFixedLine(
+      message,
+      ['sha', 'from', 'to', 'trigger', 'result', 'verify', 'runUrl', 'note'],
+      RUN,
     )
-    expect(message.startsWith('[deploy-rollback]')).toBe(true)
-    expect(message.match(/https:\/\//g)).toEqual([
-      'https://',
-    ])
-    expect(message).toContain(RUN)
 
-    const leaked = buildRollbackSlackMessage({
-      githubSha: ARTICLE,
-      fromVersion: TOKEN,
-      toVersion: WEBHOOK,
-      failedStep: SMOKE_PHRASE,
-      errorKind: `http_500 ${ARTICLE}`,
-      result: `rolled_back ${TOKEN}`,
-      verify: ARTICLE,
-      runUrl: ARTICLE,
+    const failedRollback = buildRollbackSlackMessage({
+      githubSha: SHA,
+      fromVersion: CUR,
+      toVersion: PREV,
+      failedStep: 'verify-epub',
+      errorKind: 'epub_phrase',
+      result: 'rollback_failed',
+      verify: '-',
+      runUrl: RUN,
     })
-    expect(leaked.startsWith('[deploy-rollback]')).toBe(true)
+    expect(failedRollback).toBe(
+      `[deploy-rollback] sha=${SHA} from=${CUR} to=${PREV} trigger=verify-epub/epub_phrase result=rollback_failed verify=- runUrl=${RUN}`,
+    )
+    assertFixedLine(failedRollback, ['sha', 'from', 'to', 'trigger', 'result', 'verify', 'runUrl'], RUN)
+    expect(failedRollback).not.toContain('note=')
+
+    const skipped = buildRollbackSlackMessage({
+      githubSha: SHA,
+      fromVersion: CUR,
+      toVersion: '-',
+      failedStep: 'verify-epub',
+      errorKind: 'epub_phrase',
+      result: 'skipped:cancelled',
+      verify: '-',
+      runUrl: RUN,
+    })
+    expect(skipped).toBe(
+      `[deploy-rollback] sha=${SHA} from=${CUR} to=- trigger=verify-epub/epub_phrase result=skipped:cancelled verify=- runUrl=${RUN}`,
+    )
+    assertFixedLine(skipped, ['sha', 'from', 'to', 'trigger', 'result', 'verify', 'runUrl'], RUN)
+    expect(skipped).not.toContain('note=')
+    const doc = readFileSync(join(root, 'docs/deploy-smoke.md'), 'utf8')
+    expect(doc).toContain(
+      `[deploy-rollback] sha=${SHA} from=${CUR} to=${PREV} trigger=verify-epub/epub_phrase result=rolled_back verify=verified runUrl=${RUN} note=${ROLLBACK_REVERT_NOTE}`,
+    )
+
+    const hash = 'fedcba9876543210'.repeat(4)
+    const slackToken = 'xoxb-123456789012-abcdefTOKEN'
+    const leaked = buildRollbackSlackMessage({
+      githubSha: `${ARTICLE}\n${hash}`,
+      fromVersion: `${TOKEN} ${CUR}`,
+      toVersion: `${WEBHOOK}\r${PREV}`,
+      failedStep: `${SMOKE_PHRASE}\nverify-epub`,
+      errorKind: `http_500 ${ARTICLE} ${slackToken}`,
+      result: `rolled_back ${TOKEN}`,
+      verify: `${ARTICLE}\nverified`,
+      runUrl: `${ARTICLE}\n${RUN}`,
+    })
+    expect(leaked).toBe(
+      '[deploy-rollback] sha=unknown from=unknown to=unknown trigger=unknown/- result=skipped:unknown verify=- runUrl=-',
+    )
+    assertFixedLine(leaked, ['sha', 'from', 'to', 'trigger', 'result', 'verify', 'runUrl'], '-')
     assertNoLeak(leaked)
-    expect(leaked).toContain('sha=unknown')
-    expect(leaked).toContain('from=unknown')
-    expect(leaked).toContain('to=unknown')
-    expect(leaked).toContain('trigger=unknown/-')
-    expect(leaked).toContain('result=skipped:unknown')
-    expect(leaked).toContain('verify=-')
-    expect(leaked).toContain('runUrl=-')
+    expect(leaked).not.toContain(hash)
+    expect(leaked).not.toContain(slackToken)
+    expect(leaked).not.toContain('note=')
     expect(leaked).not.toContain(ROLLBACK_REVERT_NOTE)
-    expect(leaked).not.toMatch(/https?:\/\//)
 
     const posted: string[] = []
     await postSmokeSlack(WEBHOOK, leaked, async (_url, init) => {
@@ -727,9 +782,9 @@ describe('deploy rollback', () => {
     expect(result.notified).toBe(true)
     expect(result.exitCode).toBe(0)
     expect(result.rolledBack).toBe(false)
-    expect(result.message).toContain('result=skipped:unknown_diff')
-    expect(result.message).toContain('verify=-')
-    expect(result.message).not.toContain(ROLLBACK_REVERT_NOTE)
+    expect(result.message).toBe(
+      `[deploy-rollback] sha=${SHA} from=${CUR} to=- trigger=verify-epub/epub_phrase result=skipped:unknown_diff verify=- runUrl=${RUN}`,
+    )
   })
 
   it('exports smoke outcome fields without extra state', () => {

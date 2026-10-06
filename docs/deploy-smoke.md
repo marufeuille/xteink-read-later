@@ -15,15 +15,17 @@
 
 deploy が path filter で skip されたとき、このジョブも skip する。deploy ジョブを再実行して成功すると、`needs: deploy` のためスモークも走る。
 
-成功時は Slack に出さない。失敗したとき、またはジョブがキャンセルされたとき、Slack `#xteink-cronitor` へ 1 通出す。通知ステップの条件は `failure() || cancelled()`。メッセージは `[deploy-smoke]` で始まる。実行と DELETE の両方が失敗したときは、同じ行に `cleanupErrorKind` を足す。
+成功時は Slack に出さない。失敗したとき、またはジョブがキャンセルされたとき、Slack `#xteink-cronitor` へ 1 通出す。通知ステップの条件は `failure() || cancelled()`。メッセージは `[deploy-smoke]` で始まる 1 行である。そのあとは固定のキーを固定の順に、半角スペース区切りの `key=value` で続ける。値にスペースや改行は入れない。形に合わない値は落としてから入れる。
+
+キーの順は `sha`（40 桁）、`workerVersion`、`failedStep`、`errorKind`、`lastStage`、`jobId`、`runUrl`。`lastStage`、`jobId`、`errorKind` が無い、または形に合わないときは `-`。`sha`、`workerVersion`、`failedStep` が無い、または形に合わないときは `unknown`。`runUrl` が Actions の run URL でなければ `-`。実行と DELETE の両方が失敗したときだけ、行末に `cleanupErrorKind` を足す。それ以外ではこのキー自体を出さない。
 
 ステップの timeout は checkout 1 分、Node の準備 1 分、install 3 分、スモーク 8 分、DELETE 2 分、通知 1 分、結果の export 1 分で、合計 17 分。ジョブ全体は 18 分。合計がジョブの上限を超えない。
 
 ```text
-[deploy-smoke] github.sha=0123456789abcdef0123456789abcdef01234567 workerVersion=01234567-89ab-cdef-0123-456789abcdef failedStep=poll-job jobId=job_0123456789abcdef0123456789abcdef lastStage=extract errorKind=fetch_failed runUrl=https://github.com/marufeuille/xteink-read-later/actions/runs/123
+[deploy-smoke] sha=0123456789abcdef0123456789abcdef01234567 workerVersion=01234567-89ab-cdef-0123-456789abcdef failedStep=poll-job errorKind=extract_failed lastStage=extract jobId=job_0123456789abcdef0123456789abcdef runUrl=https://github.com/marufeuille/xteink-read-later/actions/runs/123
 ```
 
-入れるもの: `github.sha`、Worker version、失敗した工程、jobId、最後の stage、errorKind、Actions の run URL。実行と DELETE の両方が失敗したときだけ `cleanupErrorKind`。入れないもの: 記事 URL、token、パスワード、ハッシュの入力にした生の値、記事本文。ログも同じ。クリップ失敗で Worker の Cronitor `xteink-clip` も鳴ることがある。二重になってよい。
+出してよい URL は GitHub Actions の `runUrl` だけ。出さないもの: 記事 URL、記事本文、token、パスワード、ハッシュの入力にした生の値。ログも同じ。クリップ失敗で Worker の Cronitor `xteink-clip` も鳴ることがある。二重になってよい。
 
 切り分け、DELETE が残した記事の人手削除、手動の rollback は Ops の runbook が正本である。その runbook はこのリポジトリには無い。人手の削除手順はそこへ置く。手順はこの文書に複製しない。
 
@@ -70,15 +72,15 @@ wrangler rollback <previous_worker_version> --message "deploy-rollback sha=… r
 
 rollback コマンド自体が失敗したときは、終了コードと、token を含み得ない stderr の先頭だけをジョブのログに出す。その行は Slack にも job summary の本文にも入れない。
 
-D1 のスキーマとデータは戻らない。main の revert も、マージの停止もしない。戻したときは「main には変更が残っています。revert PR が要ります」と通知する。
+D1 のスキーマとデータは戻らない。main の revert も、マージの停止もしない。戻したときだけ `note=revert_pr_needed` を付ける。このトークンは、main に変更が残っていて revert PR が要る、という意味である。
 
-`[deploy-smoke]` の行はそのまま残す。別に `[deploy-rollback]` を 1 通、同じ `SMOKE_SLACK_WEBHOOK_URL` へ出す。GitHub の job summary にも同じ行を書く。戻す処理自体が失敗したときは、このジョブを失敗にする。
+`[deploy-smoke]` の行はそのまま残す。別に `[deploy-rollback]` を 1 通、同じ `SMOKE_SLACK_WEBHOOK_URL` へ出す。GitHub の job summary にも同じ行を書く。戻す処理自体が失敗したときは、このジョブを失敗にする。メッセージは `[deploy-rollback]` で始まる 1 行である。そのあとは固定のキーを固定の順に、半角スペース区切りの `key=value` で続ける。値にスペースや改行は入れない。形に合わない値は落としてから入れる。
 
 ```text
-[deploy-rollback] sha=0123456789abcdef0123456789abcdef01234567 from=89abcdef-0123-4567-89ab-cdef01234567 to=01234567-89ab-cdef-0123-456789abcdef trigger=verify-epub/epub_phrase result=rolled_back verify=verified runUrl=https://github.com/marufeuille/xteink-read-later/actions/runs/123 main には変更が残っています。revert PR が要ります
+[deploy-rollback] sha=0123456789abcdef0123456789abcdef01234567 from=89abcdef-0123-4567-89ab-cdef01234567 to=01234567-89ab-cdef-0123-456789abcdef trigger=verify-epub/epub_phrase result=rolled_back verify=verified runUrl=https://github.com/marufeuille/xteink-read-later/actions/runs/123 note=revert_pr_needed
 ```
 
-入れるもの: `sha`、`from`、`to`、`trigger`（failedStep / errorKind）、`result`（`rolled_back` / `rollback_failed` / `skipped:<理由>`）、`verify`（`verified` / `still_failing` / `-`）、Actions の run URL。戻したときだけ、main に変更が残っていること。入れないもの: 記事 URL、token、パスワード、ハッシュの入力にした生の値、記事本文。
+キーの順は `sha`（40 桁）、`from`（戻す前の version id）、`to`（戻し先。skip のときは `-`）、`trigger`（`failedStep/errorKind`）、`result`（`rolled_back` / `rollback_failed` / `skipped:<理由>`）、`verify`（`verified` / `still_failing` / `-`）、`runUrl`。戻したときだけ `note`（短い英語トークン。例は `revert_pr_needed`）。`sha` が無い、または 40 桁でなければ `unknown`。`from` と `to` が空なら `-`。形に合わない version id は `unknown`。`verify` が上の 2 つ以外なら `-`。`result` が上の形でなければ `skipped:unknown`。`runUrl` が Actions の run URL でなければ `-`。出してよい URL は GitHub Actions の `runUrl` だけ。出さないもの: 記事 URL、記事本文、token、パスワード、ハッシュの入力にした生の値。
 
 `result` が `skipped:` になる例: `migration`（`migrations/`、または bindings / triggers）、`unknown_diff`（本番 version の SHA が取れない）、`version_mismatch`（本番がこの run の version ではない。古い run や手動の再実行を含む）、`external`（`network` / `fetch_failed` / `http_401` / `http_403` / `interrupted`）、`unknown_version`。`poll-job` の `timeout`、`article-preflight`、DELETE だけの失敗、表に無い失敗も戻さない。
 
