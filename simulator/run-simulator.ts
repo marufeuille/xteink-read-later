@@ -85,6 +85,18 @@ export function pageDrawMs(expect: SimulatorExpect, scale: number): number {
   return (expect === 'image' ? IMAGE_PAGE_DRAW_MS : TURN_STEP_MS) * scale
 }
 
+/**
+ * Failure messages keep only the tail of the output: CI annotations truncate
+ * long messages from the start, and the actual error sits at the end.
+ */
+function outputTail(output: string): string {
+  const TAIL_CHARS = 3_500
+  if (output.length <= TAIL_CHARS) {
+    return output
+  }
+  return `... (first ${output.length - TAIL_CHARS} chars omitted)\n${output.slice(-TAIL_CHARS)}`
+}
+
 function runCommand(
   command: string,
   args: readonly string[],
@@ -107,7 +119,7 @@ function runCommand(
     child.stderr.on('data', append)
     const timer = setTimeout(() => {
       child.kill('SIGKILL')
-      reject(new Error(`${command} timed out after ${options.timeoutMs}ms\n${output}`))
+      reject(new Error(`${command} timed out after ${options.timeoutMs}ms\n${outputTail(output)}`))
     }, options.timeoutMs)
     child.on('error', (error) => {
       clearTimeout(timer)
@@ -116,7 +128,7 @@ function runCommand(
     child.on('close', (code) => {
       clearTimeout(timer)
       if (code !== 0) {
-        reject(new Error(`${command} ${args.join(' ')} exited ${code ?? 'null'}\n${output}`))
+        reject(new Error(`${command} ${args.join(' ')} exited ${code ?? 'null'}\n${outputTail(output)}`))
         return
       }
       resolve(output)
