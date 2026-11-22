@@ -35,7 +35,7 @@ LLM/AI 記事も DE の仕事との関係で評価する。企業ブログであ
 | `unevaluated` | まだ呼ばない（有料、または Jev を渡さず判定を始めないとき） | 未判定 |
 | `skipped` | キー未設定のため呼ばない | 未判定（キーなし） |
 | `insufficient_material` | 呼ばない。タイトルやフィード抜粋、取得失敗、抽出失敗 | 材料不足 |
-| `evaluated` | Choice が既知ラベルかつ confidence ≥ 0.7 | 3段階の grade |
+| `evaluated` | Choice が既知ラベルかつ confidence ≥ 0.6 | 3段階の grade |
 | `low_confidence` | 応答は来た。門未満または未知ラベル | 低確信（grade は出さない。`decidedGrade` は保存） |
 | `failed` | HTTP / timeout / 形不正 | 判定失敗 |
 
@@ -67,7 +67,7 @@ LLM/AI 記事も DE の仕事との関係で評価する。企業ブログであ
 | タイトルのみ / 抽出失敗 | `too-short.html` | `insufficient_material`。Jev を呼ばない |
 | 有料 | JSON-LD `isAccessibleForFree: false` | 一覧に出さない |
 
-確信度門 0.7 は記事分類と同じ数値だが定数は共有しない。おすすめ度に門の数字は出さない。
+確信度門 0.6 は記事分類の門（0.7）とは別数値で、定数も共有しない。おすすめ度に門の数字は出さない。門は 2026-11-22 に本番 D1 の確信度分布（low_confidence 2,389 件の大半が 0.2–0.6 帯で、0.7 にはほぼ届かない）に基づいて 0.7 から再校正した。
 
 ## まだやらないこと
 
