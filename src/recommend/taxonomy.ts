@@ -18,7 +18,14 @@ import {
 } from '../types'
 
 export const RECOMMEND_VERSION: RecommendVersion = 'de-recommend-v1'
-export const RECOMMEND_MIN_CONFIDENCE = 0.7
+/**
+ * Recalibrated 0.7 -> 0.6 on 2026-11-22 against production D1: of 2,389
+ * low_confidence rows the confidence mass sits in the 0.2-0.6 bands and
+ * almost never reaches 0.7, so the old gate rejected most judged candidates
+ * by construction. 0.6 admits the top band below the old gate while keeping
+ * a meaningful bar. Article classification keeps its own 0.7 gate.
+ */
+export const RECOMMEND_MIN_CONFIDENCE = 0.6
 export const RECOMMEND_NOUL_TRUE_MIN = 0.5
 export const RECOMMEND_MAX_EXCERPT_CHARS = 6_000
 export const RECOMMEND_MAX_HTML_CHARS = 16_000

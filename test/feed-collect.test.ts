@@ -495,7 +495,7 @@ describe('collectFeed de-recommend', () => {
     expect(FETCH_TIMEOUT_MS).toBe(20_000)
     expect(MAX_FEED_ITEMS).toBe(20)
     expect(MAX_FEED_BYTES).toBe(3_000_000)
-    expect(RECOMMEND_MIN_CONFIDENCE).toBe(0.7)
+    expect(RECOMMEND_MIN_CONFIDENCE).toBe(0.6)
   })
 
   it('does not call Jev when the key is missing and does not leave body text unevaluated', async () => {
