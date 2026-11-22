@@ -37,7 +37,12 @@ export function digestSummaryCharBudget(articleCount: number): number {
 /** Confirm links in a digest issue stay valid this many days from the issue date. */
 export const DIGEST_QR_TTL_DAYS = 14
 export const DIGEST_MAX_JEV_CALLS = 30
-export const DIGEST_LIST_PAGE_SIZE = 100
+/**
+ * Page size for the digest plan/evaluate pool reads. 500 keeps a full pool
+ * scan (~2,800 listed candidates in production) to a handful of D1 queries
+ * per delivery instead of ~28 pages x 3 batched queries at 100.
+ */
+export const DIGEST_LIST_PAGE_SIZE = 500
 
 export type DailyIssueIdentity = {
   readonly date: string

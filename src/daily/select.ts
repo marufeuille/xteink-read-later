@@ -160,6 +160,31 @@ export function digestSourceAtCap(
   return false
 }
 
+/**
+ * Per-source counts of selectable (eligible, has-substance, unused) candidates.
+ * Computed once per evaluate delivery so the pending-list scan does not rescan
+ * the whole pool for every skipped ref the way repeated digestSourceAtCap
+ * calls did. `counts.get(key) >= DIGEST_MAX_PER_SOURCE` is the same predicate
+ * as digestSourceAtCap for that key.
+ */
+export function digestSourceSubstanceCounts(
+  candidates: Iterable<CandidateArticle>,
+  usedCanonicalUrls: ReadonlySet<string>,
+): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>()
+  for (const candidate of candidates) {
+    if (usedCanonicalUrls.has(candidate.canonicalUrl)) {
+      continue
+    }
+    if (!isDigestEligible(candidate) || !digestHasSubstance(candidate)) {
+      continue
+    }
+    const key = digestSourceKey(candidate)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return counts
+}
+
 type DigestEvaluationOrder = Pick<CandidateArticle, 'id' | 'canonicalUrl' | 'discoveredAt'>
 
 /** Newest article first inside a site, then one article from each site in turn. */

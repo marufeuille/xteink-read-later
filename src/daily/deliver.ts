@@ -8,6 +8,7 @@ import { createR2Store } from '../store/r2'
 import {
   DIGEST_LIST_PAGE_SIZE,
   DIGEST_MAX_JEV_CALLS,
+  DIGEST_MAX_PER_SOURCE,
   digestSummaryCharBudget,
   type ArticleStore,
   type CandidateArticle,
@@ -39,8 +40,8 @@ import {
 import {
   digestNeedsEvaluation,
   digestSelectionSaturated,
-  digestSourceAtCap,
   digestSourceKey,
+  digestSourceSubstanceCounts,
   orderDigestEvaluations,
   selectDigestCandidates,
 } from './select'
@@ -566,18 +567,22 @@ async function stepEvaluate(ctx: DeliveryContext, loaded: DigestRunLoaded): Prom
   let exhaustedSkips = touched.record.exhaustedSkips
   let skippedHeavy = false
   const pending = touched.record.pendingEval
+  // Saturation and per-source caps are computed once per delivery. Skipping a
+  // ref never changes the pool, and the loop stops right after the single
+  // evaluation it may perform, so re-running the full selection for every
+  // skipped ref (the previous behaviour) only burned CPU on identical input.
+  const pool = [...byId.values()]
+  const saturated = digestSelectionSaturated(pool, used)
+  const sourceSubstanceCounts = digestSourceSubstanceCounts(pool, used)
+  let evaluated = false
 
-  while (
-    index < pending.length &&
-    jevCalls < maxJevCalls &&
-    !digestSelectionSaturated([...byId.values()], used)
-  ) {
+  while (index < pending.length && jevCalls < maxJevCalls && !saturated) {
     const ref: DigestEvalRef | undefined = pending[index]
     const candidate = ref === undefined ? undefined : byId.get(ref.id)
     if (
       candidate === undefined ||
       !digestNeedsEvaluation(candidate) ||
-      digestSourceAtCap(byId.values(), digestSourceKey(candidate), used)
+      (sourceSubstanceCounts.get(digestSourceKey(candidate)) ?? 0) >= DIGEST_MAX_PER_SOURCE
     ) {
       index += 1
       continue
@@ -600,6 +605,7 @@ async function stepEvaluate(ctx: DeliveryContext, loaded: DigestRunLoaded): Prom
       })
       if (result.ok) {
         byId.set(result.value.candidate.id, result.value.candidate)
+        evaluated = true
       }
     } catch {
       // A failed judgment does not fail the issue. The next delivery continues the list.
@@ -631,7 +637,9 @@ async function stepEvaluate(ctx: DeliveryContext, loaded: DigestRunLoaded): Prom
   const done =
     saved.record.evalIndex >= saved.record.pendingEval.length ||
     saved.record.jevCalls >= maxJevCalls ||
-    digestSelectionSaturated([...byId.values()], used)
+    // The pool only changed when this delivery evaluated a candidate; without
+    // an evaluation the saturation verdict from the start of the step stands.
+    (evaluated ? digestSelectionSaturated([...byId.values()], used) : saturated)
   if (!done) {
     return continueWith(saved.record)
   }

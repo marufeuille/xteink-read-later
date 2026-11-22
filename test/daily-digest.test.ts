@@ -7,7 +7,12 @@ import { createApp } from '../src/app'
 import { buildDummyDailyWrite } from '../src/daily/issue'
 import { publishLatestDaily } from '../src/daily/publish'
 import { runDailyDigest } from '../src/daily/run'
-import { orderDigestEvaluations, selectDigestCandidates } from '../src/daily/select'
+import {
+  digestSourceAtCap,
+  digestSourceSubstanceCounts,
+  orderDigestEvaluations,
+  selectDigestCandidates,
+} from '../src/daily/select'
 import { summarizeDigestArticle, type SummarizeDigestArticle } from '../src/daily/summarize'
 import { handleScheduled, scheduledKinds } from '../src/schedule'
 import { unavailableClassification } from '../src/classify/taxonomy'
@@ -397,6 +402,36 @@ describe('daily digest selection', () => {
     })
     const selected = selectDigestCandidates([release, practical], { usedCanonicalUrls: new Set() })
     expect(selected.map((item) => item.id)).toEqual([practical.id])
+  })
+
+  it('counts selectable candidates per source, matching the at-cap predicate', () => {
+    const fromSakana = Array.from({ length: DIGEST_MAX_PER_SOURCE }, (_, index) =>
+      listedCandidate({
+        id: asCandidateId(`cand_a${String(index).padStart(31, '0')}`),
+        canonicalUrl: mustUrl(`https://sakana.ai/posts/${index}`),
+        title: `Sakana ${index}`,
+      }),
+    )
+    const noSubstance = listedCandidate({
+      id: asCandidateId('cand_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
+      canonicalUrl: mustUrl('https://sakana.ai/blog/press'),
+      title: '発表だけ',
+      recommendation: { ...judged('recommended'), concrete: false },
+    })
+    const usedOne = listedCandidate({
+      id: asCandidateId('cand_cccccccccccccccccccccccccccccccc'),
+      canonicalUrl: mustUrl('https://example.com/used'),
+      title: '掲載済み',
+    })
+    const pool = [...fromSakana, noSubstance, usedOne]
+    const usedUrls = new Set([usedOne.canonicalUrl])
+    const counts = digestSourceSubstanceCounts(pool, usedUrls)
+    expect(counts.get('sakana.ai')).toBe(DIGEST_MAX_PER_SOURCE)
+    expect((counts.get('sakana.ai') ?? 0) >= DIGEST_MAX_PER_SOURCE).toBe(
+      digestSourceAtCap(pool, 'sakana.ai', usedUrls),
+    )
+    expect(counts.get('example.com')).toBeUndefined()
+    expect(digestSourceAtCap(pool, 'example.com', usedUrls)).toBe(false)
   })
 
   it('does not let one site fill every slot', () => {
